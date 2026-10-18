@@ -531,11 +531,8 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
-                                        if (url.startsWith("whatsapp://") || url.startsWith("intent://")) {
-                                            try {
-                                                val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-                                                ctx.startActivity(intent)
-                                            } catch (_: Exception) {}
+                                        if (url.startsWith("whatsapp://") || url.startsWith("intent://") || url.startsWith("instagram://") || url.startsWith("fb://") || url.startsWith("tg://") || url.startsWith("market://")) {
+                                            // Strictly block external app launch; remain in sandbox workspace
                                             return true
                                         }
                                         return false

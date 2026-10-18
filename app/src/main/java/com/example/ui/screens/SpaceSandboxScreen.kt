@@ -218,9 +218,6 @@ fun SpaceSandboxScreen(
                                     shape = RoundedCornerShape(10.dp),
                                     color = MaterialTheme.colorScheme.surface,
                                     modifier = Modifier.clickable {
-                                        if (clone.packageName.isNotBlank()) {
-                                            InstalledAppsManager.launchInstalledApp(context, clone.packageName)
-                                        }
                                         onLaunchInstance(clone.instanceId)
                                     }
                                 ) {
@@ -314,9 +311,6 @@ fun SpaceSandboxScreen(
                 InstalledCloneCard(
                     instance = clone,
                     onLaunch = {
-                        if (clone.packageName.isNotBlank()) {
-                            InstalledAppsManager.launchInstalledApp(context, clone.packageName)
-                        }
                         onLaunchInstance(clone.instanceId)
                     },
                     onEdit = { onOpenEditClone(clone) },

@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import com.example.data.models.MediaItem
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -96,6 +98,7 @@ fun BrowserHubScreen(
     onSetShowMediaManager: (Boolean) -> Unit = {},
     onSavePassword: (domain: String, title: String, username: String, pass: String) -> Unit = { _, _, _, _ -> },
     onDeletePassword: (Long) -> Unit = {},
+    onPlayVideo: (MediaItem) -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -172,7 +175,8 @@ fun BrowserHubScreen(
                         downloads = downloads,
                         onDeleteDownload = onDeleteDownload,
                         onClearAllDownloads = onClearAllDownloads,
-                        onStartBrowsing = { onDualTabChanged(BrowserDualTab.BROWSER) }
+                        onStartBrowsing = { onDualTabChanged(BrowserDualTab.BROWSER) },
+                        onPlayVideo = onPlayVideo
                     )
                 }
             }

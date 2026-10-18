@@ -109,6 +109,7 @@ fun MessagesScreen(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    onReplyNotification: (DeviceNotification, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var threadToDelete by remember { mutableStateOf<SmsThread?>(null) }
@@ -336,6 +337,7 @@ fun MessagesScreen(
                 onOpenAppDetailsSettings = onOpenAppDetailsSettings,
                 onSimulateSms = onSimulateSms,
                 onSimulateCall = onSimulateCall,
+                onReplyNotification = onReplyNotification,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -383,6 +385,7 @@ fun DeviceNotificationsWindow(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    onReplyNotification: (DeviceNotification, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -565,6 +568,9 @@ fun DeviceNotificationsWindow(
                     NotificationCard(
                         notification = notif,
                         onDismiss = { onDismissNotification(notif.key) },
+                        onReply = { notifItem, replyMsg ->
+                            onReplyNotification(notifItem, replyMsg)
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -639,8 +645,11 @@ fun DeviceNotificationsWindow(
 fun NotificationCard(
     notification: DeviceNotification,
     onDismiss: () -> Unit,
+    onReply: (DeviceNotification, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    var isReplying by remember { mutableStateOf(false) }
+    var replyText by remember { mutableStateOf("") }
     val appColor = remember(notification.appColorHex) {
         com.example.ui.components.parseHexColor(notification.appColorHex)
     }
@@ -730,6 +739,65 @@ fun NotificationCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            val canReply = notification.isCommunicationOrSocial || notification.title.isNotBlank() || notification.text.isNotBlank()
+            if (canReply) {
+                if (!isReplying) {
+                    OutlinedButton(
+                        onClick = { isReplying = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("reply_notif_btn_${notification.key}")
+                    ) {
+                        Icon(imageVector = Icons.Filled.Message, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Reply", style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = replyText,
+                            onValueChange = { replyText = it },
+                            placeholder = { Text("Type reply...") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("reply_notif_input_${notification.key}")
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { isReplying = false }) {
+                                Text("Cancel")
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Button(
+                                onClick = {
+                                    if (replyText.isNotBlank()) {
+                                        onReply(notification, replyText)
+                                        replyText = ""
+                                        isReplying = false
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("send_reply_btn_${notification.key}")
+                            ) {
+                                Text("Send")
+                            }
+                        }
+                    }
+                }
             }
         }
     }

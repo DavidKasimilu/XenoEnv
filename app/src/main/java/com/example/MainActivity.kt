@@ -45,6 +45,7 @@ import com.example.telecom.XenoNotificationListenerService
 import com.example.ui.components.DefaultAppBanner
 import com.example.ui.components.NewChatDialog
 import com.example.ui.components.XenoBottomBar
+import com.example.ui.components.VideoPlayerModal
 import com.example.ui.screens.ActiveCallScreen
 import com.example.ui.screens.BrowserHubScreen
 import com.example.ui.screens.BrowserScreen
@@ -249,7 +250,16 @@ fun XenoApp(
                 .fillMaxSize()
                 .padding(effectivePadding)
         ) {
-            if (uiState.activeGameUrl != null) {
+            if (uiState.selectedVideoItem != null) {
+                VideoPlayerModal(
+                    videoItem = uiState.selectedVideoItem!!,
+                    isControlsHidden = uiState.isVideoControlsHidden,
+                    onToggleHide = { viewModel.setVideoControlsHidden(it) },
+                    onClose = { viewModel.selectVideoItem(null) },
+                    onDeleteVideo = { viewModel.deleteMediaItem(it) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (uiState.activeGameUrl != null) {
                 GamePlayScreen(
                     gameTitle = uiState.activeGameTitle ?: "Game",
                     gameUrl = uiState.activeGameUrl!!,
@@ -373,7 +383,8 @@ fun XenoApp(
                                 onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
                                 onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
                                 onSimulateSms = { viewModel.simulateIncomingSms() },
-                                onSimulateCall = { viewModel.simulateIncomingCall() }
+                                onSimulateCall = { viewModel.simulateIncomingCall() },
+                                 onReplyNotification = { notif, text -> viewModel.replyToNotification(notif, text) }
                             )
                         }
                         XenoTab.BROWSER -> {
@@ -429,7 +440,8 @@ fun XenoApp(
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },
-                                onDeletePassword = { viewModel.deletePassword(it) }
+                                onDeletePassword = { viewModel.deletePassword(it) },
+                                 onPlayVideo = { viewModel.selectVideoItem(it) }
                             )
                         }
                         XenoTab.GAMES -> {

@@ -1128,4 +1128,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             activeGameUrl = url
         )
     }
+
+    fun replyToNotification(notification: DeviceNotification, replyText: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                userNotice = "Reply sent to ${notification.title.ifBlank { notification.appName }}: \"$replyText\""
+            )
+        }
+    }
 }

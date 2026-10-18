@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import com.example.data.models.MediaItem
+
 import android.content.Intent
 import android.net.Uri
 import android.text.format.Formatter
@@ -86,6 +88,7 @@ fun BrowserDownloadsScreen(
     onDeleteDownload: (DownloadItem) -> Unit,
     onClearAllDownloads: () -> Unit,
     onStartBrowsing: () -> Unit,
+    onPlayVideo: (MediaItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -311,10 +314,25 @@ fun BrowserDownloadsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredDownloads, key = { "dl_${it.id}_${it.fileName}" }) { item ->
+                        val isVideo = item.mimeType.contains("video", ignoreCase = true) ||
+                                listOf("mp4", "mkv", "webm", "avi", "3gp", "mov").any { item.fileName.lowercase().endsWith(".$it") }
                         DownloadItemCard(
                             item = item,
                             onOpen = {
-                                openFile(context, item)
+                                if (isVideo && item.filePath != null && File(item.filePath).exists()) {
+                                    val mediaItem = MediaItem(
+                                        id = item.id,
+                                        uri = Uri.fromFile(File(item.filePath)),
+                                        displayName = item.fileName,
+                                        dateAdded = item.timestamp / 1000L,
+                                        size = item.fileSize,
+                                        isVideo = true,
+                                        folderName = "Downloads"
+                                    )
+                                    onPlayVideo(mediaItem)
+                                } else {
+                                    openFile(context, item)
+                                }
                             },
                             onShare = {
                                 shareFile(context, item)
