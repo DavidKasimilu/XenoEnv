@@ -743,6 +743,24 @@ fun NotificationCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            var lastReplySent by remember { mutableStateOf<String?>(null) }
+
+            if (lastReplySent != null) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                ) {
+                    Text(
+                        text = "✓ Replied: \"$lastReplySent\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
             val canReply = notification.isCommunicationOrSocial || notification.title.isNotBlank() || notification.text.isNotBlank()
             if (canReply) {
                 if (!isReplying) {
@@ -785,7 +803,9 @@ fun NotificationCard(
                             Button(
                                 onClick = {
                                     if (replyText.isNotBlank()) {
-                                        onReply(notification, replyText)
+                                        val sentMsg = replyText
+                                        onReply(notification, sentMsg)
+                                        lastReplySent = sentMsg
                                         replyText = ""
                                         isReplying = false
                                     }

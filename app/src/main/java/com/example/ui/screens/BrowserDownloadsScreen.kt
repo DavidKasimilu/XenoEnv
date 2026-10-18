@@ -319,10 +319,15 @@ fun BrowserDownloadsScreen(
                         DownloadItemCard(
                             item = item,
                             onOpen = {
-                                if (isVideo && item.filePath != null && File(item.filePath).exists()) {
+                                if (isVideo) {
+                                    val safeUri = if (item.filePath != null && File(item.filePath).exists()) {
+                                        Uri.fromFile(File(item.filePath))
+                                    } else {
+                                        Uri.parse(item.url)
+                                    }
                                     val mediaItem = MediaItem(
                                         id = item.id,
-                                        uri = Uri.fromFile(File(item.filePath)),
+                                        uri = safeUri,
                                         displayName = item.fileName,
                                         dateAdded = item.timestamp / 1000L,
                                         size = item.fileSize,
