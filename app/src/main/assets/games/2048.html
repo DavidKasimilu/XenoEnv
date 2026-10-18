@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>2048 Puzzle</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body {
+    background: #0f172a;
+    color: #f8fafc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    touch-action: none;
+    padding: 16px;
+  }
+  .header {
+    width: 320px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .title { font-size: 32px; font-weight: 800; color: #f59e0b; }
+  .score-box {
+    background: #1e293b;
+    padding: 8px 16px;
+    border-radius: 10px;
+    text-align: center;
+  }
+  .score-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+  .score-val { font-size: 18px; font-weight: bold; color: white; }
+  .grid-container {
+    width: 320px;
+    height: 320px;
+    background: #1e293b;
+    border-radius: 16px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    gap: 10px;
+    padding: 10px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+  }
+  .cell {
+    background: #334155;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: bold;
+    color: #f8fafc;
+    transition: transform 0.1s;
+  }
+  .c2 { background: #e2e8f0; color: #1e293b; }
+  .c4 { background: #fed7aa; color: #1e293b; }
+  .c8 { background: #fb923c; color: white; }
+  .c16 { background: #f97316; color: white; }
+  .c32 { background: #ea580c; color: white; }
+  .c64 { background: #dc2626; color: white; }
+  .c128 { background: #facc15; color: #1e293b; font-size: 20px; }
+  .c256 { background: #eab308; color: #1e293b; font-size: 20px; }
+  .c512 { background: #ca8a04; color: white; font-size: 20px; }
+  .c1024 { background: #a855f7; color: white; font-size: 18px; }
+  .c2048 { background: #ec4899; color: white; font-size: 18px; box-shadow: 0 0 15px #ec4899; }
+  .controls-hint { margin-top: 14px; font-size: 13px; color: #94a3b8; }
+  .btn-row { margin-top: 16px; }
+  .btn {
+    padding: 10px 20px;
+    background: #f59e0b;
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">2048</div>
+    <div class="score-box">
+      <div class="score-title">SCORE</div>
+      <div class="score-val" id="score">0</div>
+    </div>
+  </div>
+
+  <div class="grid-container" id="grid"></div>
+  <div class="controls-hint">Swipe in any direction to merge tiles</div>
+  <div class="btn-row"><button class="btn" onclick="init()">Restart</button></div>
+
+  <script>
+    let board = [
+      [0,0,0,0],
+      [0,0,0,0],
+      [0,0,0,0],
+      [0,0,0,0]
+    ];
+    let score = 0;
+
+    function init() {
+      board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+      score = 0;
+      document.getElementById('score').innerText = score;
+      addRandom();
+      addRandom();
+      render();
+    }
+
+    function addRandom() {
+      let empty = [];
+      for(let r=0; r<4; r++) {
+        for(let c=0; c<4; c++) {
+          if(board[r][c] === 0) empty.push({r, c});
+        }
+      }
+      if(empty.length > 0) {
+        let spot = empty[Math.floor(Math.random() * empty.length)];
+        board[spot.r][spot.c] = Math.random() > 0.1 ? 2 : 4;
+      }
+    }
+
+    function render() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      for(let r=0; r<4; r++) {
+        for(let c=0; c<4; c++) {
+          let val = board[r][c];
+          let div = document.createElement('div');
+          div.className = 'cell' + (val > 0 ? ' c' + val : '');
+          div.innerText = val > 0 ? val : '';
+          grid.appendChild(div);
+        }
+      }
+    }
+
+    function slide(row) {
+      let arr = row.filter(val => val);
+      for(let i=0; i<arr.length-1; i++) {
+        if(arr[i] === arr[i+1]) {
+          arr[i] *= 2;
+          score += arr[i];
+          arr[i+1] = 0;
+        }
+      }
+      arr = arr.filter(val => val);
+      while(arr.length < 4) arr.push(0);
+      return arr;
+    }
+
+    function moveLeft() {
+      let changed = false;
+      for(let r=0; r<4; r++) {
+        let oldRow = [...board[r]];
+        board[r] = slide(board[r]);
+        if(oldRow.join(',') !== board[r].join(',')) changed = true;
+      }
+      return changed;
+    }
+
+    function moveRight() {
+      let changed = false;
+      for(let r=0; r<4; r++) {
+        let oldRow = [...board[r]];
+        let rev = [...board[r]].reverse();
+        rev = slide(rev);
+        board[r] = rev.reverse();
+        if(oldRow.join(',') !== board[r].join(',')) changed = true;
+      }
+      return changed;
+    }
+
+    function rotateBoard() {
+      let newB = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+      for(let r=0; r<4; r++) {
+        for(let c=0; c<4; c++) {
+          newB[c][3-r] = board[r][c];
+        }
+      }
+      board = newB;
+    }
+
+    function moveUp() {
+      rotateBoard(); rotateBoard(); rotateBoard();
+      let changed = moveLeft();
+      rotateBoard();
+      return changed;
+    }
+
+    function moveDown() {
+      rotateBoard();
+      let changed = moveLeft();
+      rotateBoard(); rotateBoard(); rotateBoard();
+      return changed;
+    }
+
+    function handleMove(fn) {
+      if(fn()) {
+        addRandom();
+        document.getElementById('score').innerText = score;
+        render();
+      }
+    }
+
+    let startX=0, startY=0;
+    document.addEventListener('touchstart', e => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    });
+    document.addEventListener('touchend', e => {
+      let dx = e.changedTouches[0].clientX - startX;
+      let dy = e.changedTouches[0].clientY - startY;
+      if(Math.abs(dx) > Math.abs(dy)) {
+        if(dx > 30) handleMove(moveRight);
+        else if(dx < -30) handleMove(moveLeft);
+      } else {
+        if(dy > 30) handleMove(moveDown);
+        else if(dy < -30) handleMove(moveUp);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

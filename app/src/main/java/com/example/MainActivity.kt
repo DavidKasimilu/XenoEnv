@@ -3,7 +3,9 @@ package com.example
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -95,6 +97,20 @@ fun XenoApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val activity = context as? Activity
+    LaunchedEffect(uiState.preventOverlayApps) {
+        activity?.window?.let { win ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                win.setHideOverlayWindows(uiState.preventOverlayApps)
+            }
+            if (uiState.preventOverlayApps) {
+                win.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+            } else {
+                win.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+    }
 
     // Observe lifecycle to refresh status when returning from settings/role prompts
     DisposableEffect(lifecycleOwner) {
@@ -455,7 +471,19 @@ fun XenoApp(
                                     }
                                 },
                                 onLaunchGame = { pkg ->
-                                    viewModel.launchGame(pkg, context)
+                                    val game = uiState.installedGames.find { it.packageName == pkg }
+                                    val title = game?.appName ?: "Game"
+                                    val inAppUrl = when {
+                                        title.contains("snake", ignoreCase = true) -> "file:///android_asset/games/snake.html"
+                                        title.contains("2048", ignoreCase = true) -> "file:///android_asset/games/2048.html"
+                                        title.contains("tic", ignoreCase = true) -> "file:///android_asset/games/tictactoe.html"
+                                        title.contains("brick", ignoreCase = true) || title.contains("pong", ignoreCase = true) -> "file:///android_asset/games/brickbreaker.html"
+                                        title.contains("pacman", ignoreCase = true) -> "https://elgoog.im/pacman/"
+                                        title.contains("mine", ignoreCase = true) -> "https://minesweeper.online/"
+                                        title.contains("solitaire", ignoreCase = true) -> "https://worldofsolitaire.com/"
+                                        else -> "file:///android_asset/games/2048.html"
+                                    }
+                                    viewModel.setActiveGame(title, inAppUrl)
                                 },
                                 onPlayWebGame = { title, url ->
                                     viewModel.setActiveGame(title, url)
@@ -481,7 +509,9 @@ fun XenoApp(
                                     viewModel.checkDefaultAppStatus()
                                 },
                                 onSimulateSms = { viewModel.simulateIncomingSms() },
-                                onSimulateCall = { viewModel.simulateIncomingCall() }
+                                onSimulateCall = { viewModel.simulateIncomingCall() },
+                                preventOverlayApps = uiState.preventOverlayApps,
+                                onTogglePreventOverlayApps = { viewModel.setPreventOverlayApps(it) }
                             )
                         }
                     }

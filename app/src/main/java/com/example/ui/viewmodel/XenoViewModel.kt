@@ -133,7 +133,8 @@ data class XenoUiState(
     val incomingCallPopup: IncomingCallPopup? = null,
     val installedGames: List<InstalledGameItem> = emptyList(),
     val activeGameUrl: String? = null,
-    val activeGameTitle: String? = null
+    val activeGameTitle: String? = null,
+    val preventOverlayApps: Boolean = true
 ) {
     val activeBrowserTab: WebTab?
         get() = browserTabs.find { it.id == activeBrowserTabId } ?: browserTabs.firstOrNull()
@@ -1135,5 +1136,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 userNotice = "Reply sent to ${notification.title.ifBlank { notification.appName }}: \"$replyText\""
             )
         }
+    }
+
+    fun setPreventOverlayApps(prevent: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            preventOverlayApps = prevent,
+            userNotice = if (prevent) "Anti-Overlay Active: No external apps can display over this app." else "Overlay protection disabled."
+        )
     }
 }

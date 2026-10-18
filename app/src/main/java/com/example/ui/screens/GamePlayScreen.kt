@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -98,11 +99,22 @@ fun GamePlayScreen(
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
+                            allowFileAccess = true
+                            allowContentAccess = true
                             loadWithOverviewMode = true
                             useWideViewPort = true
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            cacheMode = WebSettings.LOAD_DEFAULT
                         }
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url?.toString() ?: return false
+                                if (url.startsWith("intent://") || url.startsWith("market://") || url.startsWith("instagram://") || url.startsWith("whatsapp://")) {
+                                    return true
+                                }
+                                return false
+                            }
+                        }
                         webChromeClient = WebChromeClient()
                         loadUrl(gameUrl)
                         webViewInstance = this

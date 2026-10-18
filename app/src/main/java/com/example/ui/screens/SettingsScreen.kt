@@ -30,6 +30,10 @@ import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SystemUpdate
+import com.example.util.ApkUpdateManager
+import com.example.util.ApkPackageDetails
+import com.example.ui.components.ApkUpdateDialog
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Button
@@ -69,10 +73,23 @@ fun SettingsScreen(
     onPermissionsUpdated: () -> Unit,
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    preventOverlayApps: Boolean = true,
+    onTogglePreventOverlayApps: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    var pendingUpdateDetails by remember { mutableStateOf<ApkPackageDetails?>(null) }
+    val (currentVerName, currentVerCode) = remember { ApkUpdateManager.getCurrentAppVersionInfo(context) }
+
+    val updateApkPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val details = ApkUpdateManager.inspectApk(context, uri)
+            pendingUpdateDetails = details
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -268,6 +285,134 @@ fun SettingsScreen(
                     ) {
                         Text("Set as Default SMS App")
                     }
+                }
+            }
+        }
+
+        // Anti-Overlay Protection Card
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            modifier = Modifier.fillMaxWidth().testTag("anti_overlay_card")
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(
+                                if (preventOverlayApps) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Security,
+                            contentDescription = null,
+                            tint = if (preventOverlayApps) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Block Display Over This App",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (preventOverlayApps) "Active: Overlays are blocked" else "Disabled",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (preventOverlayApps) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Switch(
+                        checked = preventOverlayApps,
+                        onCheckedChange = onTogglePreventOverlayApps,
+                        modifier = Modifier.testTag("prevent_overlay_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Prevents any external app, floating window, chat bubble, or screen overlay from displaying on top of this app (Anti-Overlay Protection).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // In-Place App Updater Card
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            modifier = Modifier.fillMaxWidth().testTag("app_updater_card")
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.SystemUpdate,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "In-Place App Updater",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Current: v$currentVerName (Build $currentVerCode)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Install updates to new APK versions directly without uninstalling the current version. All your messages, downloads, browser tabs, and files are completely preserved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        try {
+                            updateApkPickerLauncher.launch(arrayOf("application/vnd.android.package-archive", "*/*"))
+                        } catch (_: Exception) {
+                            updateApkPickerLauncher.launch(arrayOf("*/*"))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("select_update_apk_btn"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(imageVector = Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Select APK & Update In-Place")
                 }
             }
         }

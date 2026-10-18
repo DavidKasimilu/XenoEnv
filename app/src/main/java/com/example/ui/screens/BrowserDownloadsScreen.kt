@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import com.example.util.ApkUpdateManager
+import com.example.util.ApkPackageDetails
+import com.example.ui.components.ApkUpdateDialog
+
 import com.example.data.models.MediaItem
 
 import android.content.Intent
@@ -95,6 +99,7 @@ fun BrowserDownloadsScreen(
     var selectedFilter by remember { mutableStateOf(DownloadFilter.ALL) }
     var itemToDelete by remember { mutableStateOf<DownloadItem?>(null) }
     var showClearAllDialog by remember { mutableStateOf(false) }
+    var pendingApkUpdate by remember { mutableStateOf<ApkPackageDetails?>(null) }
 
     val context = LocalContext.current
 
@@ -335,6 +340,18 @@ fun BrowserDownloadsScreen(
                                         folderName = "Downloads"
                                     )
                                     onPlayVideo(mediaItem)
+                                } else if (item.fileName.lowercase().endsWith(".apk") || item.mimeType.contains("package-archive", ignoreCase = true)) {
+                                    val apkUri = if (item.filePath != null && File(item.filePath).exists()) {
+                                        Uri.fromFile(File(item.filePath))
+                                    } else {
+                                        Uri.parse(item.url)
+                                    }
+                                    val details = ApkUpdateManager.inspectApk(context, apkUri)
+                                    if (details != null) {
+                                        pendingApkUpdate = details
+                                    } else {
+                                        openFile(context, item)
+                                    }
                                 } else {
                                     openFile(context, item)
                                 }
