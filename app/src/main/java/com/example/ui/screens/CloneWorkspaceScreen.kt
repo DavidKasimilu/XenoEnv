@@ -531,7 +531,25 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
-                                        if (url.startsWith("whatsapp://") || url.startsWith("intent://") || url.startsWith("instagram://") || url.startsWith("fb://") || url.startsWith("tg://") || url.startsWith("market://")) {
+                                        if (url.startsWith("intent://")) {
+                                            try {
+                                                val parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+                                                val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
+                                                if (!fallbackUrl.isNullOrBlank() && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+                                                    view?.loadUrl(fallbackUrl)
+                                                }
+                                            } catch (_: Exception) {}
+                                            return true
+                                        }
+                                        val lowerUrl = url.lowercase()
+                                        if (!lowerUrl.startsWith("http://") &&
+                                            !lowerUrl.startsWith("https://") &&
+                                            !lowerUrl.startsWith("file://") &&
+                                            !lowerUrl.startsWith("about:") &&
+                                            !lowerUrl.startsWith("javascript:") &&
+                                            !lowerUrl.startsWith("blob:") &&
+                                            !lowerUrl.startsWith("data:")
+                                        ) {
                                             // Strictly block external app launch; remain in sandbox workspace
                                             return true
                                         }

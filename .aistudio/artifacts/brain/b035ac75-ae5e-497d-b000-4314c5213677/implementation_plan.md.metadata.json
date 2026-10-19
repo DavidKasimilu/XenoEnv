@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for built-in video player on browser downloads, sandbox in-app clone containment, and direct notification quick replies with confirmed sent indicators.",
-  "updatedAt": "2026-10-18T07:16:26.038915363Z",
+  "summary": "Fix black screen on launch by removing FLAG_SECURE while preserving setHideOverlayWindows and filterTouchesWhenObscured anti-overlay protection.",
+  "updatedAt": "2026-10-19T15:07:28.046733308Z",
   "requestFeedback": true,
   "userFacing": true
 }

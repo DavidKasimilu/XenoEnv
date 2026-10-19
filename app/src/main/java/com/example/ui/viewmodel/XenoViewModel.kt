@@ -10,9 +10,12 @@ import com.example.data.CallLogRepository
 import com.example.data.ContactsRepository
 import com.example.data.DownloadRepository
 import com.example.data.GalleryRepository
+import com.example.data.GameSpaceRepository
 import com.example.data.PasswordRepository
 import com.example.data.SmsRepository
 import com.example.data.SpaceRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.data.models.BrowserHistoryItem
 import com.example.data.models.DownloadItem
 import com.example.data.models.DownloadStatus
@@ -134,6 +137,7 @@ data class XenoUiState(
     val installedGames: List<InstalledGameItem> = emptyList(),
     val activeGameUrl: String? = null,
     val activeGameTitle: String? = null,
+    val activeGamePackage: String? = null,
     val preventOverlayApps: Boolean = true
 ) {
     val activeBrowserTab: WebTab?
@@ -157,6 +161,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val browserRepo = BrowserRepository(application)
     private val galleryRepo = GalleryRepository(application)
     private val spaceRepo = SpaceRepository(application)
+    private val gameSpaceRepo = GameSpaceRepository(application)
     private val passwordRepo = PasswordRepository(application)
     private val downloadRepo = DownloadRepository(application)
 
@@ -1059,74 +1064,96 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadInstalledGames(context: android.content.Context) {
         viewModelScope.launch {
-            val pm = context.packageManager
-            val packages = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                pm.getInstalledPackages(android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_ACTIVITIES.toLong()))
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getInstalledPackages(android.content.pm.PackageManager.GET_ACTIVITIES)
+            val games = withContext(Dispatchers.IO) {
+                gameSpaceRepo.loadUserGames()
             }
-            val games = mutableListOf<InstalledGameItem>()
-            for (pkg in packages) {
-                val appInfo = pkg.applicationInfo ?: continue
-                val appName = pm.getApplicationLabel(appInfo).toString()
-                val isGame = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    appInfo.category == android.content.pm.ApplicationInfo.CATEGORY_GAME ||
-                            appName.contains("game", ignoreCase = true) ||
-                            pkg.packageName.contains("game", ignoreCase = true) ||
-                            pkg.packageName.contains("unity", ignoreCase = true) ||
-                            pkg.packageName.contains("godot", ignoreCase = true)
-                } else {
-                    appName.contains("game", ignoreCase = true) || pkg.packageName.contains("game", ignoreCase = true)
-                }
-                val isUser = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0
-                if (isUser || isGame) {
-                    games.add(
-                        InstalledGameItem(
-                            packageName = pkg.packageName,
-                            appName = appName,
-                            versionName = pkg.versionName,
-                            isUserApp = isUser
-                        )
-                    )
-                }
-            }
-            _uiState.value = _uiState.value.copy(installedGames = games.sortedBy { it.appName })
+            _uiState.value = _uiState.value.copy(installedGames = games)
         }
     }
 
-    fun launchGame(packageName: String, context: android.content.Context) {
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-            } else {
-                _uiState.value = _uiState.value.copy(userNotice = "Cannot launch $packageName")
+    fun launchGameInApp(game: InstalledGameItem) {
+        val resolvedUrl = game.entryUrl?.takeIf { it.isNotBlank() }
+            ?: SpaceRepository.resolveAppUrl(game.packageName, game.appName)
+        _uiState.value = _uiState.value.copy(
+            activeGameTitle = game.appName,
+            activeGameUrl = resolvedUrl,
+            activeGamePackage = game.packageName
+        )
+    }
+
+    fun updateActiveGameUrl(newUrl: String) {
+        val pkg = _uiState.value.activeGamePackage
+        if (!pkg.isNullOrBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                gameSpaceRepo.updateGameEntryUrl(pkg, newUrl)
+                val updatedList = gameSpaceRepo.loadUserGames()
+                _uiState.value = _uiState.value.copy(
+                    installedGames = updatedList,
+                    activeGameUrl = newUrl
+                )
             }
-        } catch (e: Exception) {
-            _uiState.value = _uiState.value.copy(userNotice = "Error launching game: ${e.message}")
+        } else {
+            _uiState.value = _uiState.value.copy(activeGameUrl = newUrl)
         }
     }
 
     fun installApk(uri: Uri, context: android.content.Context) {
-        try {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(userNotice = "Installing APK into Game Space...")
+            val installedItem = withContext(Dispatchers.IO) {
+                gameSpaceRepo.installApkIntoGameSpace(uri)
             }
-            context.startActivity(intent)
-            _uiState.value = _uiState.value.copy(userNotice = "Opening APK installer...")
-        } catch (e: Exception) {
-            _uiState.value = _uiState.value.copy(userNotice = "Failed to open installer: ${e.message}")
+            if (installedItem != null) {
+                val updatedGames = withContext(Dispatchers.IO) {
+                    gameSpaceRepo.loadUserGames()
+                }
+                _uiState.value = _uiState.value.copy(
+                    installedGames = updatedGames,
+                    userNotice = "Installed ${installedItem.appName} into Game Space"
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    userNotice = "Could not parse APK file. Please select a valid .apk package."
+                )
+            }
+        }
+    }
+
+    fun importDeviceAppToGameSpace(packageName: String, appName: String) {
+        viewModelScope.launch {
+            val added = withContext(Dispatchers.IO) {
+                gameSpaceRepo.addDeviceAppToGameSpace(packageName, appName)
+            }
+            val updatedGames = withContext(Dispatchers.IO) {
+                gameSpaceRepo.loadUserGames()
+            }
+            _uiState.value = _uiState.value.copy(
+                installedGames = updatedGames,
+                userNotice = "Added ${added.appName} to Game Space"
+            )
+        }
+    }
+
+    fun removeGameFromSpace(packageName: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                gameSpaceRepo.removeGameFromSpace(packageName)
+            }
+            val updatedGames = withContext(Dispatchers.IO) {
+                gameSpaceRepo.loadUserGames()
+            }
+            _uiState.value = _uiState.value.copy(
+                installedGames = updatedGames,
+                userNotice = "Removed app from Game Space"
+            )
         }
     }
 
     fun setActiveGame(title: String?, url: String?) {
         _uiState.value = _uiState.value.copy(
             activeGameTitle = title,
-            activeGameUrl = url
+            activeGameUrl = url,
+            activeGamePackage = if (url == null) null else _uiState.value.activeGamePackage
         )
     }
 

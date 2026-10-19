@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
-import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,17 +22,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Gamepad
-import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,91 +48,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.example.data.InstalledAppsManager
 import com.example.data.models.InstalledGameItem
 import com.example.ui.components.AppIconImage
-
-data class WebArcadeGame(
-    val title: String,
-    val url: String,
-    val description: String,
-    val isOffline: Boolean = false
-)
+import java.io.File
 
 @Composable
 fun GamesScreen(
     installedGames: List<InstalledGameItem>,
     onPickApkClick: () -> Unit,
-    onLaunchGame: (String) -> Unit,
-    onPlayWebGame: (title: String, url: String) -> Unit,
+    onLaunchGame: (InstalledGameItem) -> Unit,
+    onRemoveGame: (String) -> Unit = {},
+    onImportDeviceApp: (packageName: String, appName: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val pm = remember { context.packageManager }
-
-    var showAddCustomGameDialog by remember { mutableStateOf(false) }
-    var customGameTitle by remember { mutableStateOf("") }
-    var customGameUrl by remember { mutableStateOf("") }
-
-    val featuredWebGames = remember {
-        listOf(
-            WebArcadeGame(
-                title = "Retro Snake",
-                url = "file:///android_asset/games/snake.html",
-                description = "Offline • Smooth canvas arcade snake with touch D-pad & scores",
-                isOffline = true
-            ),
-            WebArcadeGame(
-                title = "2048 Puzzle",
-                url = "file:///android_asset/games/2048.html",
-                description = "Offline • Classic swipe & touch number tile merging",
-                isOffline = true
-            ),
-            WebArcadeGame(
-                title = "Neon Tic-Tac-Toe",
-                url = "file:///android_asset/games/tictactoe.html",
-                description = "Offline • Play vs Smart AI or 2-player pass & play",
-                isOffline = true
-            ),
-            WebArcadeGame(
-                title = "Brick Breaker Arcade",
-                url = "file:///android_asset/games/brickbreaker.html",
-                description = "Offline • Breakout touch paddle action with brick destruction",
-                isOffline = true
-            ),
-            WebArcadeGame(
-                title = "Retro Pacman",
-                url = "https://elgoog.im/pacman/",
-                description = "Online Arcade • Original maze dot-eating action",
-                isOffline = false
-            ),
-            WebArcadeGame(
-                title = "Minesweeper Classic",
-                url = "https://minesweeper.online/",
-                description = "Online Arcade • Logic tile clearing strategy game",
-                isOffline = false
-            ),
-            WebArcadeGame(
-                title = "World of Solitaire",
-                url = "https://worldofsolitaire.com/",
-                description = "Online Arcade • Classic Klondike card game with animations",
-                isOffline = false
-            ),
-            WebArcadeGame(
-                title = "T-Rex Dino Runner",
-                url = "https://elgoog.im/t-rex/",
-                description = "Online Arcade • Endless jump & duck obstacle runner",
-                isOffline = false
-            )
-        )
-    }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var gameToRemove by remember { mutableStateOf<InstalledGameItem?>(null) }
 
     Box(
         modifier = modifier
@@ -139,190 +82,193 @@ fun GamesScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // Top Header
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column {
-                    Text(
-                        text = "Games Hub",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "All games launch strictly inside this app • ${featuredWebGames.size} in-app games",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = { showAddCustomGameDialog = true },
-                    shape = RoundedCornerShape(12.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add Game URL", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 80.dp)
-            ) {
-                // Section 1: Featured In-App Web & Offline Arcade Games
-                item {
-                    Text(
-                        text = "Instant In-App Games",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-
-                items(featuredWebGames) { game ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("web_game_${game.title}"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Surface(
-                                shape = CircleShape,
-                                color = if (game.isOffline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(48.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(44.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = if (game.isOffline) Icons.Filled.Gamepad else Icons.Filled.Language,
+                                        imageVector = Icons.Filled.SportsEsports,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
-
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = game.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (game.isOffline) {
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                        ) {
-                                            Text(
-                                                text = "OFFLINE",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontSize = 9.sp,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                            Column {
                                 Text(
-                                    text = game.description,
+                                    text = "Game Space",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (installedGames.isEmpty()) {
+                                        "No apps installed • Clean workspace"
+                                    } else {
+                                        "${installedGames.size} ${if (installedGames.size == 1) "app" else "apps"} installed • In-app sandbox"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onPickApkClick,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("install_apk_top_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FileOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Install APK")
+                        }
+
+                        FilledTonalButton(
+                            onClick = { showImportDialog = true },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("import_device_app_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add App")
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (installedGames.isEmpty()) {
+                // Clean Empty State
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(64.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.SportsEsports,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Your Game Space is Empty",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Text(
+                                text = "Only apps and APKs that you install yourself appear here. Tap \"Install APK\" to load an APK file from your device and run it directly inside this app.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
 
                             Button(
-                                onClick = { onPlayWebGame(game.title, game.url) },
+                                onClick = onPickApkClick,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("play_web_${game.title}")
+                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.PlayArrow,
-                                    contentDescription = "Play In-App",
-                                    modifier = Modifier.size(16.dp)
+                                    imageVector = Icons.Filled.FileOpen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Play In-App")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Select APK to Install")
                             }
                         }
                     }
                 }
-
-                // Section 2: Installed APK / Custom Apps
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Installed Apps & Games (In-App Launch)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-
-                if (installedGames.isEmpty()) {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(20.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "No custom APK games installed yet.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Tap the + button below to pick and install open-source APKs from your device downloads.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                } else {
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 88.dp)
+                ) {
                     items(installedGames, key = { it.packageName }) { game ->
-                        val appIcon = remember(game.packageName) {
+                        val appIcon = remember(game.packageName, game.iconPath) {
                             try {
-                                pm.getApplicationIcon(game.packageName)
+                                if (!game.iconPath.isNullOrBlank() && File(game.iconPath).exists()) {
+                                    val bmp = BitmapFactory.decodeFile(game.iconPath)
+                                    if (bmp != null) BitmapDrawable(context.resources, bmp) else null
+                                } else {
+                                    pm.getApplicationIcon(game.packageName)
+                                }
                             } catch (_: Exception) {
                                 null
                             }
@@ -331,26 +277,30 @@ fun GamesScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clickable { onLaunchGame(game) }
                                 .testTag("game_card_${game.packageName}"),
                             shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(14.dp),
+                                    .padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 AppIconImage(
                                     iconDrawable = appIcon,
                                     fallbackName = game.appName,
-                                    modifier = Modifier.size(48.dp)
+                                    modifier = Modifier.size(52.dp)
                                 )
 
                                 Column(
                                     modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Text(
                                         text = game.appName,
@@ -366,40 +316,57 @@ fun GamesScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (!game.versionName.isNullOrBlank()) {
-                                        Text(
-                                            text = "v${game.versionName}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (!game.versionName.isNullOrBlank()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                            ) {
+                                                Text(
+                                                    text = "v${game.versionName}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        if (!game.fileSizeFormatted.isNullOrBlank()) {
+                                            Text(
+                                                text = game.fileSizeFormatted,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
 
+                                IconButton(
+                                    onClick = { gameToRemove = game },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DeleteOutline,
+                                        contentDescription = "Remove from Game Space",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
                                 Button(
-                                    onClick = {
-                                        // Launch inside our app
-                                        val inAppUrl = when {
-                                            game.appName.contains("snake", ignoreCase = true) -> "file:///android_asset/games/snake.html"
-                                            game.appName.contains("2048", ignoreCase = true) -> "file:///android_asset/games/2048.html"
-                                            game.appName.contains("tic", ignoreCase = true) -> "file:///android_asset/games/tictactoe.html"
-                                            game.appName.contains("brick", ignoreCase = true) || game.appName.contains("pong", ignoreCase = true) -> "file:///android_asset/games/brickbreaker.html"
-                                            game.appName.contains("pacman", ignoreCase = true) -> "https://elgoog.im/pacman/"
-                                            game.appName.contains("mine", ignoreCase = true) -> "https://minesweeper.online/"
-                                            game.appName.contains("solitaire", ignoreCase = true) -> "https://worldofsolitaire.com/"
-                                            else -> "file:///android_asset/games/2048.html"
-                                        }
-                                        onPlayWebGame(game.appName, inAppUrl)
-                                    },
+                                    onClick = { onLaunchGame(game) },
                                     shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                                     modifier = Modifier.testTag("play_game_${game.packageName}")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.PlayArrow,
-                                        contentDescription = "Play In-App",
-                                        modifier = Modifier.size(16.dp)
+                                        contentDescription = "Launch In-App",
+                                        modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Play In-App")
+                                    Text("Launch")
                                 }
                             }
                         }
@@ -408,7 +375,7 @@ fun GamesScreen(
             }
         }
 
-        // Floating Action Button to pick APK file
+        // Floating Action Button to install APK into Game Space
         FloatingActionButton(
             onClick = onPickApkClick,
             modifier = Modifier
@@ -420,62 +387,146 @@ fun GamesScreen(
         ) {
             Icon(
                 imageVector = Icons.Filled.Add,
-                contentDescription = "Install APK Game"
+                contentDescription = "Install APK into Game Space"
             )
         }
     }
 
-    // Add Custom Game URL Dialog
-    if (showAddCustomGameDialog) {
+    // Confirm Remove Dialog
+    gameToRemove?.let { target ->
         AlertDialog(
-            onDismissRequest = { showAddCustomGameDialog = false },
-            title = { Text("Add Game to Play In-App") },
+            onDismissRequest = { gameToRemove = null },
+            title = { Text("Remove ${target.appName}?") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Enter a web game URL (e.g., HTML5 game from GitHub or web arcade) to play it directly inside this app.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = customGameTitle,
-                        onValueChange = { customGameTitle = it },
-                        label = { Text("Game Title") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = customGameUrl,
-                        onValueChange = { customGameUrl = it },
-                        label = { Text("Game Web URL") },
-                        placeholder = { Text("https://...") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                Text("This will remove ${target.appName} from your Game Space.")
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val title = customGameTitle.ifBlank { "Custom Game" }
-                        val url = if (customGameUrl.startsWith("http://") || customGameUrl.startsWith("https://") || customGameUrl.startsWith("file://")) {
-                            customGameUrl
-                        } else {
-                            "https://$customGameUrl"
-                        }
-                        showAddCustomGameDialog = false
-                        customGameTitle = ""
-                        customGameUrl = ""
-                        onPlayWebGame(title, url)
-                    },
-                    enabled = customGameUrl.isNotBlank()
+                        onRemoveGame(target.packageName)
+                        gameToRemove = null
+                    }
                 ) {
-                    Text("Launch In-App")
+                    Text("Remove")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAddCustomGameDialog = false }) {
+                TextButton(onClick = { gameToRemove = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Import Installed App into Game Space Dialog
+    if (showImportDialog) {
+        val deviceApps = remember { InstalledAppsManager.getInstalledApps(context) }
+        var searchQuery by remember { mutableStateOf("") }
+        val filtered = remember(deviceApps, searchQuery) {
+            if (searchQuery.isBlank()) deviceApps
+            else deviceApps.filter {
+                it.appName.contains(searchQuery, ignoreCase = true) ||
+                        it.packageName.contains(searchQuery, ignoreCase = true)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("Add App to Game Space") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Select an app to add to your Game Space, or pick an APK file from storage:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedButton(
+                        onClick = {
+                            showImportDialog = false
+                            onPickApkClick()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Pick APK File from Storage")
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search apps...") },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(260.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filtered, key = { it.packageName }) { app ->
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onImportDeviceApp(app.packageName, app.appName)
+                                        showImportDialog = false
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    AppIconImage(
+                                        iconDrawable = app.icon,
+                                        fallbackName = app.appName,
+                                        modifier = Modifier.size(38.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = app.appName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = app.packageName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Text(
+                                        text = "Add",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showImportDialog = false }) {
+                    Text("Close")
                 }
             }
         )

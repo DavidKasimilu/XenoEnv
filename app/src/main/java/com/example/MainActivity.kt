@@ -101,14 +101,17 @@ fun XenoApp(
     val activity = context as? Activity
     LaunchedEffect(uiState.preventOverlayApps) {
         activity?.window?.let { win ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                win.setHideOverlayWindows(uiState.preventOverlayApps)
-            }
-            if (uiState.preventOverlayApps) {
-                win.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-            } else {
+            try {
                 win.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            }
+            } catch (_: Throwable) {}
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    win.setHideOverlayWindows(uiState.preventOverlayApps)
+                }
+            } catch (_: Throwable) {}
+            try {
+                win.decorView.filterTouchesWhenObscured = uiState.preventOverlayApps
+            } catch (_: Throwable) {}
         }
     }
 
@@ -280,6 +283,7 @@ fun XenoApp(
                     gameTitle = uiState.activeGameTitle ?: "Game",
                     gameUrl = uiState.activeGameUrl!!,
                     onBack = { viewModel.setActiveGame(null, null) },
+                    onUpdateGameUrl = { newUrl -> viewModel.updateActiveGameUrl(newUrl) },
                     modifier = Modifier.fillMaxSize()
                 )
             } else if (uiState.showMediaManager) {
@@ -470,23 +474,14 @@ fun XenoApp(
                                         apkPickerLauncher.launch(arrayOf("*/*"))
                                     }
                                 },
-                                onLaunchGame = { pkg ->
-                                    val game = uiState.installedGames.find { it.packageName == pkg }
-                                    val title = game?.appName ?: "Game"
-                                    val inAppUrl = when {
-                                        title.contains("snake", ignoreCase = true) -> "file:///android_asset/games/snake.html"
-                                        title.contains("2048", ignoreCase = true) -> "file:///android_asset/games/2048.html"
-                                        title.contains("tic", ignoreCase = true) -> "file:///android_asset/games/tictactoe.html"
-                                        title.contains("brick", ignoreCase = true) || title.contains("pong", ignoreCase = true) -> "file:///android_asset/games/brickbreaker.html"
-                                        title.contains("pacman", ignoreCase = true) -> "https://elgoog.im/pacman/"
-                                        title.contains("mine", ignoreCase = true) -> "https://minesweeper.online/"
-                                        title.contains("solitaire", ignoreCase = true) -> "https://worldofsolitaire.com/"
-                                        else -> "file:///android_asset/games/2048.html"
-                                    }
-                                    viewModel.setActiveGame(title, inAppUrl)
+                                onLaunchGame = { game ->
+                                    viewModel.launchGameInApp(game)
                                 },
-                                onPlayWebGame = { title, url ->
-                                    viewModel.setActiveGame(title, url)
+                                onRemoveGame = { pkg ->
+                                    viewModel.removeGameFromSpace(pkg)
+                                },
+                                onImportDeviceApp = { pkg, appName ->
+                                    viewModel.importDeviceAppToGameSpace(pkg, appName)
                                 }
                             )
                         }
