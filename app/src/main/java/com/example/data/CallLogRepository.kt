@@ -140,6 +140,54 @@ class CallLogRepository(private val context: Context) {
         }
     }
 
+    suspend fun clearMissedCallLogs(): Boolean = withContext(Dispatchers.IO) {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.WRITE_CALL_LOG
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) return@withContext false
+
+        try {
+            val rows = contentResolver.delete(
+                CallLog.Calls.CONTENT_URI,
+                "${CallLog.Calls.TYPE} IN (?, ?)",
+                arrayOf(
+                    CallLog.Calls.MISSED_TYPE.toString(),
+                    CallLog.Calls.REJECTED_TYPE.toString()
+                )
+            )
+            rows >= 0
+        } catch (e: Exception) {
+            Log.e("CallLogRepository", "Failed to clear missed call logs", e)
+            false
+        }
+    }
+
+    suspend fun markMissedCallsAsRead() = withContext(Dispatchers.IO) {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.WRITE_CALL_LOG
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) return@withContext
+
+        try {
+            val values = android.content.ContentValues().apply {
+                put(CallLog.Calls.NEW, 0)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    put(CallLog.Calls.IS_READ, 1)
+                }
+            }
+            contentResolver.update(
+                CallLog.Calls.CONTENT_URI,
+                values,
+                "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.NEW} = 1",
+                arrayOf(CallLog.Calls.MISSED_TYPE.toString())
+            )
+        } catch (e: Exception) {
+            Log.w("CallLogRepository", "Failed to mark missed calls as read: ${e.message}")
+        }
+    }
+
     suspend fun clearCallLogs(): Boolean = withContext(Dispatchers.IO) {
         try {
             val rows = contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)

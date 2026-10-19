@@ -150,15 +150,46 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
                 }
 
-                var styleId = 'xeno-wa-support-style';
-                if (!document.getElementById(styleId) && document.head) {
-                    var st = document.createElement('style');
-                    st.id = styleId;
-                    st.textContent =
-                        'html, body { width: 100% !important; height: 100% !important; min-height: 100vh !important; overflow: auto !important; background-color: #111b21 !important; } ' +
-                        '#app { min-width: 320px !important; min-height: 100vh !important; width: 100% !important; height: 100% !important; display: block !important; visibility: visible !important; opacity: 1 !important; } ' +
-                        '#app > div { min-width: 320px !important; width: 100% !important; height: 100% !important; overflow: auto !important; }';
-                    document.head.appendChild(st);
+                // Remove any custom style overrides so WhatsApp Web keeps its exact untouched desktop CSS
+                var oldStyle = document.getElementById('xeno-wa-support-style');
+                if (oldStyle && oldStyle.parentNode) {
+                    oldStyle.parentNode.removeChild(oldStyle);
+                }
+
+                // Replace WhatsApp Web's 'width=device-width' meta viewport with a standard 1280px desktop viewport
+                // so WebView renders the genuine desktop layout as-is without squishing or resizing panels to phone width
+                function ensureDesktopViewport() {
+                    if (!document.head) return;
+                    var existingMetas = document.head.querySelectorAll('meta[name="viewport"]');
+                    for (var i = 0; i < existingMetas.length; i++) {
+                        if (existingMetas[i].id !== 'xeno-wa-desktop-viewport') {
+                            existingMetas[i].parentNode.removeChild(existingMetas[i]);
+                        }
+                    }
+                    var vp = document.getElementById('xeno-wa-desktop-viewport');
+                    if (!vp) {
+                        var desktopWidth = 1280;
+                        var sw = Math.min(window.screen.width || 390, window.screen.availWidth || 390);
+                        if (!sw || sw <= 0 || sw > 1200) sw = 390;
+                        var initScale = Math.max(0.15, Math.min(1.0, sw / desktopWidth)).toFixed(4);
+                        vp = document.createElement('meta');
+                        vp.id = 'xeno-wa-desktop-viewport';
+                        vp.name = 'viewport';
+                        vp.content = 'width=' + desktopWidth + ', initial-scale=' + initScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                        document.head.appendChild(vp);
+                    }
+                }
+
+                ensureDesktopViewport();
+
+                if (!window.__xenoWaHeadObserver && window.MutationObserver && document.head) {
+                    window.__xenoWaHeadObserver = new MutationObserver(function() {
+                        var extras = document.head ? document.head.querySelectorAll('meta[name="viewport"]:not(#xeno-wa-desktop-viewport)') : [];
+                        if (extras.length > 0 || !document.getElementById('xeno-wa-desktop-viewport')) {
+                            ensureDesktopViewport();
+                        }
+                    });
+                    window.__xenoWaHeadObserver.observe(document.head, { childList: true });
                 }
             } catch(e) {}
         })();
@@ -645,9 +676,11 @@ fun CloneWorkspaceScreen(
                                 } else {
                                     setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 }
-                                isVerticalScrollBarEnabled = false
-                                isHorizontalScrollBarEnabled = false
-                                overScrollMode = View.OVER_SCROLL_NEVER
+                                isVerticalScrollBarEnabled = !isInstagram
+                                isHorizontalScrollBarEnabled = !isInstagram
+                                if (isInstagram) {
+                                    overScrollMode = View.OVER_SCROLL_NEVER
+                                }
                                 isNestedScrollingEnabled = true
                                 setBackgroundColor(
                                     when {
@@ -715,6 +748,9 @@ fun CloneWorkspaceScreen(
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                         isLoading = true
+                                        if (isWhatsapp) {
+                                            injectWhatsAppWebSupportEngine(view)
+                                        }
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
@@ -738,6 +774,9 @@ fun CloneWorkspaceScreen(
                                         } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
                                             injectInstagramReelsAndScrollHelper(view)
                                         }
+                                        try {
+                                            CookieManager.getInstance().flush()
+                                        } catch (_: Exception) {}
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
@@ -748,7 +787,9 @@ fun CloneWorkspaceScreen(
 
                                     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                         super.doUpdateVisitedHistory(view, url, isReload)
-                                        if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
+                                        if (isWhatsapp) {
+                                            injectWhatsAppWebSupportEngine(view)
+                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
                                             injectInstagramReelsAndScrollHelper(view)
                                         }
                                         url?.let {

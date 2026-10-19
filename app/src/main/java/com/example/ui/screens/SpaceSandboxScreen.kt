@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
@@ -211,6 +212,13 @@ private fun CloneAppIconItem(
                 instance.displayName.contains("whatsapp", ignoreCase = true)
     }
 
+    val isGmail = remember(instance) {
+        instance.packageName.contains("com.google.android.gm", ignoreCase = true) ||
+                instance.originalName.contains("gmail", ignoreCase = true) ||
+                instance.displayName.contains("gmail", ignoreCase = true) ||
+                instance.targetUrl.contains("mail.google.com", ignoreCase = true)
+    }
+
     val appIcon = remember(instance.packageName) {
         try {
             if (instance.packageName.isNotBlank()) {
@@ -221,10 +229,11 @@ private fun CloneAppIconItem(
         }
     }
 
-    val cleanLabel = remember(instance.displayName, instance.originalName, isInstagram, isWhatsapp) {
+    val cleanLabel = remember(instance.displayName, instance.originalName, isInstagram, isWhatsapp, isGmail) {
         when {
             isInstagram && instance.displayName == "Instagram (Clone 1)" -> "Instagram"
             isWhatsapp && instance.displayName == "WhatsApp (Personal)" -> "WhatsApp"
+            isGmail && instance.displayName.startsWith("Gmail", ignoreCase = true) -> "Gmail"
             else -> instance.displayName.ifBlank { instance.originalName }
         }
     }
@@ -300,6 +309,29 @@ private fun CloneAppIconItem(
                         Icon(
                             imageVector = Icons.Filled.Chat,
                             contentDescription = "WhatsApp",
+                            tint = Color.White,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                } else if (isGmail) {
+                    // Authentic Gmail Red Icon
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFFEA4335),
+                                        Color(0xFFC5221F)
+                                    )
+                                )
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Email,
+                            contentDescription = "Gmail",
                             tint = Color.White,
                             modifier = Modifier.size(30.dp)
                         )

@@ -1,8 +1,13 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.provider.CallLog
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.BrowserRepository
@@ -39,11 +44,13 @@ import com.example.telecom.XenoNotificationHelper
 import com.example.telecom.TelecomHelper
 import com.example.telecom.XenoInCallService
 import com.example.telecom.XenoNotificationListenerService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 enum class XenoTab {
     CALLS,
@@ -83,6 +90,7 @@ data class XenoUiState(
     val messagesSubTab: MessagesSubTab = MessagesSubTab.SMS,
     val isLoading: Boolean = false,
     val callLogs: List<CallLogEntry> = emptyList(),
+    val unseenMissedCallsCount: Int = 0,
     val callFilter: CallFilter = CallFilter.ALL,
     val contacts: List<ContactItem> = emptyList(),
     val contactSearchQuery: String = "",
@@ -168,16 +176,24 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val passwordRepo = PasswordRepository(application)
     private val downloadRepo = DownloadRepository(application)
 
+    private val callPrefs = application.getSharedPreferences("xeno_call_prefs", Context.MODE_PRIVATE)
+    private val recentInMemoryCalls = CopyOnWriteArrayList<CallLogEntry>()
+    private var callLogContentObserver: ContentObserver? = null
+
     private val _uiState = MutableStateFlow(XenoUiState())
     val uiState: StateFlow<XenoUiState> = _uiState.asStateFlow()
 
     init {
+        if (!callPrefs.contains("last_seen_calls_ts")) {
+            callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
+        }
         checkDefaultAppStatus()
         checkNotificationAccess()
         loadBrowserMemory()
         loadSpaceData()
         loadPasswords()
         loadDownloads()
+        registerCallLogSyncHelper()
         loadAllData()
         loadInstalledGames(getApplication())
 
@@ -200,8 +216,138 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             dismissCallPopup()
             if (_uiState.value.activeCallState != null) {
                 endActiveCall(0L)
+            } else {
+                triggerPostCallHistorySync()
             }
         }
+    }
+
+    /**
+     * Helper function that observes system CallLog changes in real time and syncs call history
+     * immediately without waiting for slow media or storage scans.
+     */
+    private fun registerCallLogSyncHelper() {
+        try {
+            val app = getApplication<Application>()
+            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    super.onChange(selfChange)
+                    syncCallHistoryFast()
+                }
+
+                override fun onChange(selfChange: Boolean, uri: Uri?) {
+                    super.onChange(selfChange, uri)
+                    syncCallHistoryFast()
+                }
+            }
+            app.contentResolver.registerContentObserver(
+                CallLog.Calls.CONTENT_URI,
+                true,
+                observer
+            )
+            callLogContentObserver = observer
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Fast, dedicated Call History Sync Helper:
+     * Fetches device call logs on Dispatchers.IO, merges any pending in-app call records that
+     * the system CallLogProvider hasn't committed yet, enriches missing contact names, and updates
+     * unseen missed call badge state immediately.
+     */
+    fun syncCallHistoryFast() {
+        viewModelScope.launch {
+            val systemLogs = callLogRepo.getCallLogs()
+            val knownContacts = _uiState.value.contacts
+
+            // Merge recent optimistic call entries not yet reflected in system provider
+            val now = System.currentTimeMillis()
+            recentInMemoryCalls.removeAll { now - it.date > 60_000L }
+
+            val merged = mutableListOf<CallLogEntry>()
+            for (localEntry in recentInMemoryCalls) {
+                val localDigits = localEntry.number.filter { it.isDigit() }.takeLast(7)
+                val alreadyInSystem = systemLogs.any { sys ->
+                    val sysDigits = sys.number.filter { it.isDigit() }.takeLast(7)
+                    (sysDigits == localDigits || sys.number == localEntry.number) &&
+                            Math.abs(sys.date - localEntry.date) < 15_000L
+                }
+                if (!alreadyInSystem) {
+                    merged.add(localEntry)
+                }
+            }
+            merged.addAll(systemLogs)
+
+            val enrichedLogs = merged
+                .sortedByDescending { it.date }
+                .map { entry ->
+                    if (entry.cachedName.isNullOrBlank() && knownContacts.isNotEmpty()) {
+                        val targetDigits = entry.number.filter { it.isDigit() }.takeLast(7)
+                        val match = if (targetDigits.length >= 5) {
+                            knownContacts.find { c ->
+                                c.primaryNumber.filter { it.isDigit() }.endsWith(targetDigits) ||
+                                        c.allNumbers.any { n -> n.filter { it.isDigit() }.endsWith(targetDigits) }
+                            }
+                        } else null
+                        if (match != null) entry.copy(cachedName = match.displayName) else entry
+                    } else {
+                        entry
+                    }
+                }
+
+            val isOnCallsTab = _uiState.value.currentTab == XenoTab.CALLS
+            val lastSeenTs = callPrefs.getLong("last_seen_calls_ts", 0L)
+            val newUnseenCount = if (isOnCallsTab) {
+                val maxTs = maxOf(now, enrichedLogs.maxOfOrNull { it.date } ?: now)
+                callPrefs.edit().putLong("last_seen_calls_ts", maxTs).apply()
+                0
+            } else {
+                enrichedLogs.count {
+                    (it.type == CallType.MISSED || it.type == CallType.REJECTED) && it.date > lastSeenTs
+                }
+            }
+
+            _uiState.value = _uiState.value.copy(
+                callLogs = enrichedLogs,
+                unseenMissedCallsCount = newUnseenCount
+            )
+        }
+    }
+
+    /**
+     * Multi-stage post-call sync helper to catch asynchronous system CallLogProvider writes
+     * immediately after a call ends or is missed.
+     */
+    fun triggerPostCallHistorySync() {
+        syncCallHistoryFast()
+        viewModelScope.launch {
+            delay(350)
+            syncCallHistoryFast()
+            delay(750)
+            syncCallHistoryFast()
+        }
+    }
+
+    fun markMissedCallsAsSeen() {
+        val now = System.currentTimeMillis()
+        val maxCallDate = _uiState.value.callLogs.maxOfOrNull { it.date } ?: now
+        val newSeenTs = maxOf(now, maxCallDate)
+        callPrefs.edit().putLong("last_seen_calls_ts", newSeenTs).apply()
+        if (_uiState.value.unseenMissedCallsCount != 0) {
+            _uiState.value = _uiState.value.copy(unseenMissedCallsCount = 0)
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            callLogRepo.markMissedCallsAsRead()
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            callLogContentObserver?.let {
+                getApplication<Application>().contentResolver.unregisterContentObserver(it)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun loadBrowserMemory() {
@@ -215,10 +361,16 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTab(tab: XenoTab) {
+        val isCalls = tab == XenoTab.CALLS
         _uiState.value = _uiState.value.copy(
             currentTab = tab,
+            unseenMissedCallsCount = if (isCalls) 0 else _uiState.value.unseenMissedCallsCount,
             activeChatThread = if (tab != XenoTab.MESSAGES) null else _uiState.value.activeChatThread
         )
+        if (isCalls) {
+            markMissedCallsAsSeen()
+            syncCallHistoryFast()
+        }
     }
 
     fun checkDefaultAppStatus() {
@@ -232,18 +384,27 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadAllData() {
+        // 1. Immediately sync call logs in a dedicated fast coroutine so Calls tab never waits for gallery/SMS
+        syncCallHistoryFast()
+
+        // 2. Load contacts & SMS threads in parallel
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val calls = callLogRepo.getCallLogs()
             val contacts = contactsRepo.getContacts()
             val threads = smsRepo.getConversations()
-            val media = galleryRepo.getMediaItems()
+            _uiState.value = _uiState.value.copy(
+                contacts = contacts,
+                smsThreads = threads
+            )
+            // Re-enrich call log contact names once contacts finish loading
+            syncCallHistoryFast()
+        }
 
+        // 3. Load gallery media items independently in background
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val media = galleryRepo.getMediaItems()
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
-                callLogs = calls,
-                contacts = contacts,
-                smsThreads = threads,
                 mediaItems = media
             )
         }
@@ -252,6 +413,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     // Call Log functions
     fun setCallFilter(filter: CallFilter) {
         _uiState.value = _uiState.value.copy(callFilter = filter)
+        if (filter == CallFilter.MISSED) {
+            markMissedCallsAsSeen()
+        }
     }
 
     fun selectCallLog(entry: CallLogEntry?) {
@@ -259,6 +423,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteCallLog(entry: CallLogEntry) {
+        recentInMemoryCalls.removeAll { it.id == entry.id }
         viewModelScope.launch {
             val success = callLogRepo.deleteCallLog(entry.id)
             _uiState.value = _uiState.value.copy(
@@ -269,11 +434,32 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun clearMissedCallLogs() {
+        recentInMemoryCalls.removeAll { it.type == CallType.MISSED || it.type == CallType.REJECTED }
+        val remainingLogs = _uiState.value.callLogs.filter {
+            it.type != CallType.MISSED && it.type != CallType.REJECTED
+        }
+        markMissedCallsAsSeen()
+        _uiState.value = _uiState.value.copy(
+            callLogs = remainingLogs,
+            unseenMissedCallsCount = 0,
+            selectedCallLog = null,
+            userNotice = "Missed calls cleared"
+        )
+        viewModelScope.launch {
+            callLogRepo.clearMissedCallLogs()
+            syncCallHistoryFast()
+        }
+    }
+
     fun clearAllCallLogs() {
+        recentInMemoryCalls.clear()
+        markMissedCallsAsSeen()
         viewModelScope.launch {
             callLogRepo.clearCallLogs()
             _uiState.value = _uiState.value.copy(
                 callLogs = emptyList(),
+                unseenMissedCallsCount = 0,
                 selectedCallLog = null,
                 userNotice = "Call history cleared"
             )
@@ -422,10 +608,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshCallLogs() {
-        viewModelScope.launch {
-            val logs = callLogRepo.getCallLogs()
-            _uiState.value = _uiState.value.copy(callLogs = logs)
-        }
+        syncCallHistoryFast()
     }
 
     fun refreshContacts() {
@@ -834,31 +1017,31 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         XenoNotificationHelper.cancelCallNotification(getApplication())
         XenoInCallService.endCall()
         val call = _uiState.value.activeCallState
-        if (call != null) {
-            viewModelScope.launch {
-                val actualDuration = if (durationSeconds > 0) durationSeconds else 1L
-                val callType = if (call.isIncoming) CallType.INCOMING else CallType.OUTGOING
-                val newEntry = CallLogEntry(
-                    id = System.currentTimeMillis(),
-                    number = call.phoneNumber,
-                    cachedName = call.contactName,
-                    type = callType,
-                    date = System.currentTimeMillis(),
-                    durationSeconds = actualDuration,
-                    photoUri = null
-                )
-                // Insert to system call log if permission available
-                callLogRepo.insertCallLog(call.phoneNumber, call.contactName, actualDuration, callType)
-                val logs = callLogRepo.getCallLogs()
-                val updatedLogs = if (logs.none { it.number == call.phoneNumber && Math.abs(it.date - newEntry.date) < 5000 }) {
-                    listOf(newEntry) + logs
-                } else {
-                    logs
-                }
-                _uiState.value = _uiState.value.copy(callLogs = updatedLogs)
-            }
-        }
         _uiState.value = _uiState.value.copy(activeCallState = null)
+        if (call != null) {
+            val now = System.currentTimeMillis()
+            val actualDuration = if (durationSeconds > 0) durationSeconds else 1L
+            val callType = if (call.isIncoming) CallType.INCOMING else CallType.OUTGOING
+            val newEntry = CallLogEntry(
+                id = now,
+                number = call.phoneNumber,
+                cachedName = call.contactName,
+                type = callType,
+                date = now,
+                durationSeconds = actualDuration,
+                photoUri = null
+            )
+            recentInMemoryCalls.add(0, newEntry)
+            _uiState.value = _uiState.value.copy(
+                callLogs = listOf(newEntry) + _uiState.value.callLogs
+            )
+            viewModelScope.launch {
+                callLogRepo.insertCallLog(call.phoneNumber, call.contactName, actualDuration, callType)
+                triggerPostCallHistorySync()
+            }
+        } else {
+            triggerPostCallHistorySync()
+        }
     }
 
     fun isUssdCode(number: String): Boolean {
@@ -943,23 +1126,34 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         XenoNotificationHelper.cancelCallNotification(getApplication())
         XenoInCallService.rejectCall()
         val call = _uiState.value.activeCallState
-        if (call != null) {
-            viewModelScope.launch {
-                val newEntry = CallLogEntry(
-                    id = System.currentTimeMillis(),
-                    number = call.phoneNumber,
-                    cachedName = call.contactName,
-                    type = CallType.MISSED,
-                    date = System.currentTimeMillis(),
-                    durationSeconds = 0L,
-                    photoUri = null
-                )
-                callLogRepo.insertCallLog(call.phoneNumber, call.contactName, 0L, CallType.MISSED)
-                val logs = callLogRepo.getCallLogs()
-                _uiState.value = _uiState.value.copy(callLogs = listOf(newEntry) + logs)
-            }
-        }
         _uiState.value = _uiState.value.copy(activeCallState = null)
+        if (call != null) {
+            val now = System.currentTimeMillis()
+            val newEntry = CallLogEntry(
+                id = now,
+                number = call.phoneNumber,
+                cachedName = call.contactName,
+                type = CallType.MISSED,
+                date = now,
+                durationSeconds = 0L,
+                photoUri = null
+            )
+            recentInMemoryCalls.add(0, newEntry)
+            val isOnCallsTab = _uiState.value.currentTab == XenoTab.CALLS
+            if (isOnCallsTab) {
+                callPrefs.edit().putLong("last_seen_calls_ts", now).apply()
+            }
+            _uiState.value = _uiState.value.copy(
+                callLogs = listOf(newEntry) + _uiState.value.callLogs,
+                unseenMissedCallsCount = if (isOnCallsTab) 0 else _uiState.value.unseenMissedCallsCount + 1
+            )
+            viewModelScope.launch {
+                callLogRepo.insertCallLog(call.phoneNumber, call.contactName, 0L, CallType.MISSED)
+                triggerPostCallHistorySync()
+            }
+        } else {
+            triggerPostCallHistorySync()
+        }
     }
 
     fun dismissSmsPopup() {
@@ -998,25 +1192,29 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun declineCallPopup(popup: IncomingCallPopup) {
         dismissCallPopup()
         XenoInCallService.rejectCall()
+        val now = System.currentTimeMillis()
+        val newEntry = CallLogEntry(
+            id = now,
+            number = popup.callerNumber,
+            cachedName = popup.callerName,
+            type = CallType.MISSED,
+            date = now,
+            durationSeconds = 0L,
+            photoUri = null
+        )
+        recentInMemoryCalls.add(0, newEntry)
+        val isOnCallsTab = _uiState.value.currentTab == XenoTab.CALLS
+        if (isOnCallsTab) {
+            callPrefs.edit().putLong("last_seen_calls_ts", now).apply()
+        }
+        _uiState.value = _uiState.value.copy(
+            callLogs = listOf(newEntry) + _uiState.value.callLogs,
+            unseenMissedCallsCount = if (isOnCallsTab) 0 else _uiState.value.unseenMissedCallsCount + 1,
+            userNotice = "Call declined"
+        )
         viewModelScope.launch {
-            val newEntry = CallLogEntry(
-                id = System.currentTimeMillis(),
-                number = popup.callerNumber,
-                cachedName = popup.callerName,
-                type = CallType.MISSED,
-                date = System.currentTimeMillis(),
-                durationSeconds = 0L,
-                photoUri = null
-            )
             callLogRepo.insertCallLog(popup.callerNumber, popup.callerName, 0L, CallType.MISSED)
-            val logs = callLogRepo.getCallLogs()
-            val updatedLogs = if (logs.none { it.number == popup.callerNumber && Math.abs(it.date - newEntry.date) < 5000 }) {
-                listOf(newEntry) + logs
-            } else logs
-            _uiState.value = _uiState.value.copy(
-                callLogs = updatedLogs,
-                userNotice = "Call declined"
-            )
+            triggerPostCallHistorySync()
         }
     }
 

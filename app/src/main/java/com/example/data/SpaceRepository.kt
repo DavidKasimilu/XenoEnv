@@ -78,6 +78,20 @@ class SpaceRepository(private val context: Context) {
                     lastActiveTime = now,
                     lastUrl = "https://web.whatsapp.com/",
                     isDesktopMode = true
+                ),
+                ClonedAppInstance(
+                    instanceId = "clone_gmail_1",
+                    packageName = "com.google.android.gm",
+                    templateId = "com.google.android.gm",
+                    displayName = "Gmail",
+                    originalName = "Gmail",
+                    targetUrl = "https://mail.google.com/",
+                    badgeTag = "Mail",
+                    badgeColorHex = "#EA4335",
+                    createdAt = now,
+                    lastActiveTime = now,
+                    lastUrl = "https://mail.google.com/",
+                    isDesktopMode = false
                 )
             )
         }
@@ -87,6 +101,7 @@ class SpaceRepository(private val context: Context) {
         val jsonStr = prefs.getString("cloned_instances", null)
         if (jsonStr.isNullOrBlank()) {
             val defaultList = getDefaultInitialClones()
+            prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
             saveClonedInstances(defaultList)
             return defaultList
         }
@@ -114,13 +129,20 @@ class SpaceRepository(private val context: Context) {
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
-                // Auto-repair missing or blank URL for Instagram, WhatsApp or any other app
+                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail or any other app
                 val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
                         origName.contains("whatsapp", ignoreCase = true) ||
                         dispName.contains("whatsapp", ignoreCase = true) ||
                         rawTarget.contains("whatsapp.com", ignoreCase = true)
+                val isGmail = pkg.contains("android.gm", ignoreCase = true) ||
+                        pkg.contains("gmail", ignoreCase = true) ||
+                        origName.contains("gmail", ignoreCase = true) ||
+                        dispName.contains("gmail", ignoreCase = true) ||
+                        rawTarget.contains("mail.google.com", ignoreCase = true)
                 val resolvedTarget = if (isWa) {
                     "https://web.whatsapp.com/"
+                } else if (isGmail) {
+                    "https://mail.google.com/"
                 } else if (rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true)) {
                     rawTarget
                 } else {
@@ -131,6 +153,9 @@ class SpaceRepository(private val context: Context) {
                 val resolvedLast = if (isWa && (rawLast.isBlank() || rawLast.contains("download") || rawLast.equals("about:blank", ignoreCase = true) || !rawLast.startsWith("https://web.whatsapp.com"))) {
                     needsResave = true
                     "https://web.whatsapp.com/"
+                } else if (isGmail && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
+                    needsResave = true
+                    "https://mail.google.com/"
                 } else if (rawLast.isNotBlank() && !rawLast.equals("about:blank", ignoreCase = true)) {
                     rawLast
                 } else {
@@ -158,8 +183,16 @@ class SpaceRepository(private val context: Context) {
                         displayName = dispName,
                         originalName = origName,
                         targetUrl = resolvedTarget,
-                        badgeTag = obj.optString("badgeTag", if (isWa) "Web" else "Clone"),
-                        badgeColorHex = obj.optString("badgeColorHex", if (isWa) "#25D366" else "#E1306C"),
+                        badgeTag = obj.optString("badgeTag", when {
+                            isWa -> "Web"
+                            isGmail -> "Mail"
+                            else -> "Clone"
+                        }),
+                        badgeColorHex = obj.optString("badgeColorHex", when {
+                            isWa -> "#25D366"
+                            isGmail -> "#EA4335"
+                            else -> "#E1306C"
+                        }),
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                         lastActiveTime = obj.optLong("lastActiveTime", System.currentTimeMillis()),
                         lastUrl = resolvedLast,
@@ -171,8 +204,41 @@ class SpaceRepository(private val context: Context) {
 
         if (list.isEmpty()) {
             val defaultList = getDefaultInitialClones()
+            prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
             saveClonedInstances(defaultList)
             return defaultList
+        }
+
+        // Ensure the 3rd default app (Gmail) is added once for existing users
+        if (!prefs.getBoolean("gmail_default_clone_added_v1", false)) {
+            val hasGmail = list.any {
+                it.packageName.contains("android.gm", ignoreCase = true) ||
+                        it.packageName.contains("gmail", ignoreCase = true) ||
+                        it.originalName.contains("gmail", ignoreCase = true) ||
+                        it.displayName.contains("gmail", ignoreCase = true) ||
+                        it.targetUrl.contains("mail.google.com", ignoreCase = true)
+            }
+            if (!hasGmail) {
+                val now = System.currentTimeMillis()
+                list.add(
+                    ClonedAppInstance(
+                        instanceId = "clone_gmail_1",
+                        packageName = "com.google.android.gm",
+                        templateId = "com.google.android.gm",
+                        displayName = "Gmail",
+                        originalName = "Gmail",
+                        targetUrl = "https://mail.google.com/",
+                        badgeTag = "Mail",
+                        badgeColorHex = "#EA4335",
+                        createdAt = now,
+                        lastActiveTime = now,
+                        lastUrl = "https://mail.google.com/",
+                        isDesktopMode = false
+                    )
+                )
+                needsResave = true
+            }
+            prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
         }
 
         if (needsResave) {

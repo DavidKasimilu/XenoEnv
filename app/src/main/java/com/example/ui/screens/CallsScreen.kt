@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +81,8 @@ fun CallsScreen(
     onFilterChange: (CallFilter) -> Unit,
     onDeleteCall: (CallLogEntry) -> Unit,
     onClearAll: () -> Unit,
+    onClearMissedCalls: () -> Unit = {},
+    onMarkMissedSeen: () -> Unit = {},
     onStartSms: (String, String?) -> Unit,
     onOpenContacts: () -> Unit,
     onStartCall: (String, String?) -> Unit,
@@ -92,6 +95,10 @@ fun CallsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
+
+    LaunchedEffect(Unit, callLogs.size) {
+        onMarkMissedSeen()
+    }
 
     fun placeCall(number: String, name: String? = null) {
         val clean = number.trim()
@@ -151,14 +158,14 @@ fun CallsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (callLogs.isNotEmpty()) {
+                if (filteredLogs.isNotEmpty()) {
                     IconButton(
                         onClick = { showClearDialog = true },
                         modifier = Modifier.testTag("clear_history_button")
                     ) {
                         Icon(
                             imageVector = Icons.Filled.ClearAll,
-                            contentDescription = "Clear call history",
+                            contentDescription = if (filter == CallFilter.MISSED) "Clear missed calls" else "Clear call history",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -432,18 +439,55 @@ fun CallsScreen(
     }
 
     if (showClearDialog) {
+        val hasMissedCalls = callLogs.any { it.type == CallType.MISSED || it.type == CallType.REJECTED }
+        val isMissedFilter = filter == CallFilter.MISSED
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear Call History") },
-            text = { Text("Are you sure you want to remove all call records from your history?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onClearAll()
-                        showClearDialog = false
+            title = {
+                Text(if (isMissedFilter) "Clear Missed Calls" else "Clear Call History")
+            },
+            text = {
+                Text(
+                    if (isMissedFilter) {
+                        "Are you sure you want to clear all missed call records? Your incoming and outgoing call history will be kept."
+                    } else if (hasMissedCalls) {
+                        "Would you like to clear only missed calls or clear your entire call history?"
+                    } else {
+                        "Are you sure you want to remove all call records from your history?"
                     }
-                ) {
-                    Text("Clear All", color = MaterialTheme.colorScheme.error)
+                )
+            },
+            confirmButton = {
+                if (isMissedFilter) {
+                    TextButton(
+                        onClick = {
+                            onClearMissedCalls()
+                            showClearDialog = false
+                        }
+                    ) {
+                        Text("Clear Missed", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (hasMissedCalls) {
+                            TextButton(
+                                onClick = {
+                                    onClearMissedCalls()
+                                    showClearDialog = false
+                                }
+                            ) {
+                                Text("Clear Missed Only", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                onClearAll()
+                                showClearDialog = false
+                            }
+                        ) {
+                            Text("Clear All", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             },
             dismissButton = {

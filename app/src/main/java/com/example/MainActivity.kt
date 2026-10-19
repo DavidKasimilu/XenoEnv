@@ -246,9 +246,7 @@ fun XenoApp(
         }
     }
 
-    val missedCount = remember(uiState.callLogs) {
-        uiState.callLogs.count { it.type == CallType.MISSED }
-    }
+    val missedCount = if (uiState.currentTab == XenoTab.CALLS) 0 else uiState.unseenMissedCallsCount
     val unreadSmsCount = remember(uiState.smsThreads) {
         uiState.smsThreads.sumOf { it.unreadCount }
     }
@@ -351,6 +349,8 @@ fun XenoApp(
                                     onFilterChange = { viewModel.setCallFilter(it) },
                                     onDeleteCall = { viewModel.deleteCallLog(it) },
                                     onClearAll = { viewModel.clearAllCallLogs() },
+                                    onClearMissedCalls = { viewModel.clearMissedCallLogs() },
+                                    onMarkMissedSeen = { viewModel.markMissedCallsAsSeen() },
                                     onStartSms = { num, name -> viewModel.startChatWithNumber(num, name) },
                                     onOpenContacts = { viewModel.selectTab(XenoTab.CONTACTS) },
                                     onStartCall = { num, name -> viewModel.startCall(num, name) },
