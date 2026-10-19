@@ -56,8 +56,6 @@ import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.ContactsScreen
 import com.example.ui.screens.FileManagerScreen
 import com.example.ui.screens.GalleryScreen
-import com.example.ui.screens.GamePlayScreen
-import com.example.ui.screens.GamesScreen
 import com.example.ui.screens.KeypadScreen
 import com.example.ui.screens.MessagesScreen
 import com.example.ui.screens.SettingsScreen
@@ -230,11 +228,17 @@ fun XenoApp(
         }
     }
 
-    // Immersive system bars for browser fullscreen landscape video
-    LaunchedEffect(uiState.isBrowserFullscreenVideo) {
+    // Immersive system bars for browser fullscreen video and built-in video player (no top or bottom phone bars)
+    val isImmersiveVideoActive = uiState.isBrowserFullscreenVideo || uiState.selectedVideoItem != null
+    LaunchedEffect(isImmersiveVideoActive) {
         val window = (context as? Activity)?.window ?: return@LaunchedEffect
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        if (uiState.isBrowserFullscreenVideo) {
+        if (isImmersiveVideoActive) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
             insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
         } else {
@@ -253,7 +257,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && uiState.activeGameUrl == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = { viewModel.selectTab(it) },
@@ -263,7 +267,7 @@ fun XenoApp(
             }
         }
     ) { innerPadding ->
-        val effectivePadding = if (uiState.isBrowserFullscreenVideo) PaddingValues(0.dp) else innerPadding
+        val effectivePadding = if (isImmersiveVideoActive) PaddingValues(0.dp) else innerPadding
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -276,15 +280,6 @@ fun XenoApp(
                     onToggleHide = { viewModel.setVideoControlsHidden(it) },
                     onClose = { viewModel.selectVideoItem(null) },
                     onDeleteVideo = { viewModel.deleteMediaItem(it) },
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else if (uiState.activeGameUrl != null) {
-                GamePlayScreen(
-                    gameTitle = uiState.activeGameTitle ?: "Game",
-                    gameUrl = uiState.activeGameUrl!!,
-                    gameItem = uiState.activeGameItem,
-                    onBack = { viewModel.setActiveGame(null, null) },
-                    onUpdateGameUrl = { newUrl -> viewModel.updateActiveGameUrl(newUrl) },
                     modifier = Modifier.fillMaxSize()
                 )
             } else if (uiState.showMediaManager) {
@@ -458,46 +453,12 @@ fun XenoApp(
                                 savedPasswords = uiState.savedPasswords,
                                 showPasswordManager = uiState.showPasswordManager,
                                 onSetShowPasswordManager = { viewModel.setShowPasswordManager(it) },
+                                onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },
                                 onDeletePassword = { viewModel.deletePassword(it) },
-                                 onPlayVideo = { viewModel.selectVideoItem(it) }
-                            )
-                        }
-                        XenoTab.GAMES -> {
-                            GamesScreen(
-                                installedGames = uiState.installedGames,
-                                apkInstallState = uiState.apkInstallState,
-                                downloads = uiState.downloads,
-                                onPickApkClick = {
-                                    try {
-                                        apkPickerLauncher.launch(arrayOf("application/vnd.android.package-archive", "*/*"))
-                                    } catch (e: Exception) {
-                                        apkPickerLauncher.launch(arrayOf("*/*"))
-                                    }
-                                },
-                                onInstallApkUri = { uri ->
-                                    viewModel.installApk(uri, context)
-                                },
-                                onLaunchGame = { game ->
-                                    viewModel.launchGameInApp(game)
-                                },
-                                onRemoveGame = { pkg ->
-                                    viewModel.removeGameFromSpace(pkg)
-                                },
-                                onImportDeviceApp = { pkg, appName ->
-                                    viewModel.importDeviceAppToGameSpace(pkg, appName)
-                                },
-                                onUpdateEnvProfile = { pkg, profile ->
-                                    viewModel.updateGameEnvProfile(pkg, profile)
-                                },
-                                onClearVirtualData = { pkg ->
-                                    viewModel.clearVirtualGameData(pkg)
-                                },
-                                onDismissInstallModal = {
-                                    viewModel.dismissApkInstallModal()
-                                }
+                                onPlayVideo = { viewModel.selectVideoItem(it) }
                             )
                         }
                         XenoTab.SETTINGS -> {

@@ -76,12 +76,6 @@ fun XenoBottomBar(
             label = "Browser",
             selectedIcon = Icons.Filled.Public,
             unselectedIcon = Icons.Outlined.Public
-        ),
-        BottomBarItem(
-            tab = XenoTab.GAMES,
-            label = "Games",
-            selectedIcon = Icons.Filled.SportsEsports,
-            unselectedIcon = Icons.Outlined.SportsEsports
         )
     )
 

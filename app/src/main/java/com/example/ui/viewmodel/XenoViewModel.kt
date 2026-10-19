@@ -51,7 +51,6 @@ enum class XenoTab {
     KEYPAD,
     MESSAGES,
     BROWSER,
-    GAMES,
     SETTINGS
 }
 
@@ -559,7 +558,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowMediaManager(show: Boolean) {
         _uiState.value = _uiState.value.copy(showMediaManager = show)
-        if (show && _uiState.value.mediaItems.isEmpty()) {
+        if (show) {
             refreshMedia()
         }
     }

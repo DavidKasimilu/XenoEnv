@@ -391,72 +391,61 @@ class GalleryRepository(private val context: Context) {
             }
         }
 
-        // 3. Scan Public Downloads directory for downloaded videos & photos
-        try {
-            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            if (downloadsDir.exists() && downloadsDir.isDirectory) {
-                downloadsDir.listFiles()?.forEach { file ->
-                    if (file.isFile) {
-                        val name = file.name
-                        val ext = file.extension.lowercase()
-                        val isVideo = listOf("mp4", "mkv", "webm", "avi", "3gp", "mov", "ts").contains(ext)
-                        val isImage = listOf("jpg", "jpeg", "png", "webp", "gif").contains(ext)
-                        if (isVideo || isImage) {
-                            val uri = Uri.fromFile(file)
-                            deviceItems.add(
-                                MediaItem(
-                                    id = file.absolutePath.hashCode().toLong(),
-                                    uri = uri,
-                                    displayName = name,
-                                    dateAdded = file.lastModified() / 1000,
-                                    size = file.length(),
-                                    durationMs = if (isVideo) 0L else null,
-                                    isVideo = isVideo,
-                                    width = 0,
-                                    height = 0,
-                                    folderName = "Downloads"
-                                )
+        // 3. Scan standard device media directories & subfolders for videos & photos grouped by folder name
+        fun scanMediaDirectory(dir: File?, defaultFolderName: String, depth: Int = 0) {
+            if (dir == null || !dir.exists() || !dir.isDirectory || depth > 3) return
+            val files = try { dir.listFiles() } catch (_: Exception) { null } ?: return
+            for (file in files) {
+                if (file.isDirectory && !file.name.startsWith(".")) {
+                    scanMediaDirectory(file, file.name.ifBlank { defaultFolderName }, depth + 1)
+                } else if (file.isFile && file.length() > 0) {
+                    val name = file.name
+                    val ext = file.extension.lowercase()
+                    val isVideo = listOf("mp4", "mkv", "webm", "avi", "3gp", "mov", "ts", "m4v").contains(ext)
+                    val isImage = listOf("jpg", "jpeg", "png", "webp", "gif").contains(ext)
+                    if (isVideo || isImage) {
+                        val folder = file.parentFile?.name?.takeIf { it.isNotBlank() && it != "0" && it != "emulated" } ?: defaultFolderName
+                        val uri = Uri.fromFile(file)
+                        deviceItems.add(
+                            MediaItem(
+                                id = file.absolutePath.hashCode().toLong(),
+                                uri = uri,
+                                displayName = name,
+                                dateAdded = file.lastModified() / 1000,
+                                size = file.length(),
+                                durationMs = if (isVideo) 0L else null,
+                                isVideo = isVideo,
+                                width = 0,
+                                height = 0,
+                                folderName = folder
                             )
-                        }
+                        )
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.w("GalleryRepository", "Error scanning downloads folder: ${e.message}")
         }
 
-        // 4. Scan App-Specific Downloads directory
         try {
-            val appDlDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-            if (appDlDir != null && appDlDir.exists() && appDlDir.isDirectory) {
-                appDlDir.listFiles()?.forEach { file ->
-                    if (file.isFile) {
-                        val name = file.name
-                        val ext = file.extension.lowercase()
-                        val isVideo = listOf("mp4", "mkv", "webm", "avi", "3gp", "mov", "ts").contains(ext)
-                        val isImage = listOf("jpg", "jpeg", "png", "webp", "gif").contains(ext)
-                        if (isVideo || isImage) {
-                            val uri = Uri.fromFile(file)
-                            deviceItems.add(
-                                MediaItem(
-                                    id = file.absolutePath.hashCode().toLong(),
-                                    uri = uri,
-                                    displayName = name,
-                                    dateAdded = file.lastModified() / 1000,
-                                    size = file.length(),
-                                    durationMs = if (isVideo) 0L else null,
-                                    isVideo = isVideo,
-                                    width = 0,
-                                    height = 0,
-                                    folderName = "Downloads"
-                                )
-                            )
-                        }
-                    }
-                }
+            val publicDirs = listOf(
+                android.os.Environment.DIRECTORY_DOWNLOADS to "Downloads",
+                android.os.Environment.DIRECTORY_MOVIES to "Movies",
+                android.os.Environment.DIRECTORY_DCIM to "Camera",
+                android.os.Environment.DIRECTORY_PICTURES to "Pictures"
+            )
+            for ((dirType, fallbackFolder) in publicDirs) {
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(dirType)
+                scanMediaDirectory(dir, fallbackFolder)
             }
         } catch (e: Exception) {
-            Log.w("GalleryRepository", "Error scanning app downloads: ${e.message}")
+            Log.w("GalleryRepository", "Error scanning public media directories: ${e.message}")
+        }
+
+        // 4. Scan App-Specific External directories
+        try {
+            scanMediaDirectory(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Downloads")
+            scanMediaDirectory(context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "Movies")
+        } catch (e: Exception) {
+            Log.w("GalleryRepository", "Error scanning app external directories: ${e.message}")
         }
 
         // 5. Scan internal gallery folders (cached / imported videos and photos)

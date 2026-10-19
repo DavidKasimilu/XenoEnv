@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -125,19 +126,22 @@ fun GalleryScreen(
     onClose: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var currentTab by remember { mutableStateOf(GalleryTab.IMAGES) }
+    var currentTab by remember { mutableStateOf(GalleryTab.VIDEOS) }
     var mediaToDelete by remember { mutableStateOf<MediaItem?>(null) }
     var selectedVideoFolder by remember { mutableStateOf<String?>(null) }
     var selectedPhotoFolder by remember { mutableStateOf<String?>(null) }
     var isVideoFolderMode by remember { mutableStateOf(false) }
     var isPhotoFolderMode by remember { mutableStateOf(true) }
 
-    // Intercept back navigation when browsing inside a folder
+    // Intercept back navigation when browsing inside a folder or closing Media screen
     BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedVideoFolder != null) {
         selectedVideoFolder = null
     }
     BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedPhotoFolder != null) {
         selectedPhotoFolder = null
+    }
+    BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedVideoFolder == null && selectedPhotoFolder == null && onClose != null) {
+        onClose?.invoke()
     }
 
     val context = LocalContext.current
@@ -534,13 +538,13 @@ fun GalleryScreen(
                                 }
 
                                 LazyVerticalGrid(
-                                    columns = GridCells.Adaptive(minSize = 280.dp),
+                                    columns = GridCells.Adaptive(minSize = 152.dp),
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .testTag("videos_grid"),
-                                    contentPadding = PaddingValues(start = 14.dp, top = 8.dp, end = 14.dp, bottom = 96.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                                    contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     itemsIndexed(folderVideos, key = { index, item -> "vid_f_${item.id}_${item.uri}_$index" }) { _, item ->
                                         VideoGridItemCard(
@@ -663,22 +667,28 @@ fun GalleryScreen(
                                         }
                                     }
                                 } else {
-                                    // Grouped by Folder: List of folders with prominent headers and videos in each folder
-                                    LazyColumn(
+                                    // Grouped by Folder: Videos arranged in a multi-column grid under each folder header
+                                    LazyVerticalGrid(
+                                        columns = GridCells.Adaptive(minSize = 152.dp),
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .testTag("videos_grouped_list"),
-                                        contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-                                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                                        contentPadding = PaddingValues(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 96.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
                                         videoFolderGroups.forEach { (folderName, folderVideos) ->
-                                            item(key = "header_$folderName") {
+                                            item(
+                                                key = "header_$folderName",
+                                                span = { GridItemSpan(maxLineSpan) }
+                                            ) {
                                                 Surface(
                                                     shape = RoundedCornerShape(12.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .padding(horizontal = 14.dp)
+                                                        .padding(top = 4.dp)
+                                                        .clickable { selectedVideoFolder = folderName }
                                                 ) {
                                                     Row(
                                                         modifier = Modifier
@@ -720,7 +730,7 @@ fun GalleryScreen(
                                                             onClick = { selectedVideoFolder = folderName },
                                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                                                         ) {
-                                                            Text("View All (${folderVideos.size})", style = MaterialTheme.typography.labelMedium)
+                                                            Text("Open Folder", style = MaterialTheme.typography.labelMedium)
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                             Icon(
                                                                 Icons.AutoMirrored.Filled.ArrowForward,
@@ -732,14 +742,15 @@ fun GalleryScreen(
                                                 }
                                             }
 
-                                            items(folderVideos, key = { item -> "grp_${item.id}_${item.uri}" }) { item ->
-                                                Box(modifier = Modifier.padding(horizontal = 14.dp)) {
-                                                    VideoGridItemCard(
-                                                        item = item,
-                                                        onClick = { onSelectVideo(item) },
-                                                        onDelete = { mediaToDelete = it }
-                                                    )
-                                                }
+                                            itemsIndexed(
+                                                folderVideos,
+                                                key = { idx, item -> "grp_${folderName}_${item.id}_${item.uri}_$idx" }
+                                            ) { _, item ->
+                                                VideoGridItemCard(
+                                                    item = item,
+                                                    onClick = { onSelectVideo(item) },
+                                                    onDelete = { mediaToDelete = it }
+                                                )
                                             }
                                         }
                                     }
