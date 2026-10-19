@@ -3,14 +3,18 @@ package com.example.ui.screens
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
-import android.view.View
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -18,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,11 +35,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopMac
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,10 +55,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,35 +80,130 @@ import com.example.ui.components.AppIconImage
 import com.example.ui.components.parseHexColor
 
 private const val MOBILE_USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
 private const val DESKTOP_USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-private fun injectDesktopCompatibility(view: WebView?) {
+private val WHATSAPP_WEB_HEADERS = mapOf(
+    "Sec-CH-UA" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+    "Sec-CH-UA-Mobile" to "?0",
+    "Sec-CH-UA-Platform" to "\"Linux\"",
+    "Upgrade-Insecure-Requests" to "1"
+)
+
+/**
+ * Comprehensive WhatsApp Web Support Engine for Android WebView:
+ * 1. Polyfills missing Desktop Chrome APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`, `navigator.permissions`)
+ *    so WhatsApp Web's React bootstrap does not throw a TypeError and turn blank after splash screen.
+ * 2. Unregisters stuck/corrupted ServiceWorkers that cause WhatsApp Web to hang on a blank white screen after initial load.
+ * 3. Applies non-destructive CSS responsive fitting so WhatsApp Web's fixed 748px+ desktop layout renders visibly inside a mobile screen.
+ */
+private fun injectWhatsAppWebSupportEngine(view: WebView?, zoomScale: Float = 0.60f) {
     val js = """
         (function() {
             try {
-                if (navigator.userAgentData) {
-                    Object.defineProperty(navigator, 'userAgentData', {
-                        get: function() {
-                            return {
-                                brands: [
-                                    { brand: 'Chromium', version: '128' },
-                                    { brand: 'Google Chrome', version: '128' },
-                                    { brand: 'Not(A:Brand', version: '24' }
-                                ],
-                                mobile: false,
-                                platform: 'Windows'
-                            };
-                        },
-                        configurable: true
-                    });
+                // 1. Polyfill window.chrome expected by WhatsApp Desktop Chrome checks
+                if (!window.chrome) {
+                    window.chrome = {
+                        runtime: {},
+                        app: { isInstalled: false },
+                        webstore: {}
+                    };
                 }
-            } catch(e) {}
 
-            try {
-                Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true });
+                // 2. Polyfill Web Notification API (missing in Android WebView, causes WA Web React crash -> blank screen)
+                if (typeof window.Notification === 'undefined') {
+                    var MockNotification = function(title, options) {
+                        this.title = title;
+                        this.options = options || {};
+                        this.close = function() {};
+                    };
+                    MockNotification.permission = 'granted';
+                    MockNotification.requestPermission = function(cb) {
+                        if (typeof cb === 'function') cb('granted');
+                        return Promise.resolve('granted');
+                    };
+                    window.Notification = MockNotification;
+                }
+
+                // 3. Spoof Desktop Navigator & Client Hints
+                Object.defineProperty(navigator, 'userAgentData', {
+                    get: function() {
+                        return {
+                            brands: [
+                                { brand: 'Google Chrome', version: '131' },
+                                { brand: 'Chromium', version: '131' },
+                                { brand: 'Not_A Brand', version: '24' }
+                            ],
+                            mobile: false,
+                            platform: 'Linux',
+                            getHighEntropyValues: function() {
+                                return Promise.resolve({
+                                    architecture: 'x86',
+                                    bitness: '64',
+                                    mobile: false,
+                                    model: '',
+                                    platform: 'Linux',
+                                    platformVersion: '6.5.0',
+                                    uaFullVersion: '131.0.0.0'
+                                });
+                            }
+                        };
+                    },
+                    configurable: true
+                });
+                Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true });
+                Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
+                Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
+                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+
+                // 4. Unregister broken ServiceWorkers that cause blank screen after first load in WebView
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                        for (var i = 0; i < registrations.length; i++) {
+                            registrations[i].unregister();
+                        }
+                    }).catch(function(){});
+                }
+
+                // 5. Inject non-destructive CSS layout adapter so #app never collapses to 0px height or overflows off-screen
+                var styleId = 'xeno-wa-support-style';
+                var existingStyle = document.getElementById(styleId);
+                if (!existingStyle) {
+                    existingStyle = document.createElement('style');
+                    existingStyle.id = styleId;
+                    if (document.head) {
+                        document.head.appendChild(existingStyle);
+                    } else if (document.documentElement) {
+                        document.documentElement.appendChild(existingStyle);
+                    }
+                }
+                if (existingStyle) {
+                    existingStyle.textContent =
+                        'html, body { width: 100% !important; height: 100% !important; min-height: 100vh !important; overflow: auto !important; background-color: #111b21 !important; } ' +
+                        '#app { min-width: 320px !important; min-height: 100vh !important; width: 100% !important; height: 100% !important; display: block !important; visibility: visible !important; opacity: 1 !important; } ' +
+                        '#app > div { min-width: 320px !important; width: 100% !important; height: 100% !important; overflow: auto !important; } ' +
+                        'body { zoom: ' + $zoomScale + '; }';
+                }
+
+                // 6. Blank-screen watchdog: if #app is empty after startup disappears, clear stale caches & re-render
+                if (!window.__xenoWaWatchdogActive) {
+                    window.__xenoWaWatchdogActive = true;
+                    setTimeout(function() {
+                        var appEl = document.getElementById('app');
+                        var startupEl = document.getElementById('startup') || document.getElementById('initial_startup');
+                        var appEmpty = !appEl || appEl.children.length === 0 || appEl.innerHTML.trim() === '';
+                        if (appEmpty && !startupEl) {
+                            if (window.caches && window.caches.keys) {
+                                window.caches.keys().then(function(names) {
+                                    names.forEach(function(n) { window.caches.delete(n); });
+                                });
+                            }
+                            window.location.reload();
+                        }
+                    }, 6500);
+                }
             } catch(e) {}
         })();
     """.trimIndent()
@@ -125,6 +229,7 @@ fun CloneWorkspaceScreen(
     var canGoBack by remember { mutableStateOf(false) }
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
+    var waZoomScale by remember { mutableFloatStateOf(0.60f) }
 
     val badgeColor = remember(instance.badgeColorHex) { parseHexColor(instance.badgeColorHex) }
 
@@ -133,6 +238,39 @@ fun CloneWorkspaceScreen(
                 instance.originalName.contains("whatsapp", ignoreCase = true) ||
                 instance.displayName.contains("whatsapp", ignoreCase = true) ||
                 instance.targetUrl.contains("whatsapp.com", ignoreCase = true)
+    }
+
+    fun repairWhatsAppSession() {
+        try {
+            val wv = webViewInstance
+            wv?.stopLoading()
+            wv?.clearCache(true)
+            // Unregister service workers and caches via JS before reloading
+            val repairJs = """
+                (async function() {
+                    try {
+                        if (navigator.serviceWorker) {
+                            const regs = await navigator.serviceWorker.getRegistrations();
+                            for (const r of regs) { await r.unregister(); }
+                        }
+                        if (window.caches) {
+                            const keys = await window.caches.keys();
+                            for (const k of keys) { await window.caches.delete(k); }
+                        }
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            wv?.evaluateJavascript(repairJs) {
+                hasRenderCrash = false
+                reloadKey++
+            } ?: run {
+                hasRenderCrash = false
+                reloadKey++
+            }
+        } catch (_: Exception) {
+            hasRenderCrash = false
+            reloadKey++
+        }
     }
 
     // Intercept back button to navigate backwards in web session or return to Space
@@ -150,7 +288,7 @@ fun CloneWorkspaceScreen(
             .background(MaterialTheme.colorScheme.surface)
             .testTag("clone_workspace_${instance.instanceId}")
     ) {
-        // Workspace Top Bar - Sleek, Compact & Space-Efficient (44dp Height)
+        // Workspace Top Bar - Sleek, Compact & Space-Efficient
         Surface(
             tonalElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface,
@@ -159,15 +297,12 @@ fun CloneWorkspaceScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(46.dp)
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Back Button (Compact 32dp button)
                 IconButton(
-                    onClick = {
-                        onCloseWorkspace()
-                    },
+                    onClick = onCloseWorkspace,
                     modifier = Modifier
                         .size(32.dp)
                         .testTag("workspace_back_btn")
@@ -181,7 +316,6 @@ fun CloneWorkspaceScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // App Icon (22dp)
                 val appIcon = remember(instance.packageName) {
                     try {
                         if (instance.packageName.isNotBlank()) {
@@ -199,7 +333,6 @@ fun CloneWorkspaceScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Title & Badge Tag (Single Line, neatly sharing available width)
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
@@ -231,21 +364,14 @@ fun CloneWorkspaceScreen(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Action Icons (Desktop, Open In Browser, Reload, Close)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    // Desktop Mode Toggle
                     IconButton(
                         onClick = {
                             if (isWhatsapp) {
-                                webViewInstance?.settings?.userAgentString = DESKTOP_USER_AGENT
-                                val headers = mapOf(
-                                    "Sec-CH-UA-Mobile" to "?0",
-                                    "Sec-CH-UA-Platform" to "\"Windows\""
-                                )
-                                webViewInstance?.loadUrl("https://web.whatsapp.com/", headers)
+                                repairWhatsAppSession()
                             } else {
                                 onToggleDesktopMode()
                                 webViewInstance?.let { wv ->
@@ -274,7 +400,6 @@ fun CloneWorkspaceScreen(
                         }
                     }
 
-                    // Open in Browser Tab (if callback available)
                     if (onOpenInBrowser != null) {
                         IconButton(
                             onClick = { onOpenInBrowser(currentUrl.ifBlank { instance.targetUrl }) },
@@ -291,16 +416,11 @@ fun CloneWorkspaceScreen(
                         }
                     }
 
-                    // Reload Button
                     IconButton(
                         onClick = {
                             hasRenderCrash = false
                             if (isWhatsapp) {
-                                val headers = mapOf(
-                                    "Sec-CH-UA-Mobile" to "?0",
-                                    "Sec-CH-UA-Platform" to "\"Windows\""
-                                )
-                                webViewInstance?.loadUrl("https://web.whatsapp.com/", headers)
+                                webViewInstance?.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
                             } else {
                                 webViewInstance?.reload()
                             }
@@ -317,7 +437,6 @@ fun CloneWorkspaceScreen(
                         )
                     }
 
-                    // Close to Space Button
                     IconButton(
                         onClick = onCloseWorkspace,
                         modifier = Modifier
@@ -330,6 +449,94 @@ fun CloneWorkspaceScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp)
                         )
+                    }
+                }
+            }
+        }
+
+        // Dedicated WhatsApp Web Support Bar (Zoom Fit & Blank-Screen Repair Helper)
+        if (isWhatsapp) {
+            Surface(
+                color = Color(0xFF111B21),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "WA Web Support",
+                            color = Color(0xFF25D366),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "• ${(waZoomScale * 100).toInt()}%",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                waZoomScale = (waZoomScale - 0.10f).coerceAtLeast(0.40f)
+                                injectWhatsAppWebSupportEngine(webViewInstance, waZoomScale)
+                            },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ZoomOut,
+                                contentDescription = "Zoom Out",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                waZoomScale = (waZoomScale + 0.10f).coerceAtMost(1.20f)
+                                injectWhatsAppWebSupportEngine(webViewInstance, waZoomScale)
+                            },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ZoomIn,
+                                contentDescription = "Zoom In",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        TextButton(
+                            onClick = { repairWhatsAppSession() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Build,
+                                contentDescription = null,
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Fix Blank Screen",
+                                color = Color(0xFF25D366),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -351,7 +558,7 @@ fun CloneWorkspaceScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(if (isWhatsapp) Color(0xFF111B21) else Color.White)
         ) {
             if (hasRenderCrash) {
                 Card(
@@ -408,23 +615,13 @@ fun CloneWorkspaceScreen(
                                         val cookieManager = CookieManager.getInstance()
                                         cookieManager.removeAllCookies(null)
                                         cookieManager.flush()
-                                        android.webkit.WebStorage.getInstance().deleteAllData()
+                                        WebStorage.getInstance().deleteAllData()
                                     } catch (_: Exception) {}
                                     hasRenderCrash = false
                                     reloadKey++
                                 }
                             ) {
                                 Text("Reset Cache")
-                            }
-
-                            if (onOpenInBrowser != null) {
-                                OutlinedButton(
-                                    onClick = {
-                                        onOpenInBrowser(if (isWhatsapp) "https://web.whatsapp.com/" else currentUrl)
-                                    }
-                                ) {
-                                    Text("Open in Browser")
-                                }
                             }
                         }
                     }
@@ -434,9 +631,31 @@ fun CloneWorkspaceScreen(
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
+                            // Ensure ServiceWorkerController allows network loads so WA Web doesn't hang
+                            try {
+                                val swController = ServiceWorkerController.getInstance()
+                                swController.serviceWorkerWebSettings.apply {
+                                    allowContentAccess = true
+                                    allowFileAccess = true
+                                    blockNetworkLoads = false
+                                    cacheMode = WebSettings.LOAD_DEFAULT
+                                }
+                                swController.setServiceWorkerClient(object : ServiceWorkerClient() {
+                                    override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+                                        return null
+                                    }
+                                })
+                            } catch (_: Throwable) {}
+
                             WebView(ctx).apply {
-                                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                setBackgroundColor(android.graphics.Color.WHITE)
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                setBackgroundColor(
+                                    if (isWhatsapp) android.graphics.Color.parseColor("#111B21")
+                                    else android.graphics.Color.WHITE
+                                )
 
                                 settings.apply {
                                     javaScriptEnabled = true
@@ -462,7 +681,7 @@ fun CloneWorkspaceScreen(
                                     }
                                 }
 
-                                setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+                                setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                                     try {
                                         val request = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
                                             setMimeType(mimetype)
@@ -472,7 +691,10 @@ fun CloneWorkspaceScreen(
                                             setDescription("Downloading file...")
                                             setTitle(android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype))
                                             setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype))
+                                            setDestinationInExternalPublicDir(
+                                                android.os.Environment.DIRECTORY_DOWNLOADS,
+                                                android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype)
+                                            )
                                         }
                                         val dm = ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
                                         dm.enqueue(request)
@@ -482,7 +704,6 @@ fun CloneWorkspaceScreen(
                                     }
                                 }
 
-                                // Enable cookies
                                 val cookieManager = CookieManager.getInstance()
                                 cookieManager.setAcceptCookie(true)
                                 cookieManager.setAcceptThirdPartyCookies(this, true)
@@ -492,7 +713,7 @@ fun CloneWorkspaceScreen(
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                         isLoading = true
                                         if (isWhatsapp) {
-                                            injectDesktopCompatibility(view)
+                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
                                         }
                                         url?.let {
                                             currentUrl = it
@@ -501,10 +722,17 @@ fun CloneWorkspaceScreen(
                                         canGoBack = view?.canGoBack() == true
                                     }
 
+                                    override fun onPageCommitVisible(view: WebView?, url: String?) {
+                                        super.onPageCommitVisible(view, url)
+                                        if (isWhatsapp) {
+                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
+                                        }
+                                    }
+
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         isLoading = false
                                         if (isWhatsapp) {
-                                            injectDesktopCompatibility(view)
+                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
                                         }
                                         url?.let {
                                             currentUrl = it
@@ -517,15 +745,14 @@ fun CloneWorkspaceScreen(
                                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                         val url = request?.url?.toString() ?: return false
                                         if (isWhatsapp) {
-                                            if (url.contains("whatsapp.com/download") || (url.contains("www.whatsapp.com") && !url.contains("web.whatsapp.com"))) {
+                                            if (url.contains("whatsapp.com/download") ||
+                                                url.contains("whatsapp.com/android") ||
+                                                (url.contains("www.whatsapp.com") && !url.contains("web.whatsapp.com"))
+                                            ) {
                                                 val curr = view?.url ?: ""
                                                 if (!curr.startsWith("https://web.whatsapp.com")) {
                                                     view?.post {
-                                                        val headers = mapOf(
-                                                            "Sec-CH-UA-Mobile" to "?0",
-                                                            "Sec-CH-UA-Platform" to "\"Windows\""
-                                                        )
-                                                        view.loadUrl("https://web.whatsapp.com/", headers)
+                                                        view.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
                                                     }
                                                 }
                                                 return true
@@ -550,7 +777,6 @@ fun CloneWorkspaceScreen(
                                             !lowerUrl.startsWith("blob:") &&
                                             !lowerUrl.startsWith("data:")
                                         ) {
-                                            // Strictly block external app launch; remain in sandbox workspace
                                             return true
                                         }
                                         return false
@@ -559,7 +785,7 @@ fun CloneWorkspaceScreen(
                                     override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
                                         try {
                                             view?.let {
-                                                val parent = it.parent as? android.view.ViewGroup
+                                                val parent = it.parent as? ViewGroup
                                                 parent?.removeView(it)
                                                 it.stopLoading()
                                                 it.destroy()
@@ -574,6 +800,9 @@ fun CloneWorkspaceScreen(
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                         loadProgress = newProgress
+                                        if (isWhatsapp && (newProgress == 30 || newProgress == 70 || newProgress == 100)) {
+                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
+                                        }
                                         if (newProgress >= 100) {
                                             isLoading = false
                                         }
@@ -602,10 +831,7 @@ fun CloneWorkspaceScreen(
                                     instance.lastUrl
                                 }
                                 val extraHeaders = if (isWhatsapp) {
-                                    mapOf(
-                                        "Sec-CH-UA-Mobile" to "?0",
-                                        "Sec-CH-UA-Platform" to "\"Windows\""
-                                    )
+                                    WHATSAPP_WEB_HEADERS
                                 } else emptyMap()
 
                                 if (extraHeaders.isNotEmpty()) {
@@ -651,16 +877,6 @@ fun CloneWorkspaceScreen(
                     }
                 }
             }
-        }
-    }
-
-    DisposableEffect(instance.instanceId) {
-        onDispose {
-            try {
-                webViewInstance?.stopLoading()
-                webViewInstance?.destroy()
-            } catch (_: Exception) {}
-            webViewInstance = null
         }
     }
 }

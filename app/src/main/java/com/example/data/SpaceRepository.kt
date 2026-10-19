@@ -55,11 +55,11 @@ class SpaceRepository(private val context: Context) {
                     instanceId = "clone_instagram_1",
                     packageName = "com.instagram.android",
                     templateId = "com.instagram.android",
-                    displayName = "Instagram (Clone 1)",
+                    displayName = "Instagram",
                     originalName = "Instagram",
                     targetUrl = "https://www.instagram.com/",
-                    badgeTag = "Clone 1",
-                    badgeColorHex = "#E91E63",
+                    badgeTag = "Clone",
+                    badgeColorHex = "#E1306C",
                     createdAt = now,
                     lastActiveTime = now,
                     lastUrl = "https://www.instagram.com/",
@@ -69,11 +69,11 @@ class SpaceRepository(private val context: Context) {
                     instanceId = "clone_whatsapp_1",
                     packageName = "com.whatsapp",
                     templateId = "com.whatsapp",
-                    displayName = "WhatsApp (Personal)",
+                    displayName = "WhatsApp",
                     originalName = "WhatsApp",
                     targetUrl = "https://web.whatsapp.com/",
-                    badgeTag = "Personal",
-                    badgeColorHex = "#4CAF50",
+                    badgeTag = "Web",
+                    badgeColorHex = "#25D366",
                     createdAt = now,
                     lastActiveTime = now,
                     lastUrl = "https://web.whatsapp.com/",
@@ -99,12 +99,26 @@ class SpaceRepository(private val context: Context) {
                 val obj = array.getJSONObject(i)
                 val pkg = obj.optString("packageName", "")
                 val origName = obj.optString("originalName", "App")
-                val dispName = obj.optString("displayName", origName)
+                val rawDispName = obj.optString("displayName", origName)
+                val dispName = when (rawDispName) {
+                    "Instagram (Clone 1)" -> {
+                        needsResave = true
+                        "Instagram"
+                    }
+                    "WhatsApp (Personal)" -> {
+                        needsResave = true
+                        "WhatsApp"
+                    }
+                    else -> rawDispName
+                }
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
                 // Auto-repair missing or blank URL for Instagram, WhatsApp or any other app
-                val isWa = pkg.contains("whatsapp") || origName.contains("whatsapp") || dispName.contains("whatsapp") || rawTarget.contains("whatsapp.com")
+                val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
+                        origName.contains("whatsapp", ignoreCase = true) ||
+                        dispName.contains("whatsapp", ignoreCase = true) ||
+                        rawTarget.contains("whatsapp.com", ignoreCase = true)
                 val resolvedTarget = if (isWa) {
                     "https://web.whatsapp.com/"
                 } else if (rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true)) {
@@ -144,8 +158,8 @@ class SpaceRepository(private val context: Context) {
                         displayName = dispName,
                         originalName = origName,
                         targetUrl = resolvedTarget,
-                        badgeTag = obj.optString("badgeTag", if (isWa) "Personal" else "Clone 1"),
-                        badgeColorHex = obj.optString("badgeColorHex", if (isWa) "#4CAF50" else "#E91E63"),
+                        badgeTag = obj.optString("badgeTag", if (isWa) "Web" else "Clone"),
+                        badgeColorHex = obj.optString("badgeColorHex", if (isWa) "#25D366" else "#E1306C"),
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                         lastActiveTime = obj.optLong("lastActiveTime", System.currentTimeMillis()),
                         lastUrl = resolvedLast,
@@ -155,7 +169,13 @@ class SpaceRepository(private val context: Context) {
             }
         } catch (_: Exception) {}
 
-        if (needsResave && list.isNotEmpty()) {
+        if (list.isEmpty()) {
+            val defaultList = getDefaultInitialClones()
+            saveClonedInstances(defaultList)
+            return defaultList
+        }
+
+        if (needsResave) {
             saveClonedInstances(list)
         }
 
@@ -192,19 +212,20 @@ class SpaceRepository(private val context: Context) {
         badgeColorHex: String
     ): ClonedAppInstance {
         val resolvedUrl = resolveAppUrl(packageName, appName)
+        val isWa = packageName.contains("whatsapp", ignoreCase = true) || appName.contains("whatsapp", ignoreCase = true)
         val newClone = ClonedAppInstance(
             instanceId = "clone_${UUID.randomUUID().toString().take(8)}",
             packageName = packageName,
             templateId = packageName,
-            displayName = displayName.ifBlank { "$appName ($badgeTag)" },
+            displayName = displayName.ifBlank { appName },
             originalName = appName,
             targetUrl = resolvedUrl,
-            badgeTag = badgeTag.ifBlank { "Clone 1" },
-            badgeColorHex = badgeColorHex.ifBlank { "#4CAF50" },
+            badgeTag = badgeTag.ifBlank { if (isWa) "Web" else "Clone" },
+            badgeColorHex = badgeColorHex.ifBlank { if (isWa) "#25D366" else "#E1306C" },
             createdAt = System.currentTimeMillis(),
             lastActiveTime = System.currentTimeMillis(),
             lastUrl = resolvedUrl,
-            isDesktopMode = false
+            isDesktopMode = isWa
         )
 
         val current = loadClonedInstances().toMutableList()

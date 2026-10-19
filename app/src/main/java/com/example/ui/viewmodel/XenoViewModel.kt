@@ -27,7 +27,9 @@ import com.example.data.models.ContactItem
 import com.example.data.models.DeviceNotification
 import com.example.data.models.IncomingCallPopup
 import com.example.data.models.IncomingSmsPopup
+import com.example.data.models.ApkInstallState
 import com.example.data.models.InstalledGameItem
+import com.example.data.models.VirtualEnvProfile
 import com.example.data.models.MediaItem
 import com.example.data.models.SmsMessage
 import com.example.data.models.SmsThread
@@ -135,6 +137,8 @@ data class XenoUiState(
     val incomingSmsPopup: IncomingSmsPopup? = null,
     val incomingCallPopup: IncomingCallPopup? = null,
     val installedGames: List<InstalledGameItem> = emptyList(),
+    val apkInstallState: ApkInstallState = ApkInstallState(),
+    val activeGameItem: InstalledGameItem? = null,
     val activeGameUrl: String? = null,
     val activeGameTitle: String? = null,
     val activeGamePackage: String? = null,
@@ -1073,8 +1077,23 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun launchGameInApp(game: InstalledGameItem) {
         val resolvedUrl = game.entryUrl?.takeIf { it.isNotBlank() }
-            ?: SpaceRepository.resolveAppUrl(game.packageName, game.appName)
+            ?: gameSpaceRepo.regenerateRuntimeUrl(
+                pkg = game.packageName,
+                appName = game.appName,
+                versionName = game.versionName ?: "1.0",
+                mainActivity = game.mainActivityName,
+                activities = game.activities,
+                permissions = game.permissions,
+                nativeLibs = game.nativeLibs,
+                dexCount = game.dexCount,
+                minSdk = game.minSdk,
+                targetSdk = game.targetSdk,
+                iconPath = game.iconPath,
+                extractedTextures = emptyList(),
+                envProfile = game.envProfile
+            )
         _uiState.value = _uiState.value.copy(
+            activeGameItem = game,
             activeGameTitle = game.appName,
             activeGameUrl = resolvedUrl,
             activeGamePackage = game.packageName
@@ -1087,8 +1106,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) {
                 gameSpaceRepo.updateGameEntryUrl(pkg, newUrl)
                 val updatedList = gameSpaceRepo.loadUserGames()
+                val updatedItem = updatedList.find { it.packageName == pkg }
                 _uiState.value = _uiState.value.copy(
                     installedGames = updatedList,
+                    activeGameItem = updatedItem ?: _uiState.value.activeGameItem,
                     activeGameUrl = newUrl
                 )
             }
@@ -1097,11 +1118,57 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateGameEnvProfile(packageName: String, profile: VirtualEnvProfile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedItem = gameSpaceRepo.updateGameEnvProfile(packageName, profile)
+            val updatedList = gameSpaceRepo.loadUserGames()
+            val isCurrentlyActive = _uiState.value.activeGamePackage == packageName
+            _uiState.value = _uiState.value.copy(
+                installedGames = updatedList,
+                activeGameItem = if (isCurrentlyActive && updatedItem != null) updatedItem else _uiState.value.activeGameItem,
+                activeGameUrl = if (isCurrentlyActive && updatedItem?.entryUrl != null) updatedItem.entryUrl else _uiState.value.activeGameUrl,
+                userNotice = "Updated virtual environment profile for ${updatedItem?.appName ?: packageName}"
+            )
+        }
+    }
+
+    fun clearVirtualGameData(packageName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            gameSpaceRepo.clearVirtualAppData(packageName)
+            _uiState.value = _uiState.value.copy(
+                userNotice = "Cleared isolated virtual storage for $packageName"
+            )
+        }
+    }
+
+    fun dismissApkInstallModal() {
+        _uiState.value = _uiState.value.copy(apkInstallState = ApkInstallState())
+    }
+
     fun installApk(uri: Uri, context: android.content.Context) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(userNotice = "Installing APK into Game Space...")
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "package.apk"
+            _uiState.value = _uiState.value.copy(
+                apkInstallState = ApkInstallState(
+                    isInstalling = true,
+                    fileName = fileName,
+                    currentStep = "Starting Virtual APK Installer...",
+                    progress = 0.05f,
+                    logs = listOf("[VirtualInstaller] Target APK: $fileName")
+                )
+            )
             val installedItem = withContext(Dispatchers.IO) {
-                gameSpaceRepo.installApkIntoGameSpace(uri)
+                gameSpaceRepo.installApkIntoGameSpace(uri) { step, progress, logLine ->
+                    val currentLogs = _uiState.value.apkInstallState.logs
+                    _uiState.value = _uiState.value.copy(
+                        apkInstallState = _uiState.value.apkInstallState.copy(
+                            isInstalling = true,
+                            currentStep = step,
+                            progress = progress,
+                            logs = (currentLogs + logLine).takeLast(12)
+                        )
+                    )
+                }
             }
             if (installedItem != null) {
                 val updatedGames = withContext(Dispatchers.IO) {
@@ -1109,10 +1176,20 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _uiState.value = _uiState.value.copy(
                     installedGames = updatedGames,
-                    userNotice = "Installed ${installedItem.appName} into Game Space"
+                    apkInstallState = _uiState.value.apkInstallState.copy(
+                        isInstalling = false,
+                        currentStep = "Installed & Virtualized Successfully",
+                        progress = 1.0f,
+                        completedItem = installedItem
+                    ),
+                    userNotice = "Installed ${installedItem.appName} into Virtual Game Space"
                 )
             } else {
                 _uiState.value = _uiState.value.copy(
+                    apkInstallState = _uiState.value.apkInstallState.copy(
+                        isInstalling = false,
+                        error = "Could not parse APK archive. Please select a valid .apk file."
+                    ),
                     userNotice = "Could not parse APK file. Please select a valid .apk package."
                 )
             }
@@ -1121,15 +1198,40 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun importDeviceAppToGameSpace(packageName: String, appName: String) {
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                apkInstallState = ApkInstallState(
+                    isInstalling = true,
+                    fileName = "$packageName.apk",
+                    currentStep = "Cloning & Virtualizing $appName...",
+                    progress = 0.1f,
+                    logs = listOf("[VirtualCloner] Cloning base APK for $appName ($packageName)")
+                )
+            )
             val added = withContext(Dispatchers.IO) {
-                gameSpaceRepo.addDeviceAppToGameSpace(packageName, appName)
+                gameSpaceRepo.addDeviceAppToGameSpace(packageName, appName) { step, progress, logLine ->
+                    val currentLogs = _uiState.value.apkInstallState.logs
+                    _uiState.value = _uiState.value.copy(
+                        apkInstallState = _uiState.value.apkInstallState.copy(
+                            isInstalling = true,
+                            currentStep = step,
+                            progress = progress,
+                            logs = (currentLogs + logLine).takeLast(12)
+                        )
+                    )
+                }
             }
             val updatedGames = withContext(Dispatchers.IO) {
                 gameSpaceRepo.loadUserGames()
             }
             _uiState.value = _uiState.value.copy(
                 installedGames = updatedGames,
-                userNotice = "Added ${added.appName} to Game Space"
+                apkInstallState = _uiState.value.apkInstallState.copy(
+                    isInstalling = false,
+                    currentStep = "Virtual Container Ready",
+                    progress = 1.0f,
+                    completedItem = added
+                ),
+                userNotice = "Virtualized ${added.appName} into Game Space"
             )
         }
     }
@@ -1144,13 +1246,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             }
             _uiState.value = _uiState.value.copy(
                 installedGames = updatedGames,
-                userNotice = "Removed app from Game Space"
+                userNotice = "Removed app and virtual environment from Game Space"
             )
         }
     }
 
     fun setActiveGame(title: String?, url: String?) {
         _uiState.value = _uiState.value.copy(
+            activeGameItem = if (url == null) null else _uiState.value.activeGameItem,
             activeGameTitle = title,
             activeGameUrl = url,
             activeGamePackage = if (url == null) null else _uiState.value.activeGamePackage

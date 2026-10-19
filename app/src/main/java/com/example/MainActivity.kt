@@ -253,7 +253,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && uiState.activeGameUrl == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = { viewModel.selectTab(it) },
@@ -282,6 +282,7 @@ fun XenoApp(
                 GamePlayScreen(
                     gameTitle = uiState.activeGameTitle ?: "Game",
                     gameUrl = uiState.activeGameUrl!!,
+                    gameItem = uiState.activeGameItem,
                     onBack = { viewModel.setActiveGame(null, null) },
                     onUpdateGameUrl = { newUrl -> viewModel.updateActiveGameUrl(newUrl) },
                     modifier = Modifier.fillMaxSize()
@@ -467,12 +468,17 @@ fun XenoApp(
                         XenoTab.GAMES -> {
                             GamesScreen(
                                 installedGames = uiState.installedGames,
+                                apkInstallState = uiState.apkInstallState,
+                                downloads = uiState.downloads,
                                 onPickApkClick = {
                                     try {
                                         apkPickerLauncher.launch(arrayOf("application/vnd.android.package-archive", "*/*"))
                                     } catch (e: Exception) {
                                         apkPickerLauncher.launch(arrayOf("*/*"))
                                     }
+                                },
+                                onInstallApkUri = { uri ->
+                                    viewModel.installApk(uri, context)
                                 },
                                 onLaunchGame = { game ->
                                     viewModel.launchGameInApp(game)
@@ -482,6 +488,15 @@ fun XenoApp(
                                 },
                                 onImportDeviceApp = { pkg, appName ->
                                     viewModel.importDeviceAppToGameSpace(pkg, appName)
+                                },
+                                onUpdateEnvProfile = { pkg, profile ->
+                                    viewModel.updateGameEnvProfile(pkg, profile)
+                                },
+                                onClearVirtualData = { pkg ->
+                                    viewModel.clearVirtualGameData(pkg)
+                                },
+                                onDismissInstallModal = {
+                                    viewModel.dismissApkInstallModal()
                                 }
                             )
                         }
