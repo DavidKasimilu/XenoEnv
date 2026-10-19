@@ -738,11 +738,15 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCloneCurrentUrl(instanceId: String, url: String) {
-        spaceRepo.updateCloneUrl(instanceId, url)
+        val existing = _uiState.value.spaceClones.find { it.instanceId == instanceId }
+        if (existing?.lastUrl == url) return
         val updatedList = _uiState.value.spaceClones.map {
-            if (it.instanceId == instanceId) it.copy(lastUrl = url, lastActiveTime = System.currentTimeMillis()) else it
+            if (it.instanceId == instanceId) it.copy(lastUrl = url) else it
         }
         _uiState.value = _uiState.value.copy(spaceClones = updatedList)
+        viewModelScope.launch(Dispatchers.IO) {
+            spaceRepo.updateCloneUrl(instanceId, url)
+        }
     }
 
     fun toggleCloneDesktopMode(instanceId: String) {

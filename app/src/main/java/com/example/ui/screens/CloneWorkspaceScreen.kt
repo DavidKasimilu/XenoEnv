@@ -3,16 +3,14 @@ package com.example.ui.screens
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
-import android.webkit.ServiceWorkerClient
-import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
@@ -22,7 +20,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,14 +32,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopMac
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -52,14 +46,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,116 +85,230 @@ private val WHATSAPP_WEB_HEADERS = mapOf(
 )
 
 /**
- * Comprehensive WhatsApp Web Support Engine for Android WebView:
- * 1. Polyfills missing Desktop Chrome APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`, `navigator.permissions`)
- *    so WhatsApp Web's React bootstrap does not throw a TypeError and turn blank after splash screen.
- * 2. Unregisters stuck/corrupted ServiceWorkers that cause WhatsApp Web to hang on a blank white screen after initial load.
- * 3. Applies non-destructive CSS responsive fitting so WhatsApp Web's fixed 748px+ desktop layout renders visibly inside a mobile screen.
+ * Lightweight, idempotent WhatsApp Web Support Engine for Android WebView:
+ * Polyfills missing Desktop Chrome APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`)
+ * and ensures `#app` stays visible without heavy CSS zoom or repeated ServiceWorker mutations that could
+ * overload the emulator's Chromium renderer process.
  */
-private fun injectWhatsAppWebSupportEngine(view: WebView?, zoomScale: Float = 0.60f) {
+private fun injectWhatsAppWebSupportEngine(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Polyfill window.chrome expected by WhatsApp Desktop Chrome checks
-                if (!window.chrome) {
-                    window.chrome = {
-                        runtime: {},
-                        app: { isInstalled: false },
-                        webstore: {}
-                    };
-                }
+                if (!window.__xenoWaPolyfilled) {
+                    window.__xenoWaPolyfilled = true;
 
-                // 2. Polyfill Web Notification API (missing in Android WebView, causes WA Web React crash -> blank screen)
-                if (typeof window.Notification === 'undefined') {
-                    var MockNotification = function(title, options) {
-                        this.title = title;
-                        this.options = options || {};
-                        this.close = function() {};
-                    };
-                    MockNotification.permission = 'granted';
-                    MockNotification.requestPermission = function(cb) {
-                        if (typeof cb === 'function') cb('granted');
-                        return Promise.resolve('granted');
-                    };
-                    window.Notification = MockNotification;
-                }
-
-                // 3. Spoof Desktop Navigator & Client Hints
-                Object.defineProperty(navigator, 'userAgentData', {
-                    get: function() {
-                        return {
-                            brands: [
-                                { brand: 'Google Chrome', version: '131' },
-                                { brand: 'Chromium', version: '131' },
-                                { brand: 'Not_A Brand', version: '24' }
-                            ],
-                            mobile: false,
-                            platform: 'Linux',
-                            getHighEntropyValues: function() {
-                                return Promise.resolve({
-                                    architecture: 'x86',
-                                    bitness: '64',
-                                    mobile: false,
-                                    model: '',
-                                    platform: 'Linux',
-                                    platformVersion: '6.5.0',
-                                    uaFullVersion: '131.0.0.0'
-                                });
-                            }
+                    if (!window.chrome) {
+                        window.chrome = {
+                            runtime: {},
+                            app: { isInstalled: false },
+                            webstore: {}
                         };
-                    },
-                    configurable: true
-                });
-                Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true });
-                Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
-                Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
-                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
-
-                // 4. Unregister broken ServiceWorkers that cause blank screen after first load in WebView
-                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                        for (var i = 0; i < registrations.length; i++) {
-                            registrations[i].unregister();
-                        }
-                    }).catch(function(){});
-                }
-
-                // 5. Inject non-destructive CSS layout adapter so #app never collapses to 0px height or overflows off-screen
-                var styleId = 'xeno-wa-support-style';
-                var existingStyle = document.getElementById(styleId);
-                if (!existingStyle) {
-                    existingStyle = document.createElement('style');
-                    existingStyle.id = styleId;
-                    if (document.head) {
-                        document.head.appendChild(existingStyle);
-                    } else if (document.documentElement) {
-                        document.documentElement.appendChild(existingStyle);
                     }
+
+                    if (typeof window.Notification === 'undefined') {
+                        var MockNotification = function(title, options) {
+                            this.title = title;
+                            this.options = options || {};
+                            this.close = function() {};
+                        };
+                        MockNotification.permission = 'granted';
+                        MockNotification.requestPermission = function(cb) {
+                            if (typeof cb === 'function') cb('granted');
+                            return Promise.resolve('granted');
+                        };
+                        window.Notification = MockNotification;
+                    }
+
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: function() {
+                            return {
+                                brands: [
+                                    { brand: 'Google Chrome', version: '131' },
+                                    { brand: 'Chromium', version: '131' },
+                                    { brand: 'Not_A Brand', version: '24' }
+                                ],
+                                mobile: false,
+                                platform: 'Linux',
+                                getHighEntropyValues: function() {
+                                    return Promise.resolve({
+                                        architecture: 'x86',
+                                        bitness: '64',
+                                        mobile: false,
+                                        model: '',
+                                        platform: 'Linux',
+                                        platformVersion: '6.5.0',
+                                        uaFullVersion: '131.0.0.0'
+                                    });
+                                }
+                            };
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true });
+                    Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
+                    Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
+                    Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
                 }
-                if (existingStyle) {
-                    existingStyle.textContent =
+
+                var styleId = 'xeno-wa-support-style';
+                if (!document.getElementById(styleId) && document.head) {
+                    var st = document.createElement('style');
+                    st.id = styleId;
+                    st.textContent =
                         'html, body { width: 100% !important; height: 100% !important; min-height: 100vh !important; overflow: auto !important; background-color: #111b21 !important; } ' +
                         '#app { min-width: 320px !important; min-height: 100vh !important; width: 100% !important; height: 100% !important; display: block !important; visibility: visible !important; opacity: 1 !important; } ' +
-                        '#app > div { min-width: 320px !important; width: 100% !important; height: 100% !important; overflow: auto !important; } ' +
-                        'body { zoom: ' + $zoomScale + '; }';
+                        '#app > div { min-width: 320px !important; width: 100% !important; height: 100% !important; overflow: auto !important; }';
+                    document.head.appendChild(st);
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
+/**
+ * Non-intrusive Instagram Reels & Smooth Scrolling Helper Engine:
+ * Enhances video playback, pre-buffering, scroll-snap physics, and passive touch handling
+ * in-place without reloading or interrupting the active Instagram session.
+ */
+private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
+    val js = """
+        (function() {
+            try {
+                // 1. Passive touch & wheel listener optimization for 60fps+ scroll responsiveness
+                if (!window.__xenoIgPassivePatched) {
+                    window.__xenoIgPassivePatched = true;
+                    var origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                            var newOpts = options;
+                            if (typeof options === 'boolean') {
+                                newOpts = { capture: options, passive: true };
+                            } else if (typeof options === 'object' && options !== null) {
+                                if (typeof options.passive === 'undefined') {
+                                    newOpts = Object.assign({}, options, { passive: true });
+                                }
+                            } else if (typeof options === 'undefined') {
+                                newOpts = { passive: true };
+                            }
+                            return origAddEventListener.call(this, type, listener, newOpts);
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
                 }
 
-                // 6. Blank-screen watchdog: if #app is empty after startup disappears, clear stale caches & re-render
-                if (!window.__xenoWaWatchdogActive) {
-                    window.__xenoWaWatchdogActive = true;
-                    setTimeout(function() {
-                        var appEl = document.getElementById('app');
-                        var startupEl = document.getElementById('startup') || document.getElementById('initial_startup');
-                        var appEmpty = !appEl || appEl.children.length === 0 || appEl.innerHTML.trim() === '';
-                        if (appEmpty && !startupEl) {
-                            if (window.caches && window.caches.keys) {
-                                window.caches.keys().then(function(names) {
-                                    names.forEach(function(n) { window.caches.delete(n); });
-                                });
-                            }
-                            window.location.reload();
+                // 2. Smooth Scroll, GPU Layer Promotion & Reels Snap CSS
+                var styleId = 'xeno-ig-reels-smooth-style';
+                if (!document.getElementById(styleId) && document.head) {
+                    var st = document.createElement('style');
+                    st.id = styleId;
+                    st.textContent =
+                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'main, section, article, div[role="main"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
+                        'div[style*="scroll-snap-type"] > div, div[class*=" reel"], article { scroll-snap-stop: always !important; } ' +
+                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; object-fit: cover; } ' +
+                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                    document.head.appendChild(st);
+                }
+
+                // 3. Reels Video Inline Playback, Preload & Viewport Intersection Optimizer
+                if (!window.__xenoIgVideoHelper) {
+                    window.__xenoIgVideoHelper = {
+                        userPausedMap: new WeakMap(),
+                        observedVideos: new WeakSet(),
+                        observer: null
+                    };
+
+                    if ('IntersectionObserver' in window) {
+                        window.__xenoIgVideoHelper.observer = new IntersectionObserver(function(entries) {
+                            entries.forEach(function(entry) {
+                                var vid = entry.target;
+                                if (!vid || vid.tagName !== 'VIDEO') return;
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+                                    vid.preload = 'auto';
+                                    // Pre-warm next video in DOM for zero-lag Reel swipe
+                                    try {
+                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
+                                        var idx = allVids.indexOf(vid);
+                                        if (idx >= 0 && idx + 1 < allVids.length) {
+                                            allVids[idx + 1].preload = 'auto';
+                                        }
+                                    } catch(e) {}
+
+                                    if (vid.paused && !window.__xenoIgVideoHelper.userPausedMap.get(vid)) {
+                                        var playPromise = vid.play();
+                                        if (playPromise && typeof playPromise.catch === 'function') {
+                                            playPromise.catch(function() {
+                                                // If autoplay with sound is blocked before first interaction, play muted smoothly
+                                                if (!vid.muted) {
+                                                    vid.muted = true;
+                                                    vid.play().catch(function(){});
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.15) {
+                                    // Pause off-screen Reels so background decoders don't cause scroll frame drops
+                                    if (!vid.paused) {
+                                        try { vid.pause(); } catch(e) {}
+                                    }
+                                }
+                            });
+                        }, { threshold: [0.0, 0.15, 0.6, 0.85] });
+                    }
+                }
+
+                function optimizeInstagramVideos() {
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
+                            v.preload = 'auto';
                         }
-                    }, 6500);
+
+                        if (!window.__xenoIgVideoHelper.observedVideos.has(v)) {
+                            window.__xenoIgVideoHelper.observedVideos.add(v);
+                            // Track manual tap-to-pause vs scroll-away pause
+                            v.addEventListener('click', function() {
+                                var self = this;
+                                setTimeout(function() {
+                                    window.__xenoIgVideoHelper.userPausedMap.set(self, self.paused);
+                                }, 80);
+                            }, { passive: true });
+
+                            // Recover smoothly from mid-reel buffer stalls
+                            v.addEventListener('stalled', function() {
+                                var self = this;
+                                if (!self.paused && self.readyState >= 2) {
+                                    self.play().catch(function(){});
+                                }
+                            }, { passive: true });
+
+                            if (window.__xenoIgVideoHelper.observer) {
+                                window.__xenoIgVideoHelper.observer.observe(v);
+                            }
+                        }
+                    }
+                }
+
+                optimizeInstagramVideos();
+
+                if (!window.__xenoIgMutationObserver && window.MutationObserver && document.body) {
+                    var throttleTimer = null;
+                    window.__xenoIgMutationObserver = new MutationObserver(function() {
+                        if (throttleTimer) return;
+                        throttleTimer = setTimeout(function() {
+                            throttleTimer = null;
+                            optimizeInstagramVideos();
+                        }, 180);
+                    });
+                    window.__xenoIgMutationObserver.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
                 }
             } catch(e) {}
         })();
@@ -228,52 +334,39 @@ fun CloneWorkspaceScreen(
     var currentUrl by remember { mutableStateOf(instance.lastUrl) }
     var canGoBack by remember { mutableStateOf(false) }
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
+    var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(false) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
-    var waZoomScale by remember { mutableFloatStateOf(0.60f) }
 
     val badgeColor = remember(instance.badgeColorHex) { parseHexColor(instance.badgeColorHex) }
 
-    val isWhatsapp = remember(instance) {
+    val isWhatsapp = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
         instance.packageName.contains("whatsapp", ignoreCase = true) ||
                 instance.originalName.contains("whatsapp", ignoreCase = true) ||
                 instance.displayName.contains("whatsapp", ignoreCase = true) ||
                 instance.targetUrl.contains("whatsapp.com", ignoreCase = true)
     }
 
-    fun repairWhatsAppSession() {
-        try {
-            val wv = webViewInstance
-            wv?.stopLoading()
-            wv?.clearCache(true)
-            // Unregister service workers and caches via JS before reloading
-            val repairJs = """
-                (async function() {
-                    try {
-                        if (navigator.serviceWorker) {
-                            const regs = await navigator.serviceWorker.getRegistrations();
-                            for (const r of regs) { await r.unregister(); }
-                        }
-                        if (window.caches) {
-                            const keys = await window.caches.keys();
-                            for (const k of keys) { await window.caches.delete(k); }
-                        }
-                    } catch(e) {}
-                })();
-            """.trimIndent()
-            wv?.evaluateJavascript(repairJs) {
-                hasRenderCrash = false
-                reloadKey++
-            } ?: run {
-                hasRenderCrash = false
-                reloadKey++
-            }
-        } catch (_: Exception) {
-            hasRenderCrash = false
-            reloadKey++
+    val isInstagram = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
+        instance.packageName.contains("instagram", ignoreCase = true) ||
+                instance.originalName.contains("instagram", ignoreCase = true) ||
+                instance.displayName.contains("instagram", ignoreCase = true) ||
+                instance.targetUrl.contains("instagram.com", ignoreCase = true)
+    }
+
+    // Properly release WebView renderer resources when leaving CloneWorkspaceScreen
+    DisposableEffect(instance.instanceId) {
+        onDispose {
+            try {
+                webViewInstance?.let { wv ->
+                    (wv.parent as? ViewGroup)?.removeView(wv)
+                    wv.stopLoading()
+                    wv.destroy()
+                }
+            } catch (_: Exception) {}
+            webViewInstance = null
         }
     }
 
-    // Intercept back button to navigate backwards in web session or return to Space
     BackHandler {
         if (webViewInstance?.canGoBack() == true) {
             webViewInstance?.goBack()
@@ -371,7 +464,7 @@ fun CloneWorkspaceScreen(
                     IconButton(
                         onClick = {
                             if (isWhatsapp) {
-                                repairWhatsAppSession()
+                                webViewInstance?.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
                             } else {
                                 onToggleDesktopMode()
                                 webViewInstance?.let { wv ->
@@ -454,94 +547,6 @@ fun CloneWorkspaceScreen(
             }
         }
 
-        // Dedicated WhatsApp Web Support Bar (Zoom Fit & Blank-Screen Repair Helper)
-        if (isWhatsapp) {
-            Surface(
-                color = Color(0xFF111B21),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "WA Web Support",
-                            color = Color(0xFF25D366),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "• ${(waZoomScale * 100).toInt()}%",
-                            color = Color(0xFF9CA3AF),
-                            fontSize = 11.sp
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                waZoomScale = (waZoomScale - 0.10f).coerceAtLeast(0.40f)
-                                injectWhatsAppWebSupportEngine(webViewInstance, waZoomScale)
-                            },
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ZoomOut,
-                                contentDescription = "Zoom Out",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                waZoomScale = (waZoomScale + 0.10f).coerceAtMost(1.20f)
-                                injectWhatsAppWebSupportEngine(webViewInstance, waZoomScale)
-                            },
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ZoomIn,
-                                contentDescription = "Zoom In",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        TextButton(
-                            onClick = { repairWhatsAppSession() },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(26.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Build,
-                                contentDescription = null,
-                                tint = Color(0xFF25D366),
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Fix Blank Screen",
-                                color = Color(0xFF25D366),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         // Loading Progress Indicator
         if (isLoading && loadProgress < 100) {
             LinearProgressIndicator(
@@ -554,7 +559,7 @@ fun CloneWorkspaceScreen(
             )
         }
 
-        // Isolated WebView Container with Renderer Recovery
+        // Isolated WebView Container with Automatic Renderer Recovery
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -586,11 +591,7 @@ fun CloneWorkspaceScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (isWhatsapp) {
-                                "The renderer refreshed to optimize memory. Tap below to reload WhatsApp Web with stable graphics."
-                            } else {
-                                "The isolated web renderer process reset. Tap reload to restore the session safely."
-                            },
+                            text = "Tap below to continue in safe rendering mode.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -600,13 +601,14 @@ fun CloneWorkspaceScreen(
                         ) {
                             Button(
                                 onClick = {
+                                    useSoftwareLayer = true
                                     hasRenderCrash = false
                                     reloadKey++
                                 }
                             ) {
                                 Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Reload WhatsApp")
+                                Text("Reload")
                             }
 
                             FilledTonalButton(
@@ -617,6 +619,7 @@ fun CloneWorkspaceScreen(
                                         cookieManager.flush()
                                         WebStorage.getInstance().deleteAllData()
                                     } catch (_: Exception) {}
+                                    useSoftwareLayer = true
                                     hasRenderCrash = false
                                     reloadKey++
                                 }
@@ -631,30 +634,27 @@ fun CloneWorkspaceScreen(
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
-                            // Ensure ServiceWorkerController allows network loads so WA Web doesn't hang
-                            try {
-                                val swController = ServiceWorkerController.getInstance()
-                                swController.serviceWorkerWebSettings.apply {
-                                    allowContentAccess = true
-                                    allowFileAccess = true
-                                    blockNetworkLoads = false
-                                    cacheMode = WebSettings.LOAD_DEFAULT
-                                }
-                                swController.setServiceWorkerClient(object : ServiceWorkerClient() {
-                                    override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
-                                        return null
-                                    }
-                                })
-                            } catch (_: Throwable) {}
-
                             WebView(ctx).apply {
                                 layoutParams = ViewGroup.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
+                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels & scrolling
+                                if (useSoftwareLayer || isWhatsapp) {
+                                    setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                                } else {
+                                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                }
+                                isVerticalScrollBarEnabled = false
+                                isHorizontalScrollBarEnabled = false
+                                overScrollMode = View.OVER_SCROLL_NEVER
+                                isNestedScrollingEnabled = true
                                 setBackgroundColor(
-                                    if (isWhatsapp) android.graphics.Color.parseColor("#111B21")
-                                    else android.graphics.Color.WHITE
+                                    when {
+                                        isWhatsapp -> android.graphics.Color.parseColor("#111B21")
+                                        isInstagram -> android.graphics.Color.BLACK
+                                        else -> android.graphics.Color.WHITE
+                                    }
                                 )
 
                                 settings.apply {
@@ -663,17 +663,21 @@ fun CloneWorkspaceScreen(
                                     databaseEnabled = true
                                     loadWithOverviewMode = true
                                     useWideViewPort = true
-                                    builtInZoomControls = true
+                                    // Disable pinch-zoom on Instagram so double-tap-to-like and fast vertical Reels swipes stay crisp
+                                    builtInZoomControls = !isInstagram
                                     displayZoomControls = false
                                     safeBrowsingEnabled = false
-                                    setSupportZoom(true)
+                                    setSupportZoom(!isInstagram)
                                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                     mediaPlaybackRequiresUserGesture = false
                                     cacheMode = WebSettings.LOAD_DEFAULT
-                                    javaScriptCanOpenWindowsAutomatically = true
+                                    javaScriptCanOpenWindowsAutomatically = false
                                     setSupportMultipleWindows(false)
                                     allowFileAccess = true
                                     allowContentAccess = true
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        offscreenPreRaster = true
+                                    }
                                     userAgentString = if (isWhatsapp || instance.isDesktopMode) {
                                         DESKTOP_USER_AGENT
                                     } else {
@@ -707,14 +711,10 @@ fun CloneWorkspaceScreen(
                                 val cookieManager = CookieManager.getInstance()
                                 cookieManager.setAcceptCookie(true)
                                 cookieManager.setAcceptThirdPartyCookies(this, true)
-                                cookieManager.flush()
 
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                         isLoading = true
-                                        if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
-                                        }
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
@@ -725,20 +725,36 @@ fun CloneWorkspaceScreen(
                                     override fun onPageCommitVisible(view: WebView?, url: String?) {
                                         super.onPageCommitVisible(view, url)
                                         if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
+                                            injectWhatsAppWebSupportEngine(view)
+                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
+                                            injectInstagramReelsAndScrollHelper(view)
                                         }
                                     }
 
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         isLoading = false
                                         if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
+                                            injectWhatsAppWebSupportEngine(view)
+                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
+                                            injectInstagramReelsAndScrollHelper(view)
                                         }
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
                                         }
                                         currentTitle = view?.title ?: instance.displayName
+                                        canGoBack = view?.canGoBack() == true
+                                    }
+
+                                    override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                        super.doUpdateVisitedHistory(view, url, isReload)
+                                        if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
+                                            injectInstagramReelsAndScrollHelper(view)
+                                        }
+                                        url?.let {
+                                            currentUrl = it
+                                            onUrlChanged(it)
+                                        }
                                         canGoBack = view?.canGoBack() == true
                                     }
 
@@ -792,7 +808,13 @@ fun CloneWorkspaceScreen(
                                             }
                                         } catch (_: Exception) {}
                                         webViewInstance = null
-                                        hasRenderCrash = true
+                                        if (!useSoftwareLayer) {
+                                            // Automatically recover in software layer mode without interrupting the user
+                                            useSoftwareLayer = true
+                                            reloadKey++
+                                        } else {
+                                            hasRenderCrash = true
+                                        }
                                         return true
                                     }
                                 }
@@ -800,9 +822,6 @@ fun CloneWorkspaceScreen(
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                         loadProgress = newProgress
-                                        if (isWhatsapp && (newProgress == 30 || newProgress == 70 || newProgress == 100)) {
-                                            injectWhatsAppWebSupportEngine(view, waZoomScale)
-                                        }
                                         if (newProgress >= 100) {
                                             isLoading = false
                                         }
