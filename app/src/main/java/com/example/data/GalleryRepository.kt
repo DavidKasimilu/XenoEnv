@@ -259,6 +259,18 @@ class GalleryRepository(private val context: Context) {
     suspend fun getMediaItems(): List<MediaItem> = withContext(Dispatchers.IO) {
         val hasPermission = checkMediaPermission()
         val deviceItems = mutableListOf<MediaItem>()
+        val seenFilePaths = mutableSetOf<String>()
+        val seenSignatures = mutableSetOf<String>()
+
+        fun registerSeen(rawPath: String?, isVideo: Boolean, name: String, size: Long) {
+            if (!rawPath.isNullOrBlank()) {
+                seenFilePaths.add(rawPath)
+                try {
+                    seenFilePaths.add(File(rawPath).canonicalPath)
+                } catch (_: Exception) {}
+            }
+            seenSignatures.add("${isVideo}_${name.lowercase().trim()}_$size")
+        }
 
         if (hasPermission) {
             // 1. Query Images from MediaStore
@@ -270,7 +282,8 @@ class GalleryRepository(private val context: Context) {
                     MediaStore.Images.Media.SIZE,
                     MediaStore.Images.Media.WIDTH,
                     MediaStore.Images.Media.HEIGHT,
-                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                    MediaStore.Images.Media.DATA
                 )
                 contentResolver.query(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -286,6 +299,7 @@ class GalleryRepository(private val context: Context) {
                     val widthIdx = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
                     val heightIdx = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
                     val bucketIdx = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+                    val dataIdx = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
 
                     while (cursor.moveToNext() && deviceItems.size < 200) {
                         val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
@@ -295,8 +309,10 @@ class GalleryRepository(private val context: Context) {
                         val width = if (widthIdx != -1) cursor.getInt(widthIdx) else 0
                         val height = if (heightIdx != -1) cursor.getInt(heightIdx) else 0
                         val bucket = if (bucketIdx != -1) cursor.getString(bucketIdx) else null
+                        val rawPath = if (dataIdx != -1) cursor.getString(dataIdx) else null
                         val folder = if (!bucket.isNullOrBlank()) bucket else "Camera"
 
+                        registerSeen(rawPath, false, name, size)
                         val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                         deviceItems.add(
                             MediaItem(
@@ -369,6 +385,7 @@ class GalleryRepository(private val context: Context) {
                             else -> "Videos"
                         }
 
+                        registerSeen(rawPath, true, name, size)
                         val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                         deviceItems.add(
                             MediaItem(
@@ -391,7 +408,7 @@ class GalleryRepository(private val context: Context) {
             }
         }
 
-        // 3. Scan standard device media directories & subfolders for videos & photos grouped by folder name
+        // 3. Scan standard device media directories & subfolders ONLY for files not already indexed by MediaStore
         fun scanMediaDirectory(dir: File?, defaultFolderName: String, depth: Int = 0) {
             if (dir == null || !dir.exists() || !dir.isDirectory || depth > 3) return
             val files = try { dir.listFiles() } catch (_: Exception) { null } ?: return
@@ -404,11 +421,18 @@ class GalleryRepository(private val context: Context) {
                     val isVideo = listOf("mp4", "mkv", "webm", "avi", "3gp", "mov", "ts", "m4v").contains(ext)
                     val isImage = listOf("jpg", "jpeg", "png", "webp", "gif").contains(ext)
                     if (isVideo || isImage) {
+                        val absPath = file.absolutePath
+                        val canonPath = try { file.canonicalPath } catch (_: Exception) { absPath }
+                        val sig = "${isVideo}_${name.lowercase().trim()}_${file.length()}"
+                        if (absPath in seenFilePaths || canonPath in seenFilePaths || sig in seenSignatures) {
+                            continue
+                        }
+                        registerSeen(absPath, isVideo, name, file.length())
                         val folder = file.parentFile?.name?.takeIf { it.isNotBlank() && it != "0" && it != "emulated" } ?: defaultFolderName
                         val uri = Uri.fromFile(file)
                         deviceItems.add(
                             MediaItem(
-                                id = file.absolutePath.hashCode().toLong(),
+                                id = absPath.hashCode().toLong(),
                                 uri = uri,
                                 displayName = name,
                                 dateAdded = file.lastModified() / 1000,
@@ -454,20 +478,24 @@ class GalleryRepository(private val context: Context) {
             if (vidDir.exists() && vidDir.isDirectory) {
                 vidDir.listFiles()?.forEach { file ->
                     if (file.isFile && file.length() > 0) {
-                        deviceItems.add(
-                            MediaItem(
-                                id = file.absolutePath.hashCode().toLong(),
-                                uri = Uri.fromFile(file),
-                                displayName = file.name,
-                                dateAdded = file.lastModified() / 1000,
-                                size = file.length(),
-                                durationMs = 0L,
-                                isVideo = true,
-                                width = 0,
-                                height = 0,
-                                folderName = "Videos"
+                        val sig = "true_${file.name.lowercase().trim()}_${file.length()}"
+                        if (file.absolutePath !in seenFilePaths && sig !in seenSignatures) {
+                            registerSeen(file.absolutePath, true, file.name, file.length())
+                            deviceItems.add(
+                                MediaItem(
+                                    id = file.absolutePath.hashCode().toLong(),
+                                    uri = Uri.fromFile(file),
+                                    displayName = file.name,
+                                    dateAdded = file.lastModified() / 1000,
+                                    size = file.length(),
+                                    durationMs = 0L,
+                                    isVideo = true,
+                                    width = 0,
+                                    height = 0,
+                                    folderName = "Videos"
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -475,25 +503,29 @@ class GalleryRepository(private val context: Context) {
             if (photoDir.exists() && photoDir.isDirectory) {
                 photoDir.listFiles()?.forEach { file ->
                     if (file.isFile && file.length() > 0) {
-                        deviceItems.add(
-                            MediaItem(
-                                id = file.absolutePath.hashCode().toLong(),
-                                uri = Uri.fromFile(file),
-                                displayName = file.name,
-                                dateAdded = file.lastModified() / 1000,
-                                size = file.length(),
-                                isVideo = false,
-                                width = 0,
-                                height = 0,
-                                folderName = "Camera"
+                        val sig = "false_${file.name.lowercase().trim()}_${file.length()}"
+                        if (file.absolutePath !in seenFilePaths && sig !in seenSignatures) {
+                            registerSeen(file.absolutePath, false, file.name, file.length())
+                            deviceItems.add(
+                                MediaItem(
+                                    id = file.absolutePath.hashCode().toLong(),
+                                    uri = Uri.fromFile(file),
+                                    displayName = file.name,
+                                    dateAdded = file.lastModified() / 1000,
+                                    size = file.length(),
+                                    isVideo = false,
+                                    width = 0,
+                                    height = 0,
+                                    folderName = "Camera"
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
         } catch (_: Exception) {}
 
-        // 6. Also scan tracked downloads from DownloadRepository
+        // 6. Also scan tracked downloads from DownloadRepository if not already added
         try {
             val downloadRepo = DownloadRepository(context)
             val tracked = downloadRepo.getTrackedDownloads()
@@ -504,6 +536,13 @@ class GalleryRepository(private val context: Context) {
                         listOf("jpg", "jpeg", "png", "webp", "gif").any { dl.fileName.lowercase().endsWith(".$it") }
                 if (isVideo || isImage) {
                     val file = dl.filePath?.let { File(it) }
+                    val actualSize = if (file != null && file.exists()) file.length() else dl.fileSize
+                    val sig = "${isVideo}_${dl.fileName.lowercase().trim()}_$actualSize"
+                    val absPath = file?.absolutePath
+                    if ((absPath != null && absPath in seenFilePaths) || sig in seenSignatures) {
+                        continue
+                    }
+                    registerSeen(absPath, isVideo, dl.fileName, actualSize)
                     val uri = if (file != null && file.exists()) Uri.fromFile(file) else Uri.parse(dl.url)
                     deviceItems.add(
                         MediaItem(
@@ -511,7 +550,7 @@ class GalleryRepository(private val context: Context) {
                             uri = uri,
                             displayName = dl.fileName,
                             dateAdded = dl.timestamp / 1000,
-                            size = dl.fileSize,
+                            size = actualSize,
                             durationMs = if (isVideo) 0L else null,
                             isVideo = isVideo,
                             width = 0,
@@ -525,15 +564,19 @@ class GalleryRepository(private val context: Context) {
             Log.w("GalleryRepository", "Error scanning tracked downloads: ${e.message}")
         }
 
-        // Combine custom picked media with device items (excluding demo items and deleted items)
-        val combined = (customMediaItems + deviceItems)
+        // Combine device items and custom picked media (excluding demo items and deleted items)
+        // Prioritize items with MediaStore metadata (durationMs > 0) and deduplicate strictly by name+size and ID
+        val combined = (deviceItems + customMediaItems)
             .filter {
                 !isDemoItem(it) &&
                 it.id !in deletedMediaIds &&
                 it.uri.toString() !in deletedMediaUris &&
                 it.displayName !in deletedMediaNames
             }
+            .sortedByDescending { (it.durationMs ?: 0L) > 0L }
             .distinctBy { it.id }
+            .distinctBy { it.uri.toString() }
+            .distinctBy { "${it.isVideo}_${it.displayName.lowercase().trim()}_${it.size}" }
             .toMutableList()
 
         combined.sortedByDescending { it.dateAdded }
