@@ -1240,19 +1240,22 @@ private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
 }
 
 /**
- * Non-intrusive YouTube & YouTube Shorts Video Playback and Smooth Scroll Helper Engine:
- * - Forces passive `touchstart`, `touchmove`, and `wheel` listeners (even when YouTube's overlay
- *   manager passes `{ passive: false }`) so YouTube can never block vertical page scrolling.
- * - Continuously unlocks `html` and `body` (`overflow-y: auto !important; position: static !important;
- *   height: auto !important; touch-action: pan-y !important;`) on the YouTube Home feed, Watch page,
- *   and Search results so users can freely scroll down to see and load more videos.
- * - Preserves inline `transform: translate3d(...)` on `#shorts-container` slides for smooth Shorts swiping.
+ * Non-intrusive YouTube Normal Video Watch, YouTube Shorts & Smooth Scroll Helper Engine:
+ * - Preserves YouTube's native touch gesture listeners (`touchstart`/`touchmove`) so YouTube Shorts
+ *   vertical swiping, video player seekbar scrubbing, and SPA video card navigation work natively.
+ * - Dynamically adapts page layout & scroll state across 3 modes (`home`, `watch`, `shorts`) via
+ *   `data-xeno-yt-mode` and SPA History API hooks (`pushState`/`replaceState`/`popstate`).
+ * - In `watch` mode (`/watch?v=...`), guarantees `#player-container-id`, `#player`, `#movie_player`,
+ *   `<video class="html5-main-video">`, and `<ytm-watch>` are visible, untransformed, properly sized
+ *   at 16:9 at the top of the screen, and actively playing while keeping related videos/comments scrollable below.
+ * - In `shorts` mode (`/shorts/...`), clears all document scroll-lock overrides so `<ytm-shorts>` and
+ *   `#shorts-container` maintain their full-viewport vertical swipe carousel and auto-plays each Short on swipe.
  */
 private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Force passive touch & wheel listeners so YouTube's overlay/polymer handlers can NEVER call preventDefault() to block vertical scrolling
+                // 1. Browser Environment, Audio Unlock & Instant SPA Route Detection
                 if (!window.__xenoYtEnvPatched) {
                     window.__xenoYtEnvPatched = true;
                     try {
@@ -1264,9 +1267,10 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         }
                     } catch(e) {}
 
+                    // Only make wheel/mousewheel passive — NEVER force touchstart/touchmove passive so Shorts swipe & player scrubbar work natively
                     var origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                        if (type === 'wheel' || type === 'mousewheel') {
                             var newOpts = { passive: true, capture: false };
                             if (typeof options === 'boolean') {
                                 newOpts = { capture: options, passive: true };
@@ -1285,122 +1289,373 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         var vids = document.querySelectorAll('video');
                         for (var i = 0; i < vids.length; i++) {
                             var v = vids[i];
-                            if (!v.paused && v.muted) {
+                            if (v.muted) {
                                 v.muted = false;
                                 v.volume = 1.0;
                             }
                         }
                         try {
+                            var mp = document.getElementById('movie_player');
+                            if (mp && typeof mp.unMute === 'function') {
+                                mp.unMute();
+                                if (typeof mp.setVolume === 'function') mp.setVolume(100);
+                            }
+                            var sp = document.getElementById('shorts-player');
+                            if (sp && typeof sp.unMute === 'function') {
+                                sp.unMute();
+                                if (typeof sp.setVolume === 'function') sp.setVolume(100);
+                            }
                             var unmuteBtn = document.querySelector('.ytp-unmute, button[aria-label*="Tap to unmute"], button[aria-label*="Unmute"]');
                             if (unmuteBtn && unmuteBtn.offsetParent !== null) {
                                 unmuteBtn.click();
                             }
                         } catch(e) {}
                     };
+                    document.addEventListener('touchstart', unlockYtAudio, { passive: true, once: true });
                     document.addEventListener('touchend', unlockYtAudio, { passive: true, once: true });
                     document.addEventListener('click', unlockYtAudio, { passive: true, once: true });
+
+                    // Hook SPA History navigation so transitions between Home, Watch, and Shorts update layout & start playback immediately
+                    var origPushState = history.pushState;
+                    var origReplaceState = history.replaceState;
+                    history.pushState = function() {
+                        var ret = origPushState.apply(this, arguments);
+                        if (window.__xenoRunYtOptimizer) {
+                            setTimeout(window.__xenoRunYtOptimizer, 20);
+                            setTimeout(window.__xenoRunYtOptimizer, 250);
+                            setTimeout(window.__xenoRunYtOptimizer, 700);
+                        }
+                        return ret;
+                    };
+                    history.replaceState = function() {
+                        var ret = origReplaceState.apply(this, arguments);
+                        if (window.__xenoRunYtOptimizer) {
+                            setTimeout(window.__xenoRunYtOptimizer, 20);
+                            setTimeout(window.__xenoRunYtOptimizer, 250);
+                        }
+                        return ret;
+                    };
+                    window.addEventListener('popstate', function() {
+                        if (window.__xenoRunYtOptimizer) {
+                            setTimeout(window.__xenoRunYtOptimizer, 20);
+                            setTimeout(window.__xenoRunYtOptimizer, 250);
+                        }
+                    });
                 }
 
-                // 2. Guaranteed Scrollable CSS for YouTube Home Feed, Watch Page & Search + Smooth Shorts
+                // 2. Mode-Aware CSS for Home Feed, Normal Video Watch Page (/watch), and YouTube Shorts (/shorts)
                 var styleId = 'xeno-yt-shorts-smooth-style';
-                if (!document.getElementById(styleId) && document.head) {
-                    var st = document.createElement('style');
-                    st.id = styleId;
-                    st.textContent =
-                        'html:not([data-xeno-shorts="true"]), body:not([data-xeno-shorts="true"]) { ' +
+                var styleEl = document.getElementById(styleId);
+                if (!styleEl && (document.head || document.documentElement)) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = styleId;
+                    (document.head || document.documentElement).appendChild(styleEl);
+                }
+                if (styleEl && !styleEl.__xenoUpdatedV2) {
+                    styleEl.__xenoUpdatedV2 = true;
+                    styleEl.textContent =
+                        /* Home & Watch: Smooth vertical page scrolling */
+                        'html:not([data-xeno-yt-mode="shorts"]), body:not([data-xeno-yt-mode="shorts"]) { ' +
                         '  overflow-y: auto !important; overflow-x: hidden !important; ' +
                         '  position: static !important; height: auto !important; min-height: 100% !important; ' +
-                        '  touch-action: pan-y pinch-zoom !important; -webkit-overflow-scrolling: touch !important; ' +
-                        '  overscroll-behavior-y: auto !important; -webkit-tap-highlight-color: transparent !important; ' +
+                        '  -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: auto !important; ' +
+                        '  -webkit-tap-highlight-color: transparent !important; ' +
                         '} ' +
-                        'ytm-app, #app, ytm-browse, ytm-watch, ytm-search, .page-container, ' +
-                        'ytm-single-column-browse-results-renderer, ytm-single-column-watch-next-results-renderer, ' +
-                        'ytm-rich-grid-renderer, ytm-section-list-renderer, ytm-item-section-renderer { ' +
-                        '  overflow-y: visible !important; touch-action: pan-y !important; -webkit-overflow-scrolling: touch !important; ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-app, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) #app, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) .page-container, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-browse, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-search, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-single-column-browse-results-renderer, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-single-column-watch-next-results-renderer, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-rich-grid-renderer, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-section-list-renderer, ' +
+                        'html:not([data-xeno-yt-mode="shorts"]) ytm-item-section-renderer { ' +
+                        '  overflow-y: visible !important; -webkit-overflow-scrolling: touch !important; ' +
                         '} ' +
-                        'ytm-shorts, #shorts-container, .reel-video-in-sequence { -webkit-overflow-scrolling: touch !important; } ' +
-                        'video { backface-visibility: hidden; -webkit-backface-visibility: hidden; } ' +
+                        /* Watch Mode (/watch?v=...): Guarantee 16:9 Top Video Player & Watch Page are visible and unobstructed */
+                        'html[data-xeno-yt-mode="watch"] ytm-browse, ' +
+                        'html[data-xeno-yt-mode="watch"] ytm-shorts { ' +
+                        '  display: none !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] ytm-watch { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '  pointer-events: auto !important; transform: none !important; -webkit-transform: none !important; ' +
+                        '  width: 100% !important; min-height: 56.25vw !important; z-index: 30 !important; ' +
+                        '  background-color: #000 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id #player, ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id .player-size { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '  width: 100% !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id #movie_player, ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id .html5-video-player, ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id .html5-video-container { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '  width: 100% !important; height: 100% !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] #player-container-id video, ' +
+                        'html[data-xeno-yt-mode="watch"] #movie_player video { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '  width: 100% !important; height: 100% !important; left: 0 !important; top: 0 !important; ' +
+                        '  object-fit: contain !important; background-color: #000 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="watch"] ytm-watch .player-placeholder { ' +
+                        '  display: block !important; width: 100% !important; min-height: 56.25vw !important; ' +
+                        '} ' +
+                        /* Shorts Mode (/shorts/...): Full-viewport vertical swipe layout & visible video player */
+                        'html[data-xeno-yt-mode="shorts"], body[data-xeno-yt-mode="shorts"] { ' +
+                        '  height: 100% !important; overflow: hidden !important; background-color: #000 !important; ' +
+                        '  overscroll-behavior-y: none !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="shorts"] ytm-browse, ' +
+                        'html[data-xeno-yt-mode="shorts"] ytm-watch { ' +
+                        '  display: none !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="shorts"] ytm-shorts, ' +
+                        'html[data-xeno-yt-mode="shorts"] #shorts-container, ' +
+                        'html[data-xeno-yt-mode="shorts"] .reel-video-in-sequence, ' +
+                        'html[data-xeno-yt-mode="shorts"] ytm-reel-video-renderer { ' +
+                        '  visibility: visible !important; opacity: 1 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="shorts"] #player-container-id, ' +
+                        'html[data-xeno-yt-mode="shorts"] #shorts-player, ' +
+                        'html[data-xeno-yt-mode="shorts"] #movie_player, ' +
+                        'html[data-xeno-yt-mode="shorts"] .html5-video-player, ' +
+                        'html[data-xeno-yt-mode="shorts"] .html5-video-container { ' +
+                        '  visibility: visible !important; opacity: 1 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-mode="shorts"] video { ' +
+                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
+                        '  width: 100% !important; height: 100% !important; object-fit: cover !important; ' +
+                        '} ' +
+                        /* Suppress only genuine app-upsell banners without touching player overlays */
                         'ytm-mealbar-promo-renderer, ytm-app-banner, .upsell-dialog-renderer, .mealbar-promo-renderer, ' +
-                        'ytm-statement-banner-renderer, ytm-promoted-sparkles-web-renderer, .upsell-dialog-backdrop { ' +
+                        'ytm-statement-banner-renderer, .upsell-dialog-backdrop { ' +
                         '  display: none !important; pointer-events: none !important; ' +
                         '}';
-                    document.head.appendChild(st);
                 }
 
-                // 3. Actively unlock body/html scroll locks, dismiss blocking modals/scrims, and configure inline video playback
+                // 3. Mode Detection, Player Visibility Recovery & Playback Controller
+                function getYouTubePageMode() {
+                    var path = (window.location.pathname || '').toLowerCase();
+                    var search = (window.location.search || '').toLowerCase();
+                    if (path.indexOf('/shorts') === 0 || path.indexOf('/shorts/') !== -1) {
+                        return 'shorts';
+                    }
+                    if (path.indexOf('/watch') === 0 || path.indexOf('/watch') !== -1 || (search.indexOf('v=') !== -1 && path.indexOf('/results') === -1)) {
+                        return 'watch';
+                    }
+                    return 'home';
+                }
+
+                function getActiveMediaId(mode) {
+                    try {
+                        if (mode === 'watch') {
+                            var params = new URLSearchParams(window.location.search);
+                            return params.get('v') || window.location.href;
+                        }
+                        if (mode === 'shorts') {
+                            var parts = (window.location.pathname || '').split('/shorts/');
+                            if (parts.length > 1 && parts[1]) {
+                                return 'short_' + parts[1].split('/')[0].split('?')[0];
+                            }
+                            return 'shorts_feed';
+                        }
+                    } catch(e) {}
+                    return '';
+                }
+
                 function optimizeYouTubeAndShorts() {
-                    var isShortsPage = window.location.pathname.indexOf('/shorts') !== -1;
+                    var mode = getYouTubePageMode();
+                    var mediaId = getActiveMediaId(mode);
 
                     if (document.documentElement && document.body) {
-                        if (isShortsPage) {
-                            document.documentElement.setAttribute('data-xeno-shorts', 'true');
-                            document.body.setAttribute('data-xeno-shorts', 'true');
-                        } else {
-                            document.documentElement.removeAttribute('data-xeno-shorts');
-                            document.body.removeAttribute('data-xeno-shorts');
+                        if (document.documentElement.getAttribute('data-xeno-yt-mode') !== mode) {
+                            document.documentElement.setAttribute('data-xeno-yt-mode', mode);
+                        }
+                        if (document.body.getAttribute('data-xeno-yt-mode') !== mode) {
+                            document.body.setAttribute('data-xeno-yt-mode', mode);
+                        }
+                        document.documentElement.removeAttribute('data-xeno-shorts');
+                        document.body.removeAttribute('data-xeno-shorts');
 
-                            // Force-clear any inline overflow:hidden or position:fixed scroll locks set by YouTube popups
+                        if (mode === 'shorts') {
+                            // Clear all inline scroll-unlock properties so Shorts vertical swipe pager works natively
+                            document.documentElement.style.removeProperty('overflow-y');
+                            document.documentElement.style.removeProperty('overflow');
+                            document.documentElement.style.removeProperty('position');
+                            document.documentElement.style.removeProperty('height');
+                            document.documentElement.style.removeProperty('min-height');
+                            document.documentElement.style.removeProperty('touch-action');
+
+                            document.body.style.removeProperty('overflow-y');
+                            document.body.style.removeProperty('overflow');
+                            document.body.style.removeProperty('position');
+                            document.body.style.removeProperty('height');
+                            document.body.style.removeProperty('min-height');
+                            document.body.style.removeProperty('top');
+                            document.body.style.removeProperty('touch-action');
+                        } else {
+                            // Unlock scroll on Home, Search & Watch pages
                             document.documentElement.style.setProperty('overflow-y', 'auto', 'important');
                             document.documentElement.style.setProperty('position', 'static', 'important');
                             document.documentElement.style.setProperty('height', 'auto', 'important');
-                            document.documentElement.style.setProperty('touch-action', 'pan-y', 'important');
+                            document.documentElement.style.removeProperty('touch-action');
 
                             document.body.style.setProperty('overflow-y', 'auto', 'important');
                             document.body.style.setProperty('position', 'static', 'important');
                             document.body.style.setProperty('height', 'auto', 'important');
                             document.body.style.setProperty('top', 'auto', 'important');
-                            document.body.style.setProperty('touch-action', 'pan-y', 'important');
+                            document.body.style.removeProperty('touch-action');
                             document.body.classList.remove('no-scroll', 'modal-open', 'lock-scroll');
                             document.body.removeAttribute('scroll-locked');
                         }
                     }
 
-                    // Dismiss any "Open in YouTube App" / "Stay in browser" / consent prompts and clear orphaned scrims
-                    var dismissBtns = document.querySelectorAll(
+                    // Track media ID transitions (new normal video or newly swiped Short)
+                    var isNewMedia = false;
+                    if (mediaId && window.__xenoYtCurrentMediaId !== mediaId) {
+                        window.__xenoYtCurrentMediaId = mediaId;
+                        window.__xenoYtMediaEnteredAt = Date.now();
+                        window.__xenoYtUserPausedId = null;
+                        isNewMedia = true;
+                    }
+
+                    // Dismiss ONLY genuine app-install promo banners (never click player Close or c3-overlay buttons!)
+                    var promoBtns = document.querySelectorAll(
                         'ytm-mealbar-promo-renderer button[aria-label*="Dismiss"], ' +
+                        'ytm-mealbar-promo-renderer .mealbar-promo-renderer-dismiss-button button, ' +
                         'ytm-mealbar-promo-renderer .mealbar-promo-renderer-dismiss-button, ' +
-                        '.upsell-dialog-dismiss-button button, ' +
-                        'button[aria-label="Close"], ' +
-                        'c3-overlay button'
+                        '.upsell-dialog-dismiss-button button'
                     );
-                    for (var d = 0; d < dismissBtns.length; d++) {
-                        try { dismissBtns[d].click(); } catch(e) {}
+                    for (var d = 0; d < promoBtns.length; d++) {
+                        try { promoBtns[d].click(); } catch(e) {}
                     }
 
-                    // If an invisible c3-overlay or backdrop scrim is blocking touch scrolling without a visible dialog, disable its pointer-events
-                    var overlays = document.querySelectorAll('c3-overlay, .c3-overlay, tp-yt-iron-overlay-backdrop');
-                    for (var k = 0; k < overlays.length; k++) {
-                        var ov = overlays[k];
-                        var parentDialog = ov.closest('ytm-mealbar-promo-renderer, .upsell-dialog-renderer');
-                        if (parentDialog || !document.querySelector('dialog[open]')) {
-                            ov.style.setProperty('display', 'none', 'important');
-                            ov.style.setProperty('pointer-events', 'none', 'important');
+                    // Ensure Watch & Shorts containers and singleton player are never hidden
+                    if (mode === 'watch') {
+                        var ytmWatch = document.querySelector('ytm-watch');
+                        if (ytmWatch) {
+                            ytmWatch.removeAttribute('hidden');
+                        }
+                        var pc = document.getElementById('player-container-id');
+                        if (pc) {
+                            pc.removeAttribute('hidden');
+                            pc.setAttribute('aria-hidden', 'false');
+                        }
+                    } else if (mode === 'shorts') {
+                        var ytmShorts = document.querySelector('ytm-shorts');
+                        if (ytmShorts) {
+                            ytmShorts.removeAttribute('hidden');
+                        }
+                        var pcShorts = document.getElementById('player-container-id');
+                        if (pcShorts) {
+                            pcShorts.removeAttribute('hidden');
+                            pcShorts.setAttribute('aria-hidden', 'false');
                         }
                     }
 
-                    var videos = document.querySelectorAll('video');
-                    for (var i = 0; i < videos.length; i++) {
-                        var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', '');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', '');
-                        v.playsInline = true;
-                        if (!v.preload || v.preload === 'none') {
-                            v.preload = 'auto';
-                        }
+                    // Drive YouTube HTML5 Player API (#movie_player / #shorts-player) & <video> elements
+                    if (mode === 'watch' || mode === 'shorts') {
+                        var elapsedSinceEnter = Date.now() - (window.__xenoYtMediaEnteredAt || 0);
+                        var shouldAutoStart = isNewMedia || (elapsedSinceEnter < 3000 && window.__xenoYtUserPausedId !== mediaId);
 
-                        if (!v.__xenoYtObserved) {
-                            v.__xenoYtObserved = true;
-                            v.addEventListener('loadedmetadata', function() {
-                                var self = this;
-                                self.playsInline = true;
-                                if (window.__xenoYtAudioUnlocked && self.muted) {
-                                    self.muted = false;
+                        try {
+                            var playerEl = (mode === 'shorts' ? document.getElementById('shorts-player') : null) ||
+                                           document.getElementById('movie_player') ||
+                                           document.querySelector('.html5-video-player');
+                            if (playerEl) {
+                                // On Watch page, if movie_player has loadVideoById and hasn't loaded the requested video ID after SPA nav, load it
+                                if (mode === 'watch' && mediaId && mediaId.length === 11 && typeof playerEl.getVideoData === 'function') {
+                                    var vData = playerEl.getVideoData();
+                                    var loadedId = vData && vData.video_id ? vData.video_id : '';
+                                    var pState = typeof playerEl.getPlayerState === 'function' ? playerEl.getPlayerState() : 1;
+                                    if (loadedId && loadedId !== mediaId && elapsedSinceEnter > 400 && typeof playerEl.loadVideoById === 'function') {
+                                        playerEl.loadVideoById(mediaId);
+                                    } else if ((pState === -1 || pState === 5) && shouldAutoStart && typeof playerEl.playVideo === 'function') {
+                                        playerEl.playVideo();
+                                    }
+                                } else if (shouldAutoStart && typeof playerEl.playVideo === 'function') {
+                                    var st = typeof playerEl.getPlayerState === 'function' ? playerEl.getPlayerState() : -1;
+                                    if (st === -1 || st === 2 || st === 5) {
+                                        playerEl.playVideo();
+                                    }
                                 }
-                            }, { passive: true });
+                                if (window.__xenoYtAudioUnlocked && typeof playerEl.isMuted === 'function' && playerEl.isMuted()) {
+                                    if (typeof playerEl.unMute === 'function') playerEl.unMute();
+                                    if (typeof playerEl.setVolume === 'function') playerEl.setVolume(100);
+                                }
+                            }
+                        } catch(e) {}
+
+                        var videos = document.querySelectorAll('video');
+                        for (var i = 0; i < videos.length; i++) {
+                            var v = videos[i];
+                            if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                            if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                            v.playsInline = true;
+                            if (!v.preload || v.preload === 'none') {
+                                v.preload = 'auto';
+                            }
+
+                            if (!v.__xenoYtObservedV2) {
+                                v.__xenoYtObservedV2 = true;
+                                v.addEventListener('loadedmetadata', function() {
+                                    var self = this;
+                                    self.playsInline = true;
+                                    if (window.__xenoYtAudioUnlocked && self.muted) {
+                                        self.muted = false;
+                                        self.volume = 1.0;
+                                    }
+                                    var curMode = getYouTubePageMode();
+                                    var curId = getActiveMediaId(curMode);
+                                    if ((curMode === 'watch' || curMode === 'shorts') && self.paused && window.__xenoYtUserPausedId !== curId) {
+                                        self.play().catch(function() {
+                                            self.muted = true;
+                                            self.play().catch(function(){});
+                                        });
+                                    }
+                                }, { passive: true });
+
+                                v.addEventListener('playing', function() {
+                                    var self = this;
+                                    if (window.__xenoYtAudioUnlocked && self.muted) {
+                                        self.muted = false;
+                                        self.volume = 1.0;
+                                    }
+                                }, { passive: true });
+
+                                // Loop Shorts seamlessly if ended
+                                v.addEventListener('ended', function() {
+                                    var self = this;
+                                    if (getYouTubePageMode() === 'shorts') {
+                                        self.currentTime = 0;
+                                        self.play().catch(function(){});
+                                    }
+                                }, { passive: true });
+                            }
+
+                            if (shouldAutoStart && v.paused && (v.readyState >= 1 || v.currentSrc || v.src)) {
+                                var playPromise = v.play();
+                                if (playPromise && typeof playPromise.catch === 'function') {
+                                    playPromise.catch(function() {
+                                        if (!v.muted) {
+                                            v.muted = true;
+                                            v.play().catch(function(){});
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
                 }
 
+                window.__xenoRunYtOptimizer = optimizeYouTubeAndShorts;
                 optimizeYouTubeAndShorts();
 
                 if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
@@ -1410,13 +1665,11 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
                             optimizeYouTubeAndShorts();
-                        }, 180);
+                        }, 200);
                     });
                     window.__xenoYtMutationObserver.observe(document.body, {
                         childList: true,
-                        subtree: true,
-                        attributes: true,
-                        attributeFilter: ['style', 'class']
+                        subtree: true
                     });
                 }
             } catch(e) {}
@@ -2160,8 +2413,8 @@ fun CloneWorkspaceScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth scrolling & video playback
-                                if (useSoftwareLayer || (isWhatsapp && !isVideoCallActive)) {
+                                // Use software layer if emulator GPU crashed (except YouTube which requires hardware layer for HTML5 MSE video rendering)
+                                if ((useSoftwareLayer && !isYoutube) || (isWhatsapp && !isVideoCallActive)) {
                                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                 } else {
                                     setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -2421,17 +2674,21 @@ fun CloneWorkspaceScreen(
                                             try {
                                                 val parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
                                                 val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
+                                                val hostAndPath = url.removePrefix("intent://").substringBefore("#Intent").trimStart('/')
                                                 val candidateUrl = if (!fallbackUrl.isNullOrBlank()) {
                                                     fallbackUrl
                                                 } else {
-                                                    // Extract embedded https:// URL from intent://<host>/<path>#Intent;scheme=https;...
                                                     val dataStr = parsed.dataString
-                                                    if (!dataStr.isNullOrBlank() && (dataStr.startsWith("http://") || dataStr.startsWith("https://"))) {
-                                                        dataStr
-                                                    } else if (url.contains("scheme=https", ignoreCase = true) || url.contains("scheme=http", ignoreCase = true)) {
-                                                        val hostAndPath = url.removePrefix("intent://").substringBefore("#Intent")
-                                                        if (hostAndPath.isNotBlank()) "https://$hostAndPath" else null
-                                                    } else null
+                                                    when {
+                                                        !dataStr.isNullOrBlank() && (dataStr.startsWith("http://") || dataStr.startsWith("https://")) -> dataStr
+                                                        hostAndPath.contains("youtube.com", ignoreCase = true) || hostAndPath.contains("youtu.be", ignoreCase = true) ->
+                                                            "https://$hostAndPath"
+                                                        isYoutube && hostAndPath.isNotBlank() ->
+                                                            "https://m.youtube.com/$hostAndPath"
+                                                        url.contains("scheme=https", ignoreCase = true) || url.contains("scheme=http", ignoreCase = true) ->
+                                                            if (hostAndPath.isNotBlank()) "https://$hostAndPath" else null
+                                                        else -> null
+                                                    }
                                                 }
                                                 if (!candidateUrl.isNullOrBlank() &&
                                                     (candidateUrl.startsWith("http://") || candidateUrl.startsWith("https://")) &&
