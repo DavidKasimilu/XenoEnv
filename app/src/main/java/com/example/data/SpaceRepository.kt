@@ -120,6 +120,20 @@ class SpaceRepository(private val context: Context) {
                     lastActiveTime = now,
                     lastUrl = "https://www.tiktok.com/",
                     isDesktopMode = false
+                ),
+                ClonedAppInstance(
+                    instanceId = "clone_youtube_1",
+                    packageName = "com.google.android.youtube",
+                    templateId = "com.google.android.youtube",
+                    displayName = "YouTube",
+                    originalName = "YouTube",
+                    targetUrl = "https://m.youtube.com/",
+                    badgeTag = "Clone",
+                    badgeColorHex = "#FF0000",
+                    createdAt = now,
+                    lastActiveTime = now,
+                    lastUrl = "https://m.youtube.com/",
+                    isDesktopMode = false
                 )
             )
         }
@@ -132,6 +146,7 @@ class SpaceRepository(private val context: Context) {
             prefs.edit()
                 .putBoolean("gmail_default_clone_added_v1", true)
                 .putBoolean("fb_tiktok_default_clones_added_v1", true)
+                .putBoolean("youtube_default_clone_added_v1", true)
                 .apply()
             saveClonedInstances(defaultList)
             return defaultList
@@ -160,7 +175,7 @@ class SpaceRepository(private val context: Context) {
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
-                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok or any other app
+                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok, YouTube or any other app
                 val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
                         origName.contains("whatsapp", ignoreCase = true) ||
                         dispName.contains("whatsapp", ignoreCase = true) ||
@@ -179,12 +194,18 @@ class SpaceRepository(private val context: Context) {
                         origName.contains("tiktok", ignoreCase = true) ||
                         dispName.contains("tiktok", ignoreCase = true) ||
                         rawTarget.contains("tiktok.com", ignoreCase = true)
+                val isYoutube = pkg.contains("youtube", ignoreCase = true) ||
+                        origName.contains("youtube", ignoreCase = true) ||
+                        dispName.contains("youtube", ignoreCase = true) ||
+                        rawTarget.contains("youtube.com", ignoreCase = true) ||
+                        rawTarget.contains("youtu.be", ignoreCase = true)
 
                 val resolvedTarget = when {
                     isWa -> "https://web.whatsapp.com/"
                     isGmail -> "https://mail.google.com/"
                     isFacebook -> "https://m.facebook.com/"
                     isTiktok -> "https://www.tiktok.com/"
+                    isYoutube -> "https://m.youtube.com/"
                     rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true) -> rawTarget
                     else -> {
                         needsResave = true
@@ -204,6 +225,9 @@ class SpaceRepository(private val context: Context) {
                 } else if (isTiktok && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
                     needsResave = true
                     "https://www.tiktok.com/"
+                } else if (isYoutube && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
+                    needsResave = true
+                    "https://m.youtube.com/"
                 } else if (rawLast.isNotBlank() && !rawLast.equals("about:blank", ignoreCase = true)) {
                     rawLast
                 } else {
@@ -241,6 +265,7 @@ class SpaceRepository(private val context: Context) {
                             isGmail -> "#EA4335"
                             isFacebook -> "#1877F2"
                             isTiktok -> "#FE2C55"
+                            isYoutube -> "#FF0000"
                             else -> "#E1306C"
                         }),
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
@@ -257,6 +282,7 @@ class SpaceRepository(private val context: Context) {
             prefs.edit()
                 .putBoolean("gmail_default_clone_added_v1", true)
                 .putBoolean("fb_tiktok_default_clones_added_v1", true)
+                .putBoolean("youtube_default_clone_added_v1", true)
                 .apply()
             saveClonedInstances(defaultList)
             return defaultList
@@ -350,6 +376,38 @@ class SpaceRepository(private val context: Context) {
                 needsResave = true
             }
             prefs.edit().putBoolean("fb_tiktok_default_clones_added_v1", true).apply()
+        }
+
+        // Ensure YouTube default clone is added once for existing users
+        if (!prefs.getBoolean("youtube_default_clone_added_v1", false)) {
+            val now = System.currentTimeMillis()
+            val hasYoutube = list.any {
+                it.packageName.contains("youtube", ignoreCase = true) ||
+                        it.originalName.contains("youtube", ignoreCase = true) ||
+                        it.displayName.contains("youtube", ignoreCase = true) ||
+                        it.targetUrl.contains("youtube.com", ignoreCase = true) ||
+                        it.targetUrl.contains("youtu.be", ignoreCase = true)
+            }
+            if (!hasYoutube) {
+                list.add(
+                    ClonedAppInstance(
+                        instanceId = "clone_youtube_1",
+                        packageName = "com.google.android.youtube",
+                        templateId = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        originalName = "YouTube",
+                        targetUrl = "https://m.youtube.com/",
+                        badgeTag = "Clone",
+                        badgeColorHex = "#FF0000",
+                        createdAt = now,
+                        lastActiveTime = now,
+                        lastUrl = "https://m.youtube.com/",
+                        isDesktopMode = false
+                    )
+                )
+                needsResave = true
+            }
+            prefs.edit().putBoolean("youtube_default_clone_added_v1", true).apply()
         }
 
         if (needsResave) {

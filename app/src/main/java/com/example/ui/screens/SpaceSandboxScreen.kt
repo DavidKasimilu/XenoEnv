@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.DropdownMenu
@@ -266,6 +267,14 @@ private fun CloneAppIconItem(
                 instance.targetUrl.contains("tiktok.com", ignoreCase = true)
     }
 
+    val isYoutube = remember(instance) {
+        instance.packageName.contains("youtube", ignoreCase = true) ||
+                instance.originalName.contains("youtube", ignoreCase = true) ||
+                instance.displayName.contains("youtube", ignoreCase = true) ||
+                instance.targetUrl.contains("youtube.com", ignoreCase = true) ||
+                instance.targetUrl.contains("youtu.be", ignoreCase = true)
+    }
+
     val appIcon = remember(instance.packageName) {
         try {
             if (instance.packageName.isNotBlank()) {
@@ -283,7 +292,8 @@ private fun CloneAppIconItem(
         isWhatsapp,
         isGmail,
         isFacebook,
-        isTiktok
+        isTiktok,
+        isYoutube
     ) {
         when {
             isInstagram && instance.displayName == "Instagram (Clone 1)" -> "Instagram"
@@ -291,6 +301,7 @@ private fun CloneAppIconItem(
             isGmail && instance.displayName.startsWith("Gmail", ignoreCase = true) -> "Gmail"
             isFacebook && instance.displayName.startsWith("Facebook", ignoreCase = true) -> "Facebook"
             isTiktok && instance.displayName.startsWith("TikTok", ignoreCase = true) -> "TikTok"
+            isYoutube && instance.displayName.startsWith("YouTube", ignoreCase = true) -> "YouTube"
             else -> instance.displayName.ifBlank { instance.originalName }
         }
     }
@@ -458,6 +469,38 @@ private fun CloneAppIconItem(
                             tint = Color.White,
                             modifier = Modifier.size(34.dp)
                         )
+                    }
+                } else if (isYoutube) {
+                    // Authentic YouTube Crimson Red Play Button Icon
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFFFF0000),
+                                        Color(0xFFCC0000)
+                                    )
+                                )
+                            )
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .width(42.dp)
+                                .height(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Color.White)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = "YouTube",
+                                tint = Color(0xFFFF0000),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 } else {
                     AppIconImage(

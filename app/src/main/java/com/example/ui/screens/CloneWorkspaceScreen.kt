@@ -1251,6 +1251,196 @@ private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
     view?.evaluateJavascript(js, null)
 }
 
+/**
+ * Non-intrusive YouTube & YouTube Shorts Video Playback and Smooth Swipe Helper Engine:
+ * - Optimizes passive touch & wheel listeners for 60fps+ home feed scrolling and vertical Shorts swiping.
+ * - Promotes YouTube HTML5 video player and Shorts containers to GPU hardware layers (`translateZ(0)`).
+ * - Enforces smooth scroll-snap physics on YouTube Shorts (`scroll-snap-stop: always`), pre-buffers
+ *   upcoming Shorts in the DOM, unlocks audio on touch, pauses off-screen decoders, and suppresses
+ *   intrusive "Open in YouTube App" banners/modals.
+ */
+private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
+    val js = """
+        (function() {
+            try {
+                // 1. Passive touch & wheel listener optimization for zero-latency YouTube Shorts swipes & feed scrolling
+                if (!window.__xenoYtPassivePatched) {
+                    window.__xenoYtPassivePatched = true;
+                    var origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                            var newOpts = options;
+                            if (typeof options === 'boolean') {
+                                newOpts = { capture: options, passive: true };
+                            } else if (typeof options === 'object' && options !== null) {
+                                if (typeof options.passive === 'undefined') {
+                                    newOpts = Object.assign({}, options, { passive: true });
+                                }
+                            } else if (typeof options === 'undefined') {
+                                newOpts = { passive: true };
+                            }
+                            return origAddEventListener.call(this, type, listener, newOpts);
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
+
+                    // Keep Page Visibility active so YouTube player never throttles or pauses mid-stream
+                    try {
+                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    } catch(e) {}
+
+                    // Unlock YouTube Shorts audio on first user touch interaction
+                    window.__xenoYtAudioUnlocked = false;
+                    document.addEventListener('touchstart', function() {
+                        if (!window.__xenoYtAudioUnlocked) {
+                            window.__xenoYtAudioUnlocked = true;
+                            var vids = document.querySelectorAll('video');
+                            for (var i = 0; i < vids.length; i++) {
+                                if (!vids[i].paused && vids[i].muted) {
+                                    vids[i].muted = false;
+                                }
+                            }
+                        }
+                    }, { passive: true });
+                }
+
+                // 2. Smooth YouTube Feed & Shorts Scroll-Snap, GPU Video Layer Promotion & App-Banner Suppression CSS
+                var styleId = 'xeno-yt-shorts-smooth-style';
+                if (!document.getElementById(styleId) && document.head) {
+                    var st = document.createElement('style');
+                    st.id = styleId;
+                    st.textContent =
+                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'ytm-app, #app, ytm-browse, ytm-watch, ytm-shorts, #shorts-container, .reel-video-in-sequence, ytm-reel-shelf-renderer, div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
+                        '#shorts-container > *, .reel-video-in-sequence, ytm-reel-video-renderer, ytd-reel-video-renderer { scroll-snap-stop: always !important; scroll-snap-align: start !important; transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; will-change: transform !important; } ' +
+                        'video, .html5-video-player, #player-container-id, #movie_player { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; } ' +
+                        'ytm-mealbar-promo-renderer, ytm-app-banner, .upsell-dialog-renderer, ytm-statement-banner-renderer, ytm-ClarificationRenderer, a[href*="intent://"], a[href*="vnd.youtube"] { display: none !important; pointer-events: none !important; } ' +
+                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                    document.head.appendChild(st);
+                }
+
+                // 3. YouTube & Shorts Video Preloader, Inline Playback & Viewport Intersection Optimizer
+                if (!window.__xenoYtVideoHelper) {
+                    window.__xenoYtVideoHelper = {
+                        userPausedMap: new WeakMap(),
+                        observedVideos: new WeakSet(),
+                        observer: null
+                    };
+
+                    if ('IntersectionObserver' in window) {
+                        window.__xenoYtVideoHelper.observer = new IntersectionObserver(function(entries) {
+                            entries.forEach(function(entry) {
+                                var vid = entry.target;
+                                if (!vid || vid.tagName !== 'VIDEO') return;
+                                var isShortsPage = window.location.pathname.indexOf('/shorts') !== -1;
+
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
+                                    vid.preload = 'auto';
+                                    if (isShortsPage) {
+                                        vid.loop = true;
+                                    }
+                                    // Pre-buffer upcoming Shorts / videos in the DOM for zero-lag vertical swiping
+                                    try {
+                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
+                                        var idx = allVids.indexOf(vid);
+                                        if (idx >= 0 && idx + 1 < allVids.length) {
+                                            allVids[idx + 1].preload = 'auto';
+                                        }
+                                        if (idx >= 0 && idx + 2 < allVids.length) {
+                                            allVids[idx + 2].preload = 'auto';
+                                        }
+                                    } catch(e) {}
+
+                                    if (isShortsPage && vid.paused && !window.__xenoYtVideoHelper.userPausedMap.get(vid)) {
+                                        if (window.__xenoYtAudioUnlocked) {
+                                            vid.muted = false;
+                                        }
+                                        var playPromise = vid.play();
+                                        if (playPromise && typeof playPromise.catch === 'function') {
+                                            playPromise.catch(function() {
+                                                if (!vid.muted) {
+                                                    vid.muted = true;
+                                                    vid.play().catch(function(){});
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.2) {
+                                    // Pause off-screen Shorts so background decoders never cause scroll jank or audio overlap
+                                    if (isShortsPage && !vid.paused) {
+                                        try { vid.pause(); } catch(e) {}
+                                    }
+                                }
+                            });
+                        }, { threshold: [0.0, 0.2, 0.55, 0.85] });
+                    }
+                }
+
+                function optimizeYouTubeAndShortsVideos() {
+                    var isShortsPage = window.location.pathname.indexOf('/shorts') !== -1;
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                        if (isShortsPage) {
+                            v.loop = true;
+                        }
+                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
+                            v.preload = 'auto';
+                        }
+
+                        if (!window.__xenoYtVideoHelper.observedVideos.has(v)) {
+                            window.__xenoYtVideoHelper.observedVideos.add(v);
+                            v.addEventListener('click', function() {
+                                var self = this;
+                                if (self.muted) {
+                                    self.muted = false;
+                                    window.__xenoYtAudioUnlocked = true;
+                                }
+                                setTimeout(function() {
+                                    window.__xenoYtVideoHelper.userPausedMap.set(self, self.paused);
+                                }, 80);
+                            }, { passive: true });
+
+                            v.addEventListener('stalled', function() {
+                                var self = this;
+                                if (!self.paused && self.readyState >= 2) {
+                                    self.play().catch(function(){});
+                                }
+                            }, { passive: true });
+
+                            if (window.__xenoYtVideoHelper.observer) {
+                                window.__xenoYtVideoHelper.observer.observe(v);
+                            }
+                        }
+                    }
+                }
+
+                optimizeYouTubeAndShortsVideos();
+
+                if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
+                    var throttleTimer = null;
+                    window.__xenoYtMutationObserver = new MutationObserver(function() {
+                        if (throttleTimer) return;
+                        throttleTimer = setTimeout(function() {
+                            throttleTimer = null;
+                            optimizeYouTubeAndShortsVideos();
+                        }, 160);
+                    });
+                    window.__xenoYtMutationObserver.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CloneWorkspaceScreen(
@@ -1322,7 +1512,15 @@ fun CloneWorkspaceScreen(
                 instance.targetUrl.contains("tiktok.com", ignoreCase = true)
     }
 
-    val isShortVideoSocialApp = isInstagram || isFacebook || isTiktok
+    val isYoutube = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
+        instance.packageName.contains("youtube", ignoreCase = true) ||
+                instance.originalName.contains("youtube", ignoreCase = true) ||
+                instance.displayName.contains("youtube", ignoreCase = true) ||
+                instance.targetUrl.contains("youtube.com", ignoreCase = true) ||
+                instance.targetUrl.contains("youtu.be", ignoreCase = true)
+    }
+
+    val isShortVideoSocialApp = isInstagram || isFacebook || isTiktok || isYoutube
 
     val buildRequiredCallPermissions: (Boolean, Boolean) -> Array<String> = remember {
         { needAudio, needVideo ->
@@ -1701,7 +1899,7 @@ fun CloneWorkspaceScreen(
                 .background(
                     when {
                         isWhatsapp -> Color(0xFF111B21)
-                        isInstagram || isTiktok -> Color.Black
+                        isInstagram || isTiktok || isYoutube -> Color.Black
                         else -> Color.White
                     }
                 )
@@ -1780,7 +1978,7 @@ fun CloneWorkspaceScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels, TikTok, Facebook Watch & video calls
+                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels, TikTok, Facebook Watch, YouTube Shorts & video calls
                                 if (useSoftwareLayer || (isWhatsapp && !isVideoCallActive)) {
                                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                 } else {
@@ -1795,7 +1993,7 @@ fun CloneWorkspaceScreen(
                                 setBackgroundColor(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
-                                        isInstagram || isTiktok -> android.graphics.Color.BLACK
+                                        isInstagram || isTiktok || isYoutube -> android.graphics.Color.BLACK
                                         else -> android.graphics.Color.WHITE
                                     }
                                 )
@@ -1806,7 +2004,7 @@ fun CloneWorkspaceScreen(
                                     databaseEnabled = true
                                     loadWithOverviewMode = true
                                     useWideViewPort = true
-                                    // Disable pinch-zoom on Instagram, Facebook & TikTok so double-tap-to-like and fast vertical video swipes stay crisp
+                                    // Disable pinch-zoom on Instagram, Facebook, TikTok & YouTube so double-tap-to-like and fast vertical video swipes stay crisp
                                     builtInZoomControls = !isShortVideoSocialApp
                                     displayZoomControls = false
                                     safeBrowsingEnabled = false
@@ -1911,6 +2109,8 @@ fun CloneWorkspaceScreen(
                                                 injectFacebookVideoAndScrollHelper(view)
                                             isTiktok || url?.contains("tiktok.com", ignoreCase = true) == true ->
                                                 injectTikTokVideoAndScrollHelper(view)
+                                            isYoutube || url?.contains("youtube.com", ignoreCase = true) == true || url?.contains("youtu.be", ignoreCase = true) == true ->
+                                                injectYouTubeAndShortsSmoothHelper(view)
                                         }
                                     }
 
@@ -1970,15 +2170,17 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
-                                        // Prevent Facebook & TikTok from kicking the user out to Play Store app-install prompts
-                                        if (isFacebook || isTiktok || isInstagram) {
+                                        // Prevent Facebook, TikTok, Instagram & YouTube from kicking the user out to Play Store or external app prompts
+                                        if (isFacebook || isTiktok || isInstagram || isYoutube) {
                                             if (lowerUrl.contains("play.google.com/store/apps") ||
                                                 lowerUrl.startsWith("market://") ||
                                                 lowerUrl.startsWith("fb://") ||
                                                 lowerUrl.startsWith("fbmessenger://") ||
                                                 lowerUrl.startsWith("tiktok://") ||
                                                 lowerUrl.startsWith("snssdk") ||
-                                                lowerUrl.startsWith("musical://")
+                                                lowerUrl.startsWith("musical://") ||
+                                                lowerUrl.startsWith("vnd.youtube:") ||
+                                                lowerUrl.startsWith("youtube://")
                                             ) {
                                                 return true
                                             }

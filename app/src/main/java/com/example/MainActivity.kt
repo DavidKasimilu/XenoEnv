@@ -62,7 +62,6 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.XenoTab
 import com.example.ui.viewmodel.XenoViewModel
-import com.example.util.AppPerformanceHelper
 
 class MainActivity : ComponentActivity() {
 
@@ -70,7 +69,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppPerformanceHelper.optimizeWindowForSmoothness(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -100,11 +98,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         currentIntentState.value = intent
-    }
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        AppPerformanceHelper.onTrimMemory(level)
     }
 }
 
