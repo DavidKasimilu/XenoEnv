@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,9 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
@@ -71,6 +75,7 @@ fun SpaceSandboxScreen(
     onOpenEditClone: (ClonedAppInstance) -> Unit,
     onDeleteClone: (String) -> Unit,
     onCloseFromDock: (String) -> Unit,
+    onOpenMedia: () -> Unit = {},
     onBackToBrowser: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -128,62 +133,89 @@ fun SpaceSandboxScreen(
         }
 
         // Clean, Minimal App Icon Grid
-        if (clones.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 64.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    FilledTonalIconButton(
-                        onClick = onOpenAddClone,
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = "Add App",
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Text(
-                        text = "Tap + to add an app",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        } else {
-            FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
-                verticalArrangement = Arrangement.spacedBy(28.dp)
-            ) {
-                clones.forEach { clone ->
-                    CloneAppIconItem(
-                        instance = clone,
-                        onLaunch = { onLaunchInstance(clone.instanceId) },
-                        onEdit = { onOpenEditClone(clone) },
-                        onDelete = { onDeleteClone(clone.instanceId) }
-                    )
-                }
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(28.dp)
+        ) {
+            clones.forEach { clone ->
+                CloneAppIconItem(
+                    instance = clone,
+                    onLaunch = { onLaunchInstance(clone.instanceId) },
+                    onEdit = { onOpenEditClone(clone) },
+                    onDelete = { onDeleteClone(clone.instanceId) }
+                )
             }
 
-            Spacer(modifier = Modifier.height(36.dp))
-
-            Text(
-                text = "Tap an icon to launch • Long-press to edit or delete",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
+            MediaShortcutIconItem(
+                onClick = onOpenMedia
             )
         }
+
+        Spacer(modifier = Modifier.height(36.dp))
+
+        Text(
+            text = "Tap an icon to launch • Long-press to edit or delete",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun MediaShortcutIconItem(
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(96.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp)
+            .testTag("clone_space_media_shortcut")
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(68.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF7C4DFF),
+                                Color(0xFF536DFE)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SmartDisplay,
+                    contentDescription = "Media",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Media",
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -219,6 +251,21 @@ private fun CloneAppIconItem(
                 instance.targetUrl.contains("mail.google.com", ignoreCase = true)
     }
 
+    val isFacebook = remember(instance) {
+        instance.packageName.contains("facebook", ignoreCase = true) ||
+                instance.originalName.contains("facebook", ignoreCase = true) ||
+                instance.displayName.contains("facebook", ignoreCase = true) ||
+                instance.targetUrl.contains("facebook.com", ignoreCase = true)
+    }
+
+    val isTiktok = remember(instance) {
+        instance.packageName.contains("tiktok", ignoreCase = true) ||
+                instance.packageName.contains("musically", ignoreCase = true) ||
+                instance.originalName.contains("tiktok", ignoreCase = true) ||
+                instance.displayName.contains("tiktok", ignoreCase = true) ||
+                instance.targetUrl.contains("tiktok.com", ignoreCase = true)
+    }
+
     val appIcon = remember(instance.packageName) {
         try {
             if (instance.packageName.isNotBlank()) {
@@ -229,11 +276,21 @@ private fun CloneAppIconItem(
         }
     }
 
-    val cleanLabel = remember(instance.displayName, instance.originalName, isInstagram, isWhatsapp, isGmail) {
+    val cleanLabel = remember(
+        instance.displayName,
+        instance.originalName,
+        isInstagram,
+        isWhatsapp,
+        isGmail,
+        isFacebook,
+        isTiktok
+    ) {
         when {
             isInstagram && instance.displayName == "Instagram (Clone 1)" -> "Instagram"
             isWhatsapp && instance.displayName == "WhatsApp (Personal)" -> "WhatsApp"
             isGmail && instance.displayName.startsWith("Gmail", ignoreCase = true) -> "Gmail"
+            isFacebook && instance.displayName.startsWith("Facebook", ignoreCase = true) -> "Facebook"
+            isTiktok && instance.displayName.startsWith("TikTok", ignoreCase = true) -> "TikTok"
             else -> instance.displayName.ifBlank { instance.originalName }
         }
     }
@@ -334,6 +391,72 @@ private fun CloneAppIconItem(
                             contentDescription = "Gmail",
                             tint = Color.White,
                             modifier = Modifier.size(30.dp)
+                        )
+                    }
+                } else if (isFacebook) {
+                    // Authentic Facebook Royal Blue Icon
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF1877F2),
+                                        Color(0xFF0C5DC7)
+                                    )
+                                )
+                            )
+                    ) {
+                        Text(
+                            text = "f",
+                            color = Color.White,
+                            fontSize = 42.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.offset(y = 2.dp)
+                        )
+                    }
+                } else if (isTiktok) {
+                    // Authentic TikTok Dark Neon Cyan/Magenta Note Icon
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color(0xFF0B0B0E))
+                            .border(
+                                width = 1.5.dp,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        Color(0xFF25F4EE),
+                                        Color(0xFFFE2C55)
+                                    )
+                                ),
+                                shape = RoundedCornerShape(18.dp)
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MusicNote,
+                            contentDescription = null,
+                            tint = Color(0xFF25F4EE),
+                            modifier = Modifier
+                                .size(34.dp)
+                                .offset(x = (-2).dp, y = (-1.5).dp)
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.MusicNote,
+                            contentDescription = null,
+                            tint = Color(0xFFFE2C55),
+                            modifier = Modifier
+                                .size(34.dp)
+                                .offset(x = 2.dp, y = 1.5.dp)
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.MusicNote,
+                            contentDescription = "TikTok",
+                            tint = Color.White,
+                            modifier = Modifier.size(34.dp)
                         )
                     }
                 } else {

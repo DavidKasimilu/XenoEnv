@@ -34,7 +34,8 @@ class BrowserRepository(context: Context) {
                     WebTab(
                         id = obj.optString("id", UUID.randomUUID().toString()),
                         title = obj.optString("title", "New Tab"),
-                        url = obj.optString("url", "https://www.google.com")
+                        url = obj.optString("url", "https://www.google.com"),
+                        isDesktopMode = obj.optBoolean("isDesktopMode", false)
                     )
                 )
             }
@@ -60,6 +61,7 @@ class BrowserRepository(context: Context) {
                 put("id", tab.id)
                 put("title", tab.title)
                 put("url", tab.url)
+                put("isDesktopMode", tab.isDesktopMode)
             }
             array.put(obj)
         }

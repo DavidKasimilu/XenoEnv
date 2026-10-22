@@ -1,9 +1,12 @@
 package com.example.telecom
 
+import android.content.Intent
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
+import android.telecom.VideoProfile
 import android.util.Log
+import com.example.MainActivity
 
 class XenoInCallService : InCallService() {
 
@@ -17,7 +20,7 @@ class XenoInCallService : InCallService() {
         fun setSpeaker(enabled: Boolean) {
             try {
                 instance?.let { service ->
-                    val route = if (enabled) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_EARPIECE
+                    val route = if (enabled) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_WIRED_OR_EARPIECE
                     service.setAudioRoute(route)
                 }
             } catch (e: Exception) {
@@ -33,9 +36,21 @@ class XenoInCallService : InCallService() {
             }
         }
 
+        fun setHold(onHold: Boolean) {
+            try {
+                if (onHold) {
+                    currentCall?.hold()
+                } else {
+                    currentCall?.unhold()
+                }
+            } catch (e: Exception) {
+                Log.w("XenoInCallService", "Failed to set hold: ${e.message}")
+            }
+        }
+
         fun answerCall() {
             try {
-                currentCall?.answer(android.telecom.VideoProfile.STATE_AUDIO_ONLY)
+                currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
             } catch (e: Exception) {
                 Log.w("XenoInCallService", "Failed to answer call: ${e.message}")
             }
@@ -52,7 +67,14 @@ class XenoInCallService : InCallService() {
 
         fun endCall() {
             try {
-                currentCall?.disconnect()
+                val call = currentCall
+                if (call != null) {
+                    if (call.state == Call.STATE_RINGING) {
+                        call.reject(false, null)
+                    } else {
+                        call.disconnect()
+                    }
+                }
             } catch (e: Exception) {
                 Log.w("XenoInCallService", "Failed to disconnect call: ${e.message}")
             }
@@ -71,36 +93,77 @@ class XenoInCallService : InCallService() {
         fun playDtmf(digit: Char) = sendDtmf(digit)
     }
 
-    override fun onCallAdded(call: Call?) {
-        super.onCallAdded(call)
-        instance = this
-        currentCall = call
-        Log.d("XenoInCallService", "New call added: ${call?.details?.handle}")
-        call?.registerCallback(object : Call.Callback() {
-            override fun onStateChanged(call: Call?, state: Int) {
-                super.onStateChanged(call, state)
-                Log.d("XenoInCallService", "Call state changed to $state")
-                callStateListener?.invoke(state)
-                if (state == Call.STATE_DISCONNECTED) {
+    private val callCallback = object : Call.Callback() {
+        override fun onStateChanged(call: Call?, state: Int) {
+            super.onStateChanged(call, state)
+            Log.d("XenoInCallService", "Call state changed to $state")
+            OngoingCallHelper.onTelecomCallStateChanged(call, state)
+            callStateListener?.invoke(state)
+
+            when (state) {
+                Call.STATE_ACTIVE -> {
+                    XenoNotificationHelper.cancelCallNotification(applicationContext)
+                }
+                Call.STATE_DISCONNECTED -> {
                     XenoNotificationHelper.cancelCallNotification(applicationContext)
                     onCallEndedListener?.invoke()
                 }
             }
-        })
-        val state = call?.state ?: Call.STATE_DIALING
+        }
+    }
+
+    override fun onCallAudioStateChanged(audioState: CallAudioState?) {
+        super.onCallAudioStateChanged(audioState)
+        OngoingCallHelper.onCallAudioStateChanged(audioState)
+    }
+
+    override fun onCallAdded(call: Call?) {
+        super.onCallAdded(call)
+        instance = this
+        currentCall = call
+        if (call == null) return
+
+        val handle = call.details?.handle?.schemeSpecificPart ?: ""
+        Log.d("XenoInCallService", "New call added: $handle (state=${call.state})")
+
+        call.registerCallback(callCallback)
+        OngoingCallHelper.onTelecomCallAdded(call)
+
+        val state = call.state
         callStateListener?.invoke(state)
+
         if (state == Call.STATE_RINGING) {
-            val handle = call?.details?.handle?.schemeSpecificPart ?: ""
-            if (handle.isNotBlank()) {
-                XenoNotificationHelper.showCallNotification(applicationContext, null, handle)
-                onIncomingCallListener?.invoke(handle)
+            if (handle.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(handle)) {
+                val resolvedName = XenoNotificationHelper.resolveContactNameQuick(applicationContext, handle)
+                OngoingCallHelper.startIncomingSession(handle, resolvedName)
+                XenoNotificationHelper.showCallNotification(applicationContext, resolvedName, handle)
+
+                if (onIncomingCallListener != null) {
+                    onIncomingCallListener?.invoke(handle)
+                } else {
+                    try {
+                        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            putExtra("open_tab", "CALLS")
+                            putExtra("incoming_number", handle)
+                            putExtra("caller_name", resolvedName)
+                        }
+                        applicationContext.startActivity(launchIntent)
+                    } catch (e: Exception) {
+                        Log.w("XenoInCallService", "Could not launch MainActivity for incoming call: ${e.message}")
+                    }
+                }
             }
         }
     }
 
     override fun onCallRemoved(call: Call?) {
         super.onCallRemoved(call)
+        try {
+            call?.unregisterCallback(callCallback)
+        } catch (_: Exception) {}
         XenoNotificationHelper.cancelCallNotification(applicationContext)
+        OngoingCallHelper.onTelecomCallStateChanged(call, Call.STATE_DISCONNECTED)
         if (currentCall == call) {
             currentCall = null
         }

@@ -149,10 +149,16 @@ class SmsRepository(
             val sameSender = currentMsg.address.equals(next.address, ignoreCase = true) || currentMsg.threadId == next.threadId
             val timeDiff = Math.abs(next.date - currentMsg.date)
 
-            val isContinuation = sameDirection && sameSender && (
-                timeDiff <= 45000L || // Received within 45s of each other
-                looksLikeMultipartPart(currentMsg.body, next.body)
-            )
+            // If exact duplicate message row within 5 seconds, collapse into one message
+            if (sameDirection && sameSender && currentMsg.body.trim() == next.body.trim() && timeDiff <= 5000L) {
+                currentMsg = currentMsg.copy(
+                    date = Math.max(currentMsg.date, next.date),
+                    read = currentMsg.read || next.read
+                )
+                continue
+            }
+
+            val isContinuation = sameDirection && sameSender && looksLikeMultipartPart(currentMsg.body, next.body)
 
             if (isContinuation) {
                 val cleanedCurrent = cleanMultipartSuffix(currentMsg.body)

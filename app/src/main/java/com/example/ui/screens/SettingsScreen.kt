@@ -635,7 +635,7 @@ fun SettingsScreen(
             }
         }
 
-        // 4. In-App Notification Popups Testing
+        // 4. In-App Notification Popups
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -663,45 +663,6 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilledTonalButton(
-                        onClick = onSimulateSms,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("settings_simulate_sms_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Message,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Test SMS Popup")
-                    }
-
-                    FilledTonalButton(
-                        onClick = onSimulateCall,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("settings_simulate_call_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.PhoneInTalk,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Test Call Popup")
                     }
                 }
             }

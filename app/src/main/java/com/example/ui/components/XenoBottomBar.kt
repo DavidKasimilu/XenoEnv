@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Dialpad
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Message
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -76,6 +78,12 @@ fun XenoBottomBar(
             label = "Browser",
             selectedIcon = Icons.Filled.Public,
             unselectedIcon = Icons.Outlined.Public
+        ),
+        BottomBarItem(
+            tab = XenoTab.CLONE_SPACE,
+            label = "Clone Space",
+            selectedIcon = Icons.Filled.Layers,
+            unselectedIcon = Icons.Outlined.Layers
         )
     )
 

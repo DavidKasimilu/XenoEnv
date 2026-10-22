@@ -7,7 +7,8 @@ data class WebTab(
     val isLoading: Boolean = false,
     val progress: Int = 0,
     val canGoBack: Boolean = false,
-    val canGoForward: Boolean = false
+    val canGoForward: Boolean = false,
+    val isDesktopMode: Boolean = false
 )
 
 data class BrowserHistoryItem(

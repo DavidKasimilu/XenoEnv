@@ -5,16 +5,95 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.ContactsContract
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 
 object XenoNotificationHelper {
     const val CHANNEL_SMS_ID = "xeno_sms_channel"
     const val CHANNEL_CALL_ID = "xeno_call_channel"
+
+    @Volatile
+    private var lastSmsSignature: String = ""
+
+    @Volatile
+    private var lastSmsNotificationTimeMs: Long = 0L
+
+    @Volatile
+    private var lastCallNotificationNumber: String = ""
+
+    @Volatile
+    private var lastCallNotificationTimeMs: Long = 0L
+
+    fun normalizePhoneKey(address: String): String {
+        val digits = address.filter { it.isDigit() }
+        return if (digits.length >= 7) digits.takeLast(9) else address.trim().lowercase()
+    }
+
+    fun getSmsNotificationId(senderNumber: String, fallbackThreadId: Long = 0L): Int {
+        val key = normalizePhoneKey(senderNumber)
+        val hash = if (key.isNotEmpty()) key.hashCode() else fallbackThreadId.toInt()
+        return (hash and 0x7FFFFFFF).coerceAtLeast(1001)
+    }
+
+    /**
+     * Thread-safe deduplication check to ensure the exact same incoming SMS
+     * is never notified more than once even if multiple receivers/listeners fire.
+     */
+    @Synchronized
+    fun shouldNotifySms(
+        senderNumber: String,
+        body: String,
+        dedupWindowMs: Long = 15_000L
+    ): Boolean {
+        val normSender = normalizePhoneKey(senderNumber)
+        val normBody = body.trim()
+        val signature = "$normSender::$normBody"
+        val now = System.currentTimeMillis()
+        if (signature == lastSmsSignature && (now - lastSmsNotificationTimeMs) < dedupWindowMs) {
+            return false
+        }
+        lastSmsSignature = signature
+        lastSmsNotificationTimeMs = now
+        return true
+    }
+
+    fun resolveContactNameQuick(context: Context, phoneNumber: String): String? {
+        if (phoneNumber.isBlank()) return null
+        val hasContactsPerm = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasContactsPerm) return null
+
+        return try {
+            val lookupUri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(phoneNumber)
+            )
+            context.contentResolver.query(
+                lookupUri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    if (idx != -1) cursor.getString(idx)?.takeIf { it.isNotBlank() } else null
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -54,10 +133,20 @@ object XenoNotificationHelper {
         body: String,
         threadId: Long
     ) {
+        // Prevent duplicate notifications for the same incoming SMS
+        if (!shouldNotifySms(senderNumber, body)) {
+            return
+        }
+
         createNotificationChannels(context)
 
-        // Show floating overlay popup if permission granted
-        XenoOverlayService.showSmsOverlay(context, senderName, senderNumber, body, threadId)
+        val resolvedName = if (senderName.isBlank() || senderName == senderNumber) {
+            resolveContactNameQuick(context, senderNumber) ?: senderName.ifBlank { senderNumber }
+        } else {
+            senderName
+        }
+
+        val notificationId = getSmsNotificationId(senderNumber, threadId)
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -68,7 +157,7 @@ object XenoNotificationHelper {
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (threadId and 0x7FFFFFFF).toInt(),
+            notificationId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -80,7 +169,7 @@ object XenoNotificationHelper {
         }
         val markReadPendingIntent = PendingIntent.getBroadcast(
             context,
-            (threadId and 0x7FFFFFFF).toInt() + 200,
+            notificationId + 200,
             markReadIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -92,13 +181,13 @@ object XenoNotificationHelper {
         }
         val replyPendingIntent = PendingIntent.getBroadcast(
             context,
-            (threadId and 0x7FFFFFFF).toInt() + 300,
+            notificationId + 300,
             replyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val smsRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
-            setTextViewText(R.id.notif_sms_sender, senderName)
+            setTextViewText(R.id.notif_sms_sender, resolvedName)
             setTextViewText(R.id.notif_sms_number, senderNumber)
             setTextViewText(R.id.notif_sms_body, body)
 
@@ -108,7 +197,7 @@ object XenoNotificationHelper {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_SMS_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle(senderName)
+            .setContentTitle(resolvedName)
             .setContentText(body)
             .setCustomContentView(smsRemoteViews)
             .setCustomBigContentView(smsRemoteViews)
@@ -117,6 +206,7 @@ object XenoNotificationHelper {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.checkbox_on_background, "Mark Read", markReadPendingIntent)
             .addAction(android.R.drawable.ic_menu_send, "Reply", replyPendingIntent)
@@ -125,31 +215,49 @@ object XenoNotificationHelper {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
+        var notifiedSystem = false
         try {
-            NotificationManagerCompat.from(context).notify(
-                (threadId and 0x7FFFFFFF).toInt().coerceAtLeast(1001),
-                notification
-            )
+            val nm = NotificationManagerCompat.from(context)
+            if (nm.areNotificationsEnabled()) {
+                nm.notify(notificationId, notification)
+                notifiedSystem = true
+            }
         } catch (_: SecurityException) {
-            } catch (_: Exception) {}
+        } catch (_: Exception) {}
+
+        // Only show floating overlay if system notifications are disabled, avoiding double popups
+        if (!notifiedSystem) {
+            XenoOverlayService.showSmsOverlay(context, resolvedName, senderNumber, body, threadId)
+        }
     }
 
+    @Synchronized
     fun showCallNotification(
         context: Context,
         callerName: String?,
         callerNumber: String
     ) {
+        val normCaller = normalizePhoneKey(callerNumber)
+        val now = System.currentTimeMillis()
+        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 5_000L) {
+            return
+        }
+        lastCallNotificationNumber = normCaller
+        lastCallNotificationTimeMs = now
+
         createNotificationChannels(context)
 
-        // Show floating overlay popup over other apps
-        XenoOverlayService.showCallOverlay(context, callerName, callerNumber)
-
-        val name = if (!callerName.isNullOrBlank()) callerName else callerNumber
+        val resolvedName = if (!callerName.isNullOrBlank()) {
+            callerName
+        } else {
+            resolveContactNameQuick(context, callerNumber) ?: callerNumber
+        }
 
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("open_tab", "CALLS")
             putExtra("incoming_number", callerNumber)
+            putExtra("caller_name", resolvedName)
         }
 
         val pendingIntent = PendingIntent.getActivity(
@@ -173,7 +281,7 @@ object XenoNotificationHelper {
         val answerIntent = Intent(context, XenoNotificationActionReceiver::class.java).apply {
             action = XenoNotificationActionReceiver.ACTION_ANSWER_CALL
             putExtra(XenoNotificationActionReceiver.EXTRA_NUMBER, callerNumber)
-            putExtra(XenoNotificationActionReceiver.EXTRA_NAME, callerName)
+            putExtra(XenoNotificationActionReceiver.EXTRA_NAME, resolvedName)
         }
         val answerPendingIntent = PendingIntent.getBroadcast(
             context,
@@ -183,7 +291,7 @@ object XenoNotificationHelper {
         )
 
         val callRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
-            setTextViewText(R.id.notif_caller_name, name)
+            setTextViewText(R.id.notif_caller_name, resolvedName)
             setTextViewText(R.id.notif_caller_number, "Incoming Call ($callerNumber)")
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
@@ -192,7 +300,7 @@ object XenoNotificationHelper {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_CALL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_call)
-            .setContentTitle(name)
+            .setContentTitle(resolvedName)
             .setContentText("Incoming Call ($callerNumber)")
             .setCustomContentView(callRemoteViews)
             .setCustomBigContentView(callRemoteViews)
@@ -202,6 +310,7 @@ object XenoNotificationHelper {
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setFullScreenIntent(pendingIntent, true)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
             .addAction(android.R.drawable.ic_menu_call, "Answer", answerPendingIntent)
@@ -214,20 +323,26 @@ object XenoNotificationHelper {
         try {
             NotificationManagerCompat.from(context).notify(8888, notification)
         } catch (_: SecurityException) {
-            } catch (_: Exception) {}
+        } catch (_: Exception) {}
     }
 
     fun cancelCallNotification(context: Context) {
+        lastCallNotificationNumber = ""
+        lastCallNotificationTimeMs = 0L
         XenoOverlayService.dismissCallOverlay(context)
         try {
             NotificationManagerCompat.from(context).cancel(8888)
         } catch (_: Exception) {}
     }
 
-    fun cancelSmsNotification(context: Context, threadId: Long) {
+    fun cancelSmsNotification(context: Context, threadId: Long, senderNumber: String = "") {
         XenoOverlayService.dismissSmsOverlay(context)
         try {
-            NotificationManagerCompat.from(context).cancel((threadId and 0x7FFFFFFF).toInt().coerceAtLeast(1001))
+            val nm = NotificationManagerCompat.from(context)
+            if (senderNumber.isNotBlank()) {
+                nm.cancel(getSmsNotificationId(senderNumber, threadId))
+            }
+            nm.cancel((threadId and 0x7FFFFFFF).toInt().coerceAtLeast(1001))
         } catch (_: Exception) {}
     }
 }

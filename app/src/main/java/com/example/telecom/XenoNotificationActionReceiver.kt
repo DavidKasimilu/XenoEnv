@@ -13,14 +13,13 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
 
         when (action) {
             ACTION_ANSWER_CALL -> {
-                XenoInCallService.answerCall()
-                XenoNotificationHelper.cancelCallNotification(context)
-
                 val callerNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
                 val callerName = intent.getStringExtra(EXTRA_NAME)
-                
+
+                OngoingCallHelper.answerIncomingCall(context)
+
                 val appIntent = Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
                     putExtra("caller_name", callerName)
@@ -30,16 +29,13 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
             }
 
             ACTION_DECLINE_CALL -> {
-                XenoInCallService.rejectCall()
-                XenoNotificationHelper.cancelCallNotification(context)
+                OngoingCallHelper.declineIncomingCall(context)
             }
 
             ACTION_MARK_SMS_READ -> {
                 val threadId = intent.getLongExtra(EXTRA_THREAD_ID, -1L)
                 val senderNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
-                if (threadId != -1L) {
-                    XenoNotificationHelper.cancelSmsNotification(context, threadId)
-                }
+                XenoNotificationHelper.cancelSmsNotification(context, threadId, senderNumber)
             }
 
             ACTION_REPLY_SMS -> {
@@ -47,16 +43,14 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
                 val senderNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
 
                 val appIntent = Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "MESSAGES")
                     putExtra("thread_id", threadId)
                     putExtra("sender_number", senderNumber)
                 }
                 context.startActivity(appIntent)
 
-                if (threadId != -1L) {
-                    XenoNotificationHelper.cancelSmsNotification(context, threadId)
-                }
+                XenoNotificationHelper.cancelSmsNotification(context, threadId, senderNumber)
             }
         }
     }

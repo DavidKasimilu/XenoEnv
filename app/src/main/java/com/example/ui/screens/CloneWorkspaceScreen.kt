@@ -1,12 +1,24 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -15,7 +27,10 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,11 +47,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopMac
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -50,6 +70,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import com.example.data.models.ClonedAppInstance
 import com.example.ui.components.AppIconImage
 import com.example.ui.components.parseHexColor
@@ -75,20 +97,130 @@ private const val MOBILE_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
 private const val DESKTOP_USER_AGENT =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 private val WHATSAPP_WEB_HEADERS = mapOf(
     "Sec-CH-UA" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
     "Sec-CH-UA-Mobile" to "?0",
-    "Sec-CH-UA-Platform" to "\"Linux\"",
+    "Sec-CH-UA-Platform" to "\"Windows\"",
     "Upgrade-Insecure-Requests" to "1"
 )
 
 /**
- * Lightweight, idempotent WhatsApp Web Support Engine for Android WebView:
- * Polyfills missing Desktop Chrome APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`)
- * and ensures `#app` stays visible without heavy CSS zoom or repeated ServiceWorker mutations that could
- * overload the emulator's Chromium renderer process.
+ * Configures Android's hardware AudioManager for real-time WebRTC Voice & Video Calls in WhatsApp Web.
+ */
+@Suppress("DEPRECATION")
+private fun setWhatsAppCallAudioMode(
+    context: Context,
+    active: Boolean,
+    speakerphoneOn: Boolean = true
+): AudioFocusRequest? {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return null
+    return try {
+        if (active) {
+            val focusRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attrs)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { }
+                    .build().also { req ->
+                        audioManager.requestAudioFocus(req)
+                    }
+            } else {
+                audioManager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+                null
+            }
+
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.isMicrophoneMute = false
+            audioManager.isSpeakerphoneOn = speakerphoneOn
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val commDevices = audioManager.availableCommunicationDevices
+                val targetDevice = if (speakerphoneOn) {
+                    commDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                } else {
+                    commDevices.firstOrNull {
+                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                                it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                                it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    }
+                }
+                if (targetDevice != null) {
+                    audioManager.setCommunicationDevice(targetDevice)
+                }
+            }
+            focusRequest
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    audioManager.clearCommunicationDevice()
+                } catch (_: Exception) {}
+            }
+            audioManager.isSpeakerphoneOn = false
+            audioManager.mode = AudioManager.MODE_NORMAL
+            null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Native bridge exposed to WhatsApp Web as `window.XenoCallBridge` so WebRTC voice/video calls
+ * can coordinate Android hardware microphone, camera, speakerphone, and runtime permissions.
+ */
+private class WhatsAppCallJsBridge(
+    private val mainHandler: Handler,
+    private val onCallStateChanged: (active: Boolean, isVideo: Boolean) -> Unit,
+    private val onEnsurePermissions: (needAudio: Boolean, needVideo: Boolean) -> Unit,
+    private val checkPermissionsGranted: () -> Boolean
+) {
+    @JavascriptInterface
+    fun onCallStarted(isVideo: Boolean) {
+        mainHandler.post {
+            onCallStateChanged(true, isVideo)
+        }
+    }
+
+    @JavascriptInterface
+    fun onCallEnded() {
+        mainHandler.post {
+            onCallStateChanged(false, false)
+        }
+    }
+
+    @JavascriptInterface
+    fun requestNativeCallPermissions(needAudio: Boolean, needVideo: Boolean) {
+        mainHandler.post {
+            onEnsurePermissions(needAudio, needVideo)
+        }
+    }
+
+    @JavascriptInterface
+    fun hasNativeCallPermissions(): Boolean {
+        return checkPermissionsGranted()
+    }
+}
+
+/**
+ * Lightweight, idempotent WhatsApp Web Support & Voice/Video Calling Engine for Android WebView:
+ * 1. Polyfills Desktop Chrome 131 (Windows 64-bit) APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`).
+ * 2. Enables WebRTC Voice & Video Calls using device microphone and camera:
+ *    - Grants `navigator.permissions.query` for `'microphone'`, `'camera'`, `'audio-capture'`, `'video-capture'`, and `'notifications'`.
+ *    - Enhances `navigator.mediaDevices.enumerateDevices` so labeled microphone, front/rear cameras, and speaker output are always detected by WhatsApp Web.
+ *    - Wraps `navigator.mediaDevices.getUserMedia` with automatic constraint fallback (`OverconstrainedError` / `NotFoundError` protection) so desktop camera/mic constraints seamlessly map to Android device cameras and hardware microphone.
+ *    - Polyfills `HTMLMediaElement.prototype.setSinkId` and inline video playback so call audio/video streams never fail.
+ * 3. Preserves the untouched 1280px desktop layout.
  */
 private fun injectWhatsAppWebSupportEngine(view: WebView?) {
     val js = """
@@ -96,6 +228,8 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
             try {
                 if (!window.__xenoWaPolyfilled) {
                     window.__xenoWaPolyfilled = true;
+                    window.__xenoPreferredFacingMode = 'user';
+                    window.__xenoActiveCallStreams = [];
 
                     if (!window.chrome) {
                         window.chrome = {
@@ -105,11 +239,22 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         };
                     }
 
-                    if (typeof window.Notification === 'undefined') {
+                    // 1. Desktop Notification API (Required for Incoming Call & Message Alerts)
+                    if (typeof window.Notification === 'undefined' || window.Notification.permission !== 'granted') {
+                        var OrigNotification = window.Notification;
                         var MockNotification = function(title, options) {
                             this.title = title;
                             this.options = options || {};
-                            this.close = function() {};
+                            this.onclick = null;
+                            this.onclose = null;
+                            this.close = function() {
+                                if (typeof this.onclose === 'function') this.onclose();
+                            };
+                            try {
+                                if (OrigNotification && OrigNotification !== MockNotification && OrigNotification.permission === 'granted') {
+                                    return new OrigNotification(title, options);
+                                }
+                            } catch(e) {}
                         };
                         MockNotification.permission = 'granted';
                         MockNotification.requestPermission = function(cb) {
@@ -119,6 +264,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         window.Notification = MockNotification;
                     }
 
+                    // 2. Desktop Windows 64-bit UserAgentData & Navigator properties for Calling Support
                     Object.defineProperty(navigator, 'userAgentData', {
                         get: function() {
                             return {
@@ -128,26 +274,438 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     { brand: 'Not_A Brand', version: '24' }
                                 ],
                                 mobile: false,
-                                platform: 'Linux',
+                                platform: 'Windows',
                                 getHighEntropyValues: function() {
                                     return Promise.resolve({
                                         architecture: 'x86',
                                         bitness: '64',
+                                        brands: [
+                                            { brand: 'Google Chrome', version: '131' },
+                                            { brand: 'Chromium', version: '131' },
+                                            { brand: 'Not_A Brand', version: '24' }
+                                        ],
+                                        fullVersionList: [
+                                            { brand: 'Google Chrome', version: '131.0.6778.86' },
+                                            { brand: 'Chromium', version: '131.0.6778.86' },
+                                            { brand: 'Not_A Brand', version: '24.0.0.0' }
+                                        ],
                                         mobile: false,
                                         model: '',
-                                        platform: 'Linux',
-                                        platformVersion: '6.5.0',
-                                        uaFullVersion: '131.0.0.0'
+                                        platform: 'Windows',
+                                        platformVersion: '15.0.0',
+                                        uaFullVersion: '131.0.6778.86'
                                     });
+                                },
+                                toJSON: function() {
+                                    return {
+                                        brands: this.brands,
+                                        mobile: false,
+                                        platform: 'Windows'
+                                    };
                                 }
                             };
                         },
                         configurable: true
                     });
-                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true });
+                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true });
                     Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
                     Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
                     Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+
+                    // 3. Permissions API Polyfill: Report 'granted' for microphone, camera, speaker & notifications
+                    var createGrantedStatus = function(permName) {
+                        var statusObj = {
+                            name: permName,
+                            state: 'granted',
+                            status: 'granted',
+                            onchange: null,
+                            addEventListener: function() {},
+                            removeEventListener: function() {},
+                            dispatchEvent: function() { return true; }
+                        };
+                        return Promise.resolve(statusObj);
+                    };
+
+                    if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+                        var origPermQuery = navigator.permissions.query.bind(navigator.permissions);
+                        navigator.permissions.query = function(desc) {
+                            var name = (desc && desc.name) ? String(desc.name).toLowerCase() : '';
+                            if (name === 'microphone' ||
+                                name === 'camera' ||
+                                name === 'audio-capture' ||
+                                name === 'video-capture' ||
+                                name === 'notifications' ||
+                                name === 'speaker' ||
+                                name === 'speaker-selection' ||
+                                name === 'persistent-storage' ||
+                                name === 'midi') {
+                                return createGrantedStatus(name);
+                            }
+                            return origPermQuery(desc).catch(function() {
+                                return createGrantedStatus(name || 'unknown');
+                            });
+                        };
+                    } else {
+                        try {
+                            Object.defineProperty(navigator, 'permissions', {
+                                value: {
+                                    query: function(desc) {
+                                        return createGrantedStatus((desc && desc.name) || 'microphone');
+                                    }
+                                },
+                                configurable: true
+                            });
+                        } catch(e) {}
+                    }
+
+                    // 4. HTMLMediaElement setSinkId & Speaker Output Polyfill for Call Audio Routing
+                    if (typeof HTMLMediaElement !== 'undefined' && HTMLMediaElement.prototype) {
+                        if (typeof HTMLMediaElement.prototype.setSinkId !== 'function') {
+                            HTMLMediaElement.prototype.setSinkId = function(sinkId) {
+                                this.__xenoSinkId = sinkId || 'default';
+                                return Promise.resolve();
+                            };
+                        } else {
+                            var origSetSinkId = HTMLMediaElement.prototype.setSinkId;
+                            HTMLMediaElement.prototype.setSinkId = function(sinkId) {
+                                this.__xenoSinkId = sinkId || 'default';
+                                try {
+                                    return origSetSinkId.call(this, sinkId).catch(function() {
+                                        return Promise.resolve();
+                                    });
+                                } catch(e) {
+                                    return Promise.resolve();
+                                }
+                            };
+                        }
+                        if (!('sinkId' in HTMLMediaElement.prototype)) {
+                            Object.defineProperty(HTMLMediaElement.prototype, 'sinkId', {
+                                get: function() { return this.__xenoSinkId || 'default'; },
+                                configurable: true
+                            });
+                        }
+                    }
+
+                    // 5. WebRTC MediaDevices (Microphone, Camera & Speaker) Engine
+                    if (!navigator.mediaDevices) {
+                        try {
+                            navigator.mediaDevices = {};
+                        } catch(e) {}
+                    }
+
+                    if (navigator.mediaDevices) {
+                        if (typeof navigator.mediaDevices.getSupportedConstraints === 'function') {
+                            var origGetSupported = navigator.mediaDevices.getSupportedConstraints.bind(navigator.mediaDevices);
+                            navigator.mediaDevices.getSupportedConstraints = function() {
+                                var base = {};
+                                try { base = origGetSupported() || {}; } catch(e) {}
+                                return Object.assign({}, base, {
+                                    width: true,
+                                    height: true,
+                                    aspectRatio: true,
+                                    frameRate: true,
+                                    facingMode: true,
+                                    resizeMode: true,
+                                    sampleRate: true,
+                                    sampleSize: true,
+                                    echoCancellation: true,
+                                    autoGainControl: true,
+                                    noiseSuppression: true,
+                                    latency: true,
+                                    channelCount: true,
+                                    deviceId: true,
+                                    groupId: true
+                                });
+                            };
+                        }
+
+                        var makeDeviceInfo = function(deviceId, kind, label, groupId) {
+                            return {
+                                deviceId: deviceId,
+                                kind: kind,
+                                label: label,
+                                groupId: groupId || 'default',
+                                toJSON: function() {
+                                    return {
+                                        deviceId: this.deviceId,
+                                        kind: this.kind,
+                                        label: this.label,
+                                        groupId: this.groupId
+                                    };
+                                }
+                            };
+                        };
+
+                        var origEnumerate = typeof navigator.mediaDevices.enumerateDevices === 'function'
+                            ? navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices)
+                            : null;
+
+                        navigator.mediaDevices.enumerateDevices = function() {
+                            var promise = origEnumerate ? origEnumerate().catch(function() { return []; }) : Promise.resolve([]);
+                            return promise.then(function(devices) {
+                                var result = [];
+                                var hasAudioIn = false;
+                                var hasVideoIn = false;
+                                var hasAudioOut = false;
+                                var micIdx = 1;
+                                var camIdx = 1;
+                                var spkIdx = 1;
+
+                                if (Array.isArray(devices)) {
+                                    for (var i = 0; i < devices.length; i++) {
+                                        var d = devices[i];
+                                        if (!d) continue;
+                                        var kind = d.kind || 'audioinput';
+                                        var id = d.deviceId && d.deviceId.length > 0 ? d.deviceId : ('default-' + kind + '-' + i);
+                                        var label = d.label;
+                                        if (!label || label.trim() === '') {
+                                            if (kind === 'audioinput') label = 'Device Microphone ' + (micIdx++);
+                                            else if (kind === 'videoinput') label = (camIdx === 1 ? 'Front Camera' : 'Back Camera ' + camIdx);
+                                            else if (kind === 'audiooutput') label = 'Device Speaker ' + (spkIdx++);
+                                            if (kind === 'videoinput') camIdx++;
+                                        }
+                                        if (kind === 'audioinput') hasAudioIn = true;
+                                        if (kind === 'videoinput') hasVideoIn = true;
+                                        if (kind === 'audiooutput') hasAudioOut = true;
+                                        result.push(makeDeviceInfo(id, kind, label, d.groupId || 'default'));
+                                    }
+                                }
+
+                                if (!hasAudioIn) {
+                                    result.push(makeDeviceInfo('default', 'audioinput', 'Default - Android Microphone', 'audio-group-1'));
+                                }
+                                if (!hasVideoIn) {
+                                    result.push(makeDeviceInfo('camera-front', 'videoinput', 'Front Camera (User)', 'video-group-1'));
+                                    result.push(makeDeviceInfo('camera-back', 'videoinput', 'Back Camera (Environment)', 'video-group-2'));
+                                }
+                                if (!hasAudioOut) {
+                                    result.push(makeDeviceInfo('default', 'audiooutput', 'Default - Device Speaker / Headset', 'audio-group-1'));
+                                }
+                                return result;
+                            });
+                        };
+
+                        var origGetUserMedia = typeof navigator.mediaDevices.getUserMedia === 'function'
+                            ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+                            : null;
+
+                        var registerActiveStream = function(stream, isVideo) {
+                            if (!stream) return stream;
+                            try {
+                                window.__xenoActiveCallStreams.push(stream);
+                                if (window.XenoCallBridge && typeof window.XenoCallBridge.onCallStarted === 'function') {
+                                    window.XenoCallBridge.onCallStarted(Boolean(isVideo));
+                                }
+                                var checkAllEnded = function() {
+                                    var anyLive = false;
+                                    window.__xenoActiveCallStreams = (window.__xenoActiveCallStreams || []).filter(function(s) {
+                                        var tracks = s && typeof s.getTracks === 'function' ? s.getTracks() : [];
+                                        var live = tracks.some(function(t) { return t.readyState === 'live'; });
+                                        if (live) anyLive = true;
+                                        return live;
+                                    });
+                                    if (!anyLive && window.XenoCallBridge && typeof window.XenoCallBridge.onCallEnded === 'function') {
+                                        window.XenoCallBridge.onCallEnded();
+                                    }
+                                };
+                                var tracks = typeof stream.getTracks === 'function' ? stream.getTracks() : [];
+                                tracks.forEach(function(track) {
+                                    track.addEventListener('ended', checkAllEnded);
+                                });
+                            } catch(e) {}
+                            return stream;
+                        };
+
+                        // Sanitize desktop-specific constraints so Android WebView camera/mic HAL succeeds on first try
+                        var buildFallbackConstraints = function(rawConstraints, level) {
+                            var c = rawConstraints || { audio: true };
+                            var wantsAudio = Boolean(c.audio);
+                            var wantsVideo = Boolean(c.video);
+                            var facing = window.__xenoPreferredFacingMode || 'user';
+
+                            if (level === 1) {
+                                var out = {};
+                                if (wantsAudio) {
+                                    out.audio = {
+                                        echoCancellation: true,
+                                        noiseSuppression: true,
+                                        autoGainControl: true
+                                    };
+                                }
+                                if (wantsVideo) {
+                                    out.video = {
+                                        facingMode: facing,
+                                        width: { ideal: 640 },
+                                        height: { ideal: 480 }
+                                    };
+                                }
+                                return out;
+                            } else {
+                                var minimal = {};
+                                if (wantsAudio) minimal.audio = true;
+                                if (wantsVideo) minimal.video = { facingMode: facing };
+                                if (!wantsAudio && !wantsVideo) minimal.audio = true;
+                                return minimal;
+                            }
+                        };
+
+                        navigator.mediaDevices.getUserMedia = function(constraints) {
+                            var reqConstraints = constraints || { audio: true };
+                            var wantsAudio = Boolean(reqConstraints.audio);
+                            var wantsVideo = Boolean(reqConstraints.video);
+
+                            try {
+                                if (window.XenoCallBridge) {
+                                    if (typeof window.XenoCallBridge.requestNativeCallPermissions === 'function') {
+                                        window.XenoCallBridge.requestNativeCallPermissions(wantsAudio, wantsVideo);
+                                    }
+                                    if (typeof window.XenoCallBridge.onCallStarted === 'function') {
+                                        window.XenoCallBridge.onCallStarted(wantsVideo);
+                                    }
+                                }
+                            } catch(e) {}
+
+                            if (!origGetUserMedia) {
+                                return Promise.reject(new Error('WebRTC getUserMedia unavailable'));
+                            }
+
+                            // If video is requested without explicit facingMode, prefer current facing mode
+                            var primaryConstraints = reqConstraints;
+                            if (wantsVideo && typeof reqConstraints.video === 'object' && reqConstraints.video !== null) {
+                                var vCopy = Object.assign({}, reqConstraints.video);
+                                // Strip desktop-only mandatory/exact deviceIds that don't match mobile camera IDs
+                                if (vCopy.deviceId && (vCopy.deviceId === 'camera-front' || vCopy.deviceId === 'camera-back' ||
+                                    (vCopy.deviceId.exact && (vCopy.deviceId.exact === 'camera-front' || vCopy.deviceId.exact === 'camera-back')))) {
+                                    var targetId = vCopy.deviceId.exact || vCopy.deviceId;
+                                    delete vCopy.deviceId;
+                                    vCopy.facingMode = (targetId === 'camera-back') ? 'environment' : 'user';
+                                } else if (!vCopy.facingMode) {
+                                    vCopy.facingMode = window.__xenoPreferredFacingMode || 'user';
+                                }
+                                primaryConstraints = Object.assign({}, reqConstraints, { video: vCopy });
+                            }
+
+                            return origGetUserMedia(primaryConstraints)
+                                .then(function(stream) {
+                                    return registerActiveStream(stream, wantsVideo);
+                                })
+                                .catch(function(err) {
+                                    // Retry with level-1 mobile-optimized constraints
+                                    return origGetUserMedia(buildFallbackConstraints(reqConstraints, 1))
+                                        .then(function(stream) {
+                                            return registerActiveStream(stream, wantsVideo);
+                                        })
+                                        .catch(function() {
+                                            // Retry with level-2 bare boolean constraints
+                                            return origGetUserMedia(buildFallbackConstraints(reqConstraints, 2))
+                                                .then(function(stream) {
+                                                    return registerActiveStream(stream, wantsVideo);
+                                                })
+                                                .catch(function(finalErr) {
+                                                    if (wantsVideo) {
+                                                        return origGetUserMedia({ audio: wantsAudio, video: true })
+                                                            .then(function(stream) {
+                                                                return registerActiveStream(stream, true);
+                                                            });
+                                                    }
+                                                    throw finalErr || err;
+                                                });
+                                        });
+                                });
+                        };
+
+                        navigator.getUserMedia = function(constraints, onSuccess, onError) {
+                            navigator.mediaDevices.getUserMedia(constraints)
+                                .then(function(s) { if (onSuccess) onSuccess(s); })
+                                .catch(function(e) { if (onError) onError(e); });
+                        };
+                        navigator.webkitGetUserMedia = navigator.getUserMedia;
+                    }
+
+                    // 6. Camera Flip Helper for active WhatsApp Video Calls
+                    window.__xenoFlipCallCamera = function(targetFacing) {
+                        try {
+                            window.__xenoPreferredFacingMode = targetFacing || (window.__xenoPreferredFacingMode === 'user' ? 'environment' : 'user');
+                            var streams = window.__xenoActiveCallStreams || [];
+                            if (streams.length > 0 && navigator.mediaDevices && origGetUserMedia) {
+                                origGetUserMedia({
+                                    video: { facingMode: { ideal: window.__xenoPreferredFacingMode } },
+                                    audio: false
+                                }).then(function(newVideoStream) {
+                                    var newVideoTrack = newVideoStream.getVideoTracks()[0];
+                                    if (!newVideoTrack) return;
+                                    // Replace video track in active PeerConnections & MediaStreams
+                                    if (window.__xenoActivePeerConnections) {
+                                        window.__xenoActivePeerConnections.forEach(function(pc) {
+                                            try {
+                                                var senders = pc.getSenders ? pc.getSenders() : [];
+                                                senders.forEach(function(sender) {
+                                                    if (sender && sender.track && sender.track.kind === 'video') {
+                                                        sender.replaceTrack(newVideoTrack);
+                                                    }
+                                                });
+                                            } catch(e) {}
+                                        });
+                                    }
+                                    streams.forEach(function(s) {
+                                        try {
+                                            var oldTracks = s.getVideoTracks();
+                                            oldTracks.forEach(function(t) {
+                                                t.stop();
+                                                s.removeTrack(t);
+                                            });
+                                            s.addTrack(newVideoTrack);
+                                        } catch(e) {}
+                                    });
+                                }).catch(function() {});
+                            }
+                        } catch(e) {}
+                    };
+
+                    // 7. Track RTCPeerConnections for STUN reliability, camera switching & call state monitoring
+                    var OrigPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+                    if (OrigPeerConnection && !window.__xenoPeerPatched) {
+                        window.__xenoPeerPatched = true;
+                        window.__xenoActivePeerConnections = new Set();
+                        var PatchedPeerConnection = function(config, constraints) {
+                            var cfg = config || {};
+                            if (!cfg.iceServers || cfg.iceServers.length === 0) {
+                                cfg = Object.assign({}, cfg, {
+                                    iceServers: [
+                                        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+                                    ]
+                                });
+                            }
+                            var pc = new OrigPeerConnection(cfg, constraints);
+                            window.__xenoActivePeerConnections.add(pc);
+                            pc.addEventListener('connectionstatechange', function() {
+                                if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                                    window.__xenoActivePeerConnections.delete(pc);
+                                }
+                            });
+                            return pc;
+                        };
+                        PatchedPeerConnection.prototype = OrigPeerConnection.prototype;
+                        Object.keys(OrigPeerConnection).forEach(function(k) {
+                            try { PatchedPeerConnection[k] = OrigPeerConnection[k]; } catch(e) {}
+                        });
+                        window.RTCPeerConnection = PatchedPeerConnection;
+                        window.webkitRTCPeerConnection = PatchedPeerConnection;
+                    }
+                }
+
+                // Ensure inline playback & unmuted audio for any WebRTC call <video> / <audio> elements
+                var mediaEls = document.querySelectorAll('video, audio');
+                for (var m = 0; m < mediaEls.length; m++) {
+                    var el = mediaEls[m];
+                    if (el.tagName === 'VIDEO') {
+                        el.setAttribute('playsinline', 'true');
+                        el.setAttribute('webkit-playsinline', 'true');
+                        el.playsInline = true;
+                    }
+                    if (el.srcObject && el.paused) {
+                        el.play().catch(function(){});
+                    }
                 }
 
                 // Remove any custom style overrides so WhatsApp Web keeps its exact untouched desktop CSS
@@ -190,6 +748,33 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         }
                     });
                     window.__xenoWaHeadObserver.observe(document.head, { childList: true });
+                }
+
+                // Observe body for dynamically mounted WebRTC call <video>/<audio> elements so they play inline immediately
+                if (!window.__xenoWaCallDomObserver && window.MutationObserver && document.body) {
+                    window.__xenoWaCallDomObserver = new MutationObserver(function(mutations) {
+                        for (var i = 0; i < mutations.length; i++) {
+                            var added = mutations[i].addedNodes;
+                            if (!added) continue;
+                            for (var j = 0; j < added.length; j++) {
+                                var node = added[j];
+                                if (!node || node.nodeType !== 1) continue;
+                                if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
+                                    node.setAttribute('playsinline', 'true');
+                                    node.setAttribute('webkit-playsinline', 'true');
+                                    node.playsInline = true;
+                                } else if (node.querySelectorAll) {
+                                    var medias = node.querySelectorAll('video, audio');
+                                    for (var k = 0; k < medias.length; k++) {
+                                        medias[k].setAttribute('playsinline', 'true');
+                                        medias[k].setAttribute('webkit-playsinline', 'true');
+                                        medias[k].playsInline = true;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    window.__xenoWaCallDomObserver.observe(document.body, { childList: true, subtree: true });
                 }
             } catch(e) {}
         })();
@@ -347,6 +932,325 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
     view?.evaluateJavascript(js, null)
 }
 
+/**
+ * Non-intrusive Facebook Feed, Watch & Reels Video and Smooth Scrolling Helper Engine:
+ * Optimizes passive touch listeners, GPU layer promotion, inline video playback, pre-buffering,
+ * automatic viewport play/pause, and suppresses intrusive "Open in App" overlays.
+ */
+private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
+    val js = """
+        (function() {
+            try {
+                // 1. Passive touch & wheel listener optimization for 60fps+ News Feed, Watch & Reels scrolling
+                if (!window.__xenoFbPassivePatched) {
+                    window.__xenoFbPassivePatched = true;
+                    var origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                            var newOpts = options;
+                            if (typeof options === 'boolean') {
+                                newOpts = { capture: options, passive: true };
+                            } else if (typeof options === 'object' && options !== null) {
+                                if (typeof options.passive === 'undefined') {
+                                    newOpts = Object.assign({}, options, { passive: true });
+                                }
+                            } else if (typeof options === 'undefined') {
+                                newOpts = { passive: true };
+                            }
+                            return origAddEventListener.call(this, type, listener, newOpts);
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
+                }
+
+                // 2. Smooth Scroll, GPU Layer Promotion & Reels/Watch Snap CSS
+                var styleId = 'xeno-fb-video-smooth-style';
+                if (!document.getElementById(styleId) && document.head) {
+                    var st = document.createElement('style');
+                    st.id = styleId;
+                    st.textContent =
+                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'div[role="main"], div[role="feed"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
+                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; } ' +
+                        'a[href*="intent://"], a[href*="fb://"], div[data-sigil*="m-promo-jewel"], div[id*="smartbanner"] { display: none !important; } ' +
+                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                    document.head.appendChild(st);
+                }
+
+                // 3. Facebook Watch & Reels Inline Video Playback, Preload & Viewport Intersection Optimizer
+                if (!window.__xenoFbVideoHelper) {
+                    window.__xenoFbVideoHelper = {
+                        userPausedMap: new WeakMap(),
+                        observedVideos: new WeakSet(),
+                        observer: null
+                    };
+
+                    if ('IntersectionObserver' in window) {
+                        window.__xenoFbVideoHelper.observer = new IntersectionObserver(function(entries) {
+                            entries.forEach(function(entry) {
+                                var vid = entry.target;
+                                if (!vid || vid.tagName !== 'VIDEO') return;
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+                                    vid.preload = 'auto';
+                                    try {
+                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
+                                        var idx = allVids.indexOf(vid);
+                                        if (idx >= 0 && idx + 1 < allVids.length) {
+                                            allVids[idx + 1].preload = 'auto';
+                                        }
+                                    } catch(e) {}
+
+                                    if (vid.paused && !window.__xenoFbVideoHelper.userPausedMap.get(vid)) {
+                                        var playPromise = vid.play();
+                                        if (playPromise && typeof playPromise.catch === 'function') {
+                                            playPromise.catch(function() {
+                                                if (!vid.muted) {
+                                                    vid.muted = true;
+                                                    vid.play().catch(function(){});
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.15) {
+                                    if (!vid.paused) {
+                                        try { vid.pause(); } catch(e) {}
+                                    }
+                                }
+                            });
+                        }, { threshold: [0.0, 0.15, 0.6, 0.85] });
+                    }
+                }
+
+                function optimizeFacebookVideos() {
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
+                            v.preload = 'auto';
+                        }
+
+                        if (!window.__xenoFbVideoHelper.observedVideos.has(v)) {
+                            window.__xenoFbVideoHelper.observedVideos.add(v);
+                            v.addEventListener('click', function() {
+                                var self = this;
+                                setTimeout(function() {
+                                    window.__xenoFbVideoHelper.userPausedMap.set(self, self.paused);
+                                }, 80);
+                            }, { passive: true });
+
+                            v.addEventListener('stalled', function() {
+                                var self = this;
+                                if (!self.paused && self.readyState >= 2) {
+                                    self.play().catch(function(){});
+                                }
+                            }, { passive: true });
+
+                            if (window.__xenoFbVideoHelper.observer) {
+                                window.__xenoFbVideoHelper.observer.observe(v);
+                            }
+                        }
+                    }
+                }
+
+                optimizeFacebookVideos();
+
+                if (!window.__xenoFbMutationObserver && window.MutationObserver && document.body) {
+                    var throttleTimer = null;
+                    window.__xenoFbMutationObserver = new MutationObserver(function() {
+                        if (throttleTimer) return;
+                        throttleTimer = setTimeout(function() {
+                            throttleTimer = null;
+                            optimizeFacebookVideos();
+                        }, 180);
+                    });
+                    window.__xenoFbMutationObserver.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
+/**
+ * Non-intrusive TikTok Vertical Video Feed & Smooth Swipe Helper Engine:
+ * Optimizes full-screen vertical video snap scrolling, passive touch responsiveness,
+ * inline HD video playback, next-video pre-buffering, audio unlock, and suppresses
+ * "Open in TikTok App" bottom-sheet interruptions.
+ */
+private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
+    val js = """
+        (function() {
+            try {
+                // 1. Passive touch & wheel listener optimization for zero-latency vertical video swipes
+                if (!window.__xenoTtPassivePatched) {
+                    window.__xenoTtPassivePatched = true;
+                    var origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                            var newOpts = options;
+                            if (typeof options === 'boolean') {
+                                newOpts = { capture: options, passive: true };
+                            } else if (typeof options === 'object' && options !== null) {
+                                if (typeof options.passive === 'undefined') {
+                                    newOpts = Object.assign({}, options, { passive: true });
+                                }
+                            } else if (typeof options === 'undefined') {
+                                newOpts = { passive: true };
+                            }
+                            return origAddEventListener.call(this, type, listener, newOpts);
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
+
+                    // Unlock video audio on first user touch interaction
+                    window.__xenoTtAudioUnlocked = false;
+                    document.addEventListener('touchstart', function() {
+                        if (!window.__xenoTtAudioUnlocked) {
+                            window.__xenoTtAudioUnlocked = true;
+                            var vids = document.querySelectorAll('video');
+                            for (var i = 0; i < vids.length; i++) {
+                                if (!vids[i].paused && vids[i].muted) {
+                                    vids[i].muted = false;
+                                }
+                            }
+                        }
+                    }, { passive: true });
+                }
+
+                // 2. Smooth Vertical Snap Scroll, GPU Video Promotion & App-Banner Suppression CSS
+                var styleId = 'xeno-tt-video-smooth-style';
+                if (!document.getElementById(styleId) && document.head) {
+                    var st = document.createElement('style');
+                    st.id = styleId;
+                    st.textContent =
+                        'html, body { background-color: #000 !important; -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: none !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'main, div[class*="Swiper"], div[class*="feed"], div[class*="VideoList"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; scroll-snap-stop: always !important; } ' +
+                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; object-fit: cover !important; } ' +
+                        'div[class*=" GuideModal"], div[class*="AppBanner"], div[class*="DownloadGuide"], div[class*="OpenApp"], div[data-e2e*="open-app"], div[data-e2e*="launch-app"] { display: none !important; pointer-events: none !important; } ' +
+                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                    document.head.appendChild(st);
+                }
+
+                // 3. TikTok Video Preloader, Auto-Loop & Viewport Intersection Optimizer
+                if (!window.__xenoTtVideoHelper) {
+                    window.__xenoTtVideoHelper = {
+                        userPausedMap: new WeakMap(),
+                        observedVideos: new WeakSet(),
+                        observer: null
+                    };
+
+                    if ('IntersectionObserver' in window) {
+                        window.__xenoTtVideoHelper.observer = new IntersectionObserver(function(entries) {
+                            entries.forEach(function(entry) {
+                                var vid = entry.target;
+                                if (!vid || vid.tagName !== 'VIDEO') return;
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
+                                    vid.preload = 'auto';
+                                    vid.loop = true;
+                                    // Pre-buffer the next 2 TikTok videos in the feed for instant swipe transitions
+                                    try {
+                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
+                                        var idx = allVids.indexOf(vid);
+                                        if (idx >= 0 && idx + 1 < allVids.length) {
+                                            allVids[idx + 1].preload = 'auto';
+                                        }
+                                        if (idx >= 0 && idx + 2 < allVids.length) {
+                                            allVids[idx + 2].preload = 'auto';
+                                        }
+                                    } catch(e) {}
+
+                                    if (vid.paused && !window.__xenoTtVideoHelper.userPausedMap.get(vid)) {
+                                        if (window.__xenoTtAudioUnlocked) {
+                                            vid.muted = false;
+                                        }
+                                        var playPromise = vid.play();
+                                        if (playPromise && typeof playPromise.catch === 'function') {
+                                            playPromise.catch(function() {
+                                                if (!vid.muted) {
+                                                    vid.muted = true;
+                                                    vid.play().catch(function(){});
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.2) {
+                                    // Pause off-screen TikTok videos immediately so audio never overlaps and scrolling stays 60fps
+                                    if (!vid.paused) {
+                                        try { vid.pause(); } catch(e) {}
+                                    }
+                                }
+                            });
+                        }, { threshold: [0.0, 0.2, 0.55, 0.85] });
+                    }
+                }
+
+                function optimizeTikTokVideos() {
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                        v.loop = true;
+                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
+                            v.preload = 'auto';
+                        }
+
+                        if (!window.__xenoTtVideoHelper.observedVideos.has(v)) {
+                            window.__xenoTtVideoHelper.observedVideos.add(v);
+                            v.addEventListener('click', function() {
+                                var self = this;
+                                if (self.muted) {
+                                    self.muted = false;
+                                    window.__xenoTtAudioUnlocked = true;
+                                }
+                                setTimeout(function() {
+                                    window.__xenoTtVideoHelper.userPausedMap.set(self, self.paused);
+                                }, 80);
+                            }, { passive: true });
+
+                            v.addEventListener('stalled', function() {
+                                var self = this;
+                                if (!self.paused && self.readyState >= 2) {
+                                    self.play().catch(function(){});
+                                }
+                            }, { passive: true });
+
+                            if (window.__xenoTtVideoHelper.observer) {
+                                window.__xenoTtVideoHelper.observer.observe(v);
+                            }
+                        }
+                    }
+                }
+
+                optimizeTikTokVideos();
+
+                if (!window.__xenoTtMutationObserver && window.MutationObserver && document.body) {
+                    var throttleTimer = null;
+                    window.__xenoTtMutationObserver = new MutationObserver(function() {
+                        if (throttleTimer) return;
+                        throttleTimer = setTimeout(function() {
+                            throttleTimer = null;
+                            optimizeTikTokVideos();
+                        }, 160);
+                    });
+                    window.__xenoTtMutationObserver.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CloneWorkspaceScreen(
@@ -358,6 +1262,7 @@ fun CloneWorkspaceScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var loadProgress by remember { mutableIntStateOf(0) }
@@ -367,6 +1272,24 @@ fun CloneWorkspaceScreen(
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
     var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(false) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
+
+    // Voice & Video Call hardware states
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var pendingWebPermissionRequest by remember { mutableStateOf<PermissionRequest?>(null) }
+    var isCallActive by remember(instance.instanceId) { mutableStateOf(false) }
+    var isVideoCallActive by remember(instance.instanceId) { mutableStateOf(false) }
+    var isSpeakerphoneOn by remember(instance.instanceId) { mutableStateOf(true) }
+    var isFrontCamera by remember(instance.instanceId) { mutableStateOf(true) }
+    var audioFocusRequest by remember { mutableStateOf<AudioFocusRequest?>(null) }
 
     val badgeColor = remember(instance.badgeColorHex) { parseHexColor(instance.badgeColorHex) }
 
@@ -384,11 +1307,92 @@ fun CloneWorkspaceScreen(
                 instance.targetUrl.contains("instagram.com", ignoreCase = true)
     }
 
-    // Properly release WebView renderer resources when leaving CloneWorkspaceScreen
+    val isFacebook = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
+        instance.packageName.contains("facebook", ignoreCase = true) ||
+                instance.originalName.contains("facebook", ignoreCase = true) ||
+                instance.displayName.contains("facebook", ignoreCase = true) ||
+                instance.targetUrl.contains("facebook.com", ignoreCase = true)
+    }
+
+    val isTiktok = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
+        instance.packageName.contains("tiktok", ignoreCase = true) ||
+                instance.packageName.contains("musically", ignoreCase = true) ||
+                instance.originalName.contains("tiktok", ignoreCase = true) ||
+                instance.displayName.contains("tiktok", ignoreCase = true) ||
+                instance.targetUrl.contains("tiktok.com", ignoreCase = true)
+    }
+
+    val isShortVideoSocialApp = isInstagram || isFacebook || isTiktok
+
+    val buildRequiredCallPermissions: (Boolean, Boolean) -> Array<String> = remember {
+        { needAudio, needVideo ->
+            val list = mutableListOf<String>()
+            if (needAudio) list.add(Manifest.permission.RECORD_AUDIO)
+            if (needVideo) list.add(Manifest.permission.CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                list.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                list.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            list.toTypedArray()
+        }
+    }
+
+    val callPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasMicPermission = results[Manifest.permission.RECORD_AUDIO]
+            ?: (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+        hasCameraPermission = results[Manifest.permission.CAMERA]
+            ?: (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+
+        // Complete any pending WebView WebRTC PermissionRequest immediately once Android OS permissions resolve
+        pendingWebPermissionRequest?.let { req ->
+            try {
+                val res = req.resources ?: emptyArray()
+                val wantsAudio = res.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                val wantsVideo = res.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                if (wantsAudio || wantsVideo) {
+                    isCallActive = true
+                    isVideoCallActive = wantsVideo
+                    audioFocusRequest = setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
+                    webViewInstance?.keepScreenOn = true
+                }
+                req.grant(res)
+            } catch (_: Exception) {}
+            pendingWebPermissionRequest = null
+        }
+
+        if (isWhatsapp) {
+            injectWhatsAppWebSupportEngine(webViewInstance)
+        }
+    }
+
+    // Proactively request Microphone, Camera, Bluetooth & Notification permissions when opening WhatsApp Web
+    LaunchedEffect(instance.instanceId, isWhatsapp) {
+        hasMicPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (isWhatsapp && (!hasMicPermission || !hasCameraPermission)) {
+            callPermissionsLauncher.launch(buildRequiredCallPermissions(true, true))
+        }
+    }
+
+    // Properly release WebView renderer and call audio resources when leaving CloneWorkspaceScreen
     DisposableEffect(instance.instanceId) {
         onDispose {
             try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { req ->
+                        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                        am?.abandonAudioFocusRequest(req)
+                    }
+                }
+                setWhatsAppCallAudioMode(context, active = false)
+            } catch (_: Exception) {}
+            try {
                 webViewInstance?.let { wv ->
+                    wv.keepScreenOn = false
                     (wv.parent as? ViewGroup)?.removeView(wv)
                     wv.stopLoading()
                     wv.destroy()
@@ -492,6 +1496,106 @@ fun CloneWorkspaceScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    if (isWhatsapp) {
+                        // Voice & Video Call Permission / Audio Routing Controls for WhatsApp Web
+                        if (isCallActive) {
+                            IconButton(
+                                onClick = {
+                                    isSpeakerphoneOn = !isSpeakerphoneOn
+                                    setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
+                                    Toast.makeText(
+                                        context,
+                                        if (isSpeakerphoneOn) "Speakerphone On" else "Earpiece / Headset Mode",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .testTag("whatsapp_call_speaker_btn")
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isSpeakerphoneOn) Color(0xFF25D366).copy(alpha = 0.2f) else Color.Transparent,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isSpeakerphoneOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.Filled.PhoneInTalk,
+                                            contentDescription = "Toggle Call Speakerphone",
+                                            tint = if (isSpeakerphoneOn) Color(0xFF25D366) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isVideoCallActive) {
+                                IconButton(
+                                    onClick = {
+                                        isFrontCamera = !isFrontCamera
+                                        val targetFacing = if (isFrontCamera) "user" else "environment"
+                                        webViewInstance?.evaluateJavascript(
+                                            "if (window.__xenoFlipCallCamera) window.__xenoFlipCallCamera('$targetFacing');",
+                                            null
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            if (isFrontCamera) "Switched to Front Camera" else "Switched to Back Camera",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .testTag("whatsapp_switch_camera_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Cameraswitch,
+                                        contentDescription = "Switch Front/Back Camera",
+                                        tint = Color(0xFF25D366),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                hasMicPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                if (!hasMicPermission || !hasCameraPermission) {
+                                    callPermissionsLauncher.launch(buildRequiredCallPermissions(true, true))
+                                } else {
+                                    setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
+                                    injectWhatsAppWebSupportEngine(webViewInstance)
+                                    Toast.makeText(
+                                        context,
+                                        "Voice & Video Calls Ready (Mic & Camera Enabled)",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
+                            modifier = Modifier
+                                .size(30.dp)
+                                .testTag("whatsapp_call_permissions_btn")
+                        ) {
+                            val callsReady = hasMicPermission && hasCameraPermission
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (callsReady) Color(0xFF25D366).copy(alpha = 0.16f) else MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (callsReady) Icons.Filled.Videocam else Icons.Filled.Mic,
+                                        contentDescription = if (callsReady) "Voice & Video Calls Ready" else "Grant Mic & Camera Permissions",
+                                        tint = if (callsReady) Color(0xFF25D366) else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     IconButton(
                         onClick = {
                             if (isWhatsapp) {
@@ -594,7 +1698,13 @@ fun CloneWorkspaceScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (isWhatsapp) Color(0xFF111B21) else Color.White)
+                .background(
+                    when {
+                        isWhatsapp -> Color(0xFF111B21)
+                        isInstagram || isTiktok -> Color.Black
+                        else -> Color.White
+                    }
+                )
         ) {
             if (hasRenderCrash) {
                 Card(
@@ -670,22 +1780,22 @@ fun CloneWorkspaceScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels & scrolling
-                                if (useSoftwareLayer || isWhatsapp) {
+                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels, TikTok, Facebook Watch & video calls
+                                if (useSoftwareLayer || (isWhatsapp && !isVideoCallActive)) {
                                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                 } else {
                                     setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 }
-                                isVerticalScrollBarEnabled = !isInstagram
-                                isHorizontalScrollBarEnabled = !isInstagram
-                                if (isInstagram) {
+                                isVerticalScrollBarEnabled = !isShortVideoSocialApp
+                                isHorizontalScrollBarEnabled = !isShortVideoSocialApp
+                                if (isShortVideoSocialApp) {
                                     overScrollMode = View.OVER_SCROLL_NEVER
                                 }
                                 isNestedScrollingEnabled = true
                                 setBackgroundColor(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
-                                        isInstagram -> android.graphics.Color.BLACK
+                                        isInstagram || isTiktok -> android.graphics.Color.BLACK
                                         else -> android.graphics.Color.WHITE
                                     }
                                 )
@@ -696,19 +1806,19 @@ fun CloneWorkspaceScreen(
                                     databaseEnabled = true
                                     loadWithOverviewMode = true
                                     useWideViewPort = true
-                                    // Disable pinch-zoom on Instagram so double-tap-to-like and fast vertical Reels swipes stay crisp
-                                    builtInZoomControls = !isInstagram
+                                    // Disable pinch-zoom on Instagram, Facebook & TikTok so double-tap-to-like and fast vertical video swipes stay crisp
+                                    builtInZoomControls = !isShortVideoSocialApp
                                     displayZoomControls = false
                                     safeBrowsingEnabled = false
-                                    setSupportZoom(!isInstagram)
+                                    setSupportZoom(!isShortVideoSocialApp)
                                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                     mediaPlaybackRequiresUserGesture = false
                                     cacheMode = WebSettings.LOAD_DEFAULT
-                                    javaScriptCanOpenWindowsAutomatically = false
+                                    javaScriptCanOpenWindowsAutomatically = true
                                     setSupportMultipleWindows(false)
                                     allowFileAccess = true
                                     allowContentAccess = true
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                         offscreenPreRaster = true
                                     }
                                     userAgentString = if (isWhatsapp || instance.isDesktopMode) {
@@ -717,6 +1827,52 @@ fun CloneWorkspaceScreen(
                                         MOBILE_USER_AGENT
                                     }
                                 }
+
+                                // Register native WhatsApp Voice & Video Call hardware bridge
+                                addJavascriptInterface(
+                                    WhatsAppCallJsBridge(
+                                        mainHandler = mainHandler,
+                                        onCallStateChanged = { active, isVideo ->
+                                            isCallActive = active
+                                            isVideoCallActive = isVideo
+                                            this@apply.keepScreenOn = active
+                                            if (active) {
+                                                if (isVideo) {
+                                                    this@apply.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                                }
+                                                audioFocusRequest = setWhatsAppCallAudioMode(
+                                                    ctx,
+                                                    active = true,
+                                                    speakerphoneOn = isSpeakerphoneOn
+                                                )
+                                            } else {
+                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                    audioFocusRequest?.let { req ->
+                                                        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                                                        am?.abandonAudioFocusRequest(req)
+                                                    }
+                                                }
+                                                audioFocusRequest = null
+                                                setWhatsAppCallAudioMode(ctx, active = false)
+                                            }
+                                        },
+                                        onEnsurePermissions = { needAudio, needVideo ->
+                                            val micOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                            val camOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                            hasMicPermission = micOk
+                                            hasCameraPermission = camOk
+                                            if ((needAudio && !micOk) || (needVideo && !camOk)) {
+                                                callPermissionsLauncher.launch(buildRequiredCallPermissions(needAudio || !micOk, needVideo || !camOk))
+                                            }
+                                        },
+                                        checkPermissionsGranted = {
+                                            val micOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                            val camOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                            micOk && camOk
+                                        }
+                                    ),
+                                    "XenoCallBridge"
+                                )
 
                                 setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                                     try {
@@ -733,11 +1889,11 @@ fun CloneWorkspaceScreen(
                                                 android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype)
                                             )
                                         }
-                                        val dm = ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                                        val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
                                         dm.enqueue(request)
-                                        android.widget.Toast.makeText(ctx, "Downloading file...", android.widget.Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(ctx, "Downloading file...", Toast.LENGTH_SHORT).show()
                                     } catch (e: Exception) {
-                                        android.widget.Toast.makeText(ctx, "Download failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(ctx, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     }
                                 }
 
@@ -746,11 +1902,21 @@ fun CloneWorkspaceScreen(
                                 cookieManager.setAcceptThirdPartyCookies(this, true)
 
                                 webViewClient = object : WebViewClient() {
+                                    private fun injectSocialAppHelpers(view: WebView?, url: String?) {
+                                        when {
+                                            isWhatsapp -> injectWhatsAppWebSupportEngine(view)
+                                            isInstagram || url?.contains("instagram.com", ignoreCase = true) == true ->
+                                                injectInstagramReelsAndScrollHelper(view)
+                                            isFacebook || url?.contains("facebook.com", ignoreCase = true) == true ->
+                                                injectFacebookVideoAndScrollHelper(view)
+                                            isTiktok || url?.contains("tiktok.com", ignoreCase = true) == true ->
+                                                injectTikTokVideoAndScrollHelper(view)
+                                        }
+                                    }
+
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                         isLoading = true
-                                        if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view)
-                                        }
+                                        injectSocialAppHelpers(view, url)
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
@@ -760,20 +1926,12 @@ fun CloneWorkspaceScreen(
 
                                     override fun onPageCommitVisible(view: WebView?, url: String?) {
                                         super.onPageCommitVisible(view, url)
-                                        if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view)
-                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
-                                            injectInstagramReelsAndScrollHelper(view)
-                                        }
+                                        injectSocialAppHelpers(view, url)
                                     }
 
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         isLoading = false
-                                        if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view)
-                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
-                                            injectInstagramReelsAndScrollHelper(view)
-                                        }
+                                        injectSocialAppHelpers(view, url)
                                         try {
                                             CookieManager.getInstance().flush()
                                         } catch (_: Exception) {}
@@ -787,11 +1945,7 @@ fun CloneWorkspaceScreen(
 
                                     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                         super.doUpdateVisitedHistory(view, url, isReload)
-                                        if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view)
-                                        } else if (isInstagram || url?.contains("instagram.com", ignoreCase = true) == true) {
-                                            injectInstagramReelsAndScrollHelper(view)
-                                        }
+                                        injectSocialAppHelpers(view, url)
                                         url?.let {
                                             currentUrl = it
                                             onUrlChanged(it)
@@ -801,6 +1955,7 @@ fun CloneWorkspaceScreen(
 
                                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                         val url = request?.url?.toString() ?: return false
+                                        val lowerUrl = url.lowercase()
                                         if (isWhatsapp) {
                                             if (url.contains("whatsapp.com/download") ||
                                                 url.contains("whatsapp.com/android") ||
@@ -815,17 +1970,32 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
+                                        // Prevent Facebook & TikTok from kicking the user out to Play Store app-install prompts
+                                        if (isFacebook || isTiktok || isInstagram) {
+                                            if (lowerUrl.contains("play.google.com/store/apps") ||
+                                                lowerUrl.startsWith("market://") ||
+                                                lowerUrl.startsWith("fb://") ||
+                                                lowerUrl.startsWith("fbmessenger://") ||
+                                                lowerUrl.startsWith("tiktok://") ||
+                                                lowerUrl.startsWith("snssdk") ||
+                                                lowerUrl.startsWith("musical://")
+                                            ) {
+                                                return true
+                                            }
+                                        }
                                         if (url.startsWith("intent://")) {
                                             try {
                                                 val parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
                                                 val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
-                                                if (!fallbackUrl.isNullOrBlank() && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+                                                if (!fallbackUrl.isNullOrBlank() &&
+                                                    (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://")) &&
+                                                    !fallbackUrl.contains("play.google.com/store/apps", ignoreCase = true)
+                                                ) {
                                                     view?.loadUrl(fallbackUrl)
                                                 }
                                             } catch (_: Exception) {}
                                             return true
                                         }
-                                        val lowerUrl = url.lowercase()
                                         if (!lowerUrl.startsWith("http://") &&
                                             !lowerUrl.startsWith("https://") &&
                                             !lowerUrl.startsWith("file://") &&
@@ -875,9 +2045,60 @@ fun CloneWorkspaceScreen(
                                     }
 
                                     override fun onPermissionRequest(request: PermissionRequest?) {
-                                        try {
-                                            request?.grant(request.resources)
-                                        } catch (_: Exception) {}
+                                        if (request == null) return
+                                        mainHandler.post {
+                                            try {
+                                                val res = request.resources ?: emptyArray()
+                                                val needsAudio = res.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                                                val needsVideo = res.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+
+                                                val micGranted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                                val camGranted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                                hasMicPermission = micGranted
+                                                hasCameraPermission = camGranted
+
+                                                if ((needsAudio && !micGranted) || (needsVideo && !camGranted)) {
+                                                    // Hold the WebView PermissionRequest until the user grants Android OS Mic/Camera permissions
+                                                    pendingWebPermissionRequest = request
+                                                    callPermissionsLauncher.launch(
+                                                        buildRequiredCallPermissions(needsAudio || !micGranted, needsVideo || !camGranted)
+                                                    )
+                                                } else {
+                                                    if (needsAudio || needsVideo) {
+                                                        isCallActive = true
+                                                        isVideoCallActive = needsVideo
+                                                        this@apply.keepScreenOn = true
+                                                        if (needsVideo) {
+                                                            this@apply.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                                        }
+                                                        audioFocusRequest = setWhatsAppCallAudioMode(
+                                                            ctx,
+                                                            active = true,
+                                                            speakerphoneOn = isSpeakerphoneOn
+                                                        )
+                                                    }
+                                                    request.grant(res)
+                                                }
+                                            } catch (_: Exception) {
+                                                try {
+                                                    request.grant(request.resources)
+                                                } catch (_: Exception) {}
+                                            }
+                                        }
+                                    }
+
+                                    override fun onPermissionRequestCanceled(request: PermissionRequest?) {
+                                        if (pendingWebPermissionRequest == request) {
+                                            pendingWebPermissionRequest = null
+                                        }
+                                    }
+
+                                    override fun getDefaultVideoPoster(): Bitmap? {
+                                        return try {
+                                            Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+                                        } catch (_: Exception) {
+                                            super.getDefaultVideoPoster()
+                                        }
                                     }
 
                                     override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -940,3 +2161,4 @@ fun CloneWorkspaceScreen(
         }
     }
 }
+

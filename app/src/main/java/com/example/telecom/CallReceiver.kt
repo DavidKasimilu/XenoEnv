@@ -9,14 +9,26 @@ import android.util.Log
 class CallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+            // If XenoInCallService is already actively bound to a Telecom Call, let it manage state transitions directly.
+            if (XenoInCallService.currentCall != null) {
+                return
+            }
+
             val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
             @Suppress("DEPRECATION")
             val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER) ?: ""
             Log.d("CallReceiver", "Phone state changed: $state, incoming: $incomingNumber")
+
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
-                    if (incomingNumber.isNotBlank()) {
+                    if (incomingNumber.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(incomingNumber)) {
                         XenoInCallService.onIncomingCallListener?.invoke(incomingNumber)
+                    }
+                }
+                TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                    val session = OngoingCallHelper.sessionFlow.value
+                    if (session.phase == CallPhase.OUTGOING_DIALING || session.phase == CallPhase.INCOMING_RINGING) {
+                        OngoingCallHelper.markCallConnectedLocally(context)
                     }
                 }
                 TelephonyManager.EXTRA_STATE_IDLE -> {

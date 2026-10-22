@@ -60,6 +60,7 @@ fun BrowserHubScreen(
     onUpdateTabUrl: (String, String) -> Unit,
     onUpdateTabLoading: (Boolean, Int) -> Unit,
     onUpdateTabNavState: (Boolean, Boolean) -> Unit,
+    onToggleTabDesktopMode: () -> Unit = {},
     onSetShowTabSwitcher: (Boolean) -> Unit,
     onSetShowHistoryDialog: (Boolean) -> Unit,
     onClearHistory: () -> Unit,
@@ -140,6 +141,7 @@ fun BrowserHubScreen(
                         onUpdateTabUrl = onUpdateTabUrl,
                         onUpdateTabLoading = onUpdateTabLoading,
                         onUpdateTabNavState = onUpdateTabNavState,
+                        onToggleTabDesktopMode = onToggleTabDesktopMode,
                         onSetShowTabSwitcher = onSetShowTabSwitcher,
                         onSetShowHistoryDialog = onSetShowHistoryDialog,
                         onClearHistory = onClearHistory,
@@ -167,6 +169,7 @@ fun BrowserHubScreen(
                         onOpenEditClone = onOpenEditClone,
                         onDeleteClone = onDeleteClone,
                         onCloseFromDock = onCloseFromDock,
+                        onOpenMedia = { onSetShowMediaManager(true) },
                         onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) }
                     )
                 }

@@ -1,11 +1,10 @@
 package com.example.ui.screens
 
-import android.content.Context
-import android.media.AudioDeviceInfo
+import android.app.Activity
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.os.Build
-import android.telecom.Call
+import android.view.WindowManager
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -15,6 +14,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +37,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhoneCallback
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.VolumeMute
 import androidx.compose.material3.Button
@@ -54,7 +57,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,11 +70,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.telecom.XenoInCallService
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.telecom.CallPhase
+import com.example.telecom.OngoingCallHelper
+import com.example.telecom.XenoOverlayService
 import com.example.ui.components.ContactAvatar
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,206 +90,98 @@ fun ActiveCallScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var isCallAnswered by remember { mutableStateOf(!isIncoming) }
-    var isRinging by remember { mutableStateOf(true) }
-    var secondsElapsed by remember { mutableIntStateOf(0) }
-    var isMuted by remember { mutableStateOf(false) }
-    var isSpeakerOn by remember { mutableStateOf(false) }
+    val callSession by OngoingCallHelper.sessionFlow.collectAsStateWithLifecycle()
     var showDialpadSheet by remember { mutableStateOf(false) }
-    var dtmfInput by remember { mutableStateOf("") }
 
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
     val toneGenerator = remember {
         try {
-            ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+            ToneGenerator(AudioManager.STREAM_DTMF, 80)
         } catch (_: Exception) {
             null
         }
     }
 
-    // Set audio mode to communication for call duration and cleanup on dispose
+    // Ensure OngoingCallHelper session is initialized and keep screen awake during active/incoming call
+    LaunchedEffect(phoneNumber, contactName, isIncoming) {
+        XenoOverlayService.dismissCallOverlay(context)
+        val current = OngoingCallHelper.sessionFlow.value
+        if (current.phase == CallPhase.IDLE || current.phoneNumber != phoneNumber) {
+            if (isIncoming) {
+                OngoingCallHelper.startIncomingSession(phoneNumber, contactName)
+            } else {
+                OngoingCallHelper.startOutgoingSession(phoneNumber, contactName)
+            }
+        } else if (!contactName.isNullOrBlank() && current.contactName.isNullOrBlank()) {
+            OngoingCallHelper.updateContactNameIfMissing(phoneNumber, contactName)
+        }
+    }
+
     DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
         try {
-            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } catch (_: Exception) {}
 
         onDispose {
+            try {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } catch (_: Exception) {}
             try {
                 toneGenerator?.stopTone()
                 toneGenerator?.release()
             } catch (_: Exception) {}
-            try {
-                audioManager?.mode = AudioManager.MODE_NORMAL
-                audioManager?.isMicrophoneMute = false
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    audioManager?.clearCommunicationDevice()
-                } else {
-                    @Suppress("DEPRECATION")
-                    audioManager?.isSpeakerphoneOn = false
-                }
-            } catch (_: Exception) {}
         }
     }
 
-    // Listen to real telecom InCallService state changes if bound
-    DisposableEffect(Unit) {
-        XenoInCallService.callStateListener = { state ->
-            when (state) {
-                Call.STATE_ACTIVE -> {
-                    isRinging = false
-                    isCallAnswered = true
-                }
-                Call.STATE_DISCONNECTED -> {
-                    onEndCall(secondsElapsed.toLong())
-                }
-                Call.STATE_RINGING, Call.STATE_DIALING, Call.STATE_CONNECTING -> {
-                    isRinging = true
-                }
-            }
-        }
-        onDispose {
-            XenoInCallService.callStateListener = null
-        }
-    }
-
-    // Play ring tone while ringing
-    LaunchedEffect(isRinging, isCallAnswered) {
-        if (isRinging && !isCallAnswered) {
-            try {
-                while (isRinging && !isCallAnswered) {
-                    toneGenerator?.startTone(ToneGenerator.TONE_SUP_RINGTONE, 1800)
-                    delay(3800)
-                }
-            } catch (_: Exception) {}
-        } else if (isRinging && isCallAnswered) {
-            try {
-                while (isRinging) {
-                    toneGenerator?.startTone(ToneGenerator.TONE_SUP_RINGTONE, 1800)
-                    delay(3800)
-                }
-            } catch (_: Exception) {}
-        } else {
-            try {
-                toneGenerator?.stopTone()
-            } catch (_: Exception) {}
-        }
-    }
-
-    // For outgoing call: Auto-connect after ~4.8 seconds if no external telecom provider overrides
-    LaunchedEffect(isRinging, isIncoming) {
-        if (!isIncoming && isRinging && XenoInCallService.currentCall == null) {
-            delay(4800)
-            isRinging = false
-            isCallAnswered = true
-        }
-    }
-
-    // Count ongoing call duration once the call is active / answered
-    LaunchedEffect(isCallAnswered, isRinging) {
-        if (isCallAnswered && !isRinging) {
-            while (true) {
-                delay(1000)
-                secondsElapsed++
-            }
-        }
-    }
-
-    // Apply speakerphone routing
-    LaunchedEffect(isSpeakerOn) {
-        try {
-            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
-            @Suppress("DEPRECATION")
-            audioManager?.isSpeakerphoneOn = isSpeakerOn
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val speakerDevice = audioManager?.availableCommunicationDevices?.find {
-                    it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
-                }
-                if (isSpeakerOn && speakerDevice != null) {
-                    audioManager?.setCommunicationDevice(speakerDevice)
-                } else {
-                    audioManager?.clearCommunicationDevice()
-                }
-            }
-            XenoInCallService.setSpeaker(isSpeakerOn)
-        } catch (e: Exception) {
-            android.util.Log.e("ActiveCallScreen", "Speaker toggle error: ${e.message}")
-        }
-    }
-
-    // Apply microphone mute
-    LaunchedEffect(isMuted) {
-        try {
-            audioManager?.isMicrophoneMute = isMuted
-            XenoInCallService.setMute(isMuted)
-        } catch (e: Exception) {
-            android.util.Log.e("ActiveCallScreen", "Mute toggle error: ${e.message}")
-        }
-    }
+    val isIncomingRinging = callSession.phase == CallPhase.INCOMING_RINGING || (isIncoming && !callSession.isConnected)
+    val isOutgoingDialing = callSession.phase == CallPhase.OUTGOING_DIALING && !isIncomingRinging
+    val isCallConnected = callSession.isConnected
+    val displayContactName = callSession.contactName?.takeIf { it.isNotBlank() }
+        ?: contactName?.takeIf { it.isNotBlank() }
+        ?: phoneNumber
+    val displayPhoneNumber = callSession.phoneNumber.ifBlank { phoneNumber }
 
     fun handleAnswer() {
-        try {
-            toneGenerator?.stopTone()
-        } catch (_: Exception) {}
-        isCallAnswered = true
-        isRinging = false
+        OngoingCallHelper.answerIncomingCall(context)
         onAcceptCall?.invoke()
     }
 
     fun handleDecline() {
-        try {
-            toneGenerator?.stopTone()
-        } catch (_: Exception) {}
-        try {
-            XenoInCallService.rejectCall()
-        } catch (_: Exception) {}
-        try {
-            audioManager?.mode = AudioManager.MODE_NORMAL
-        } catch (_: Exception) {}
+        OngoingCallHelper.declineIncomingCall(context)
         onDeclineCall?.invoke()
     }
 
     fun handleEndCall() {
-        try {
-            toneGenerator?.stopTone()
-        } catch (_: Exception) {}
-        try {
-            XenoInCallService.endCall()
-        } catch (_: Exception) {}
-        try {
-            audioManager?.isMicrophoneMute = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                audioManager?.clearCommunicationDevice()
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager?.isSpeakerphoneOn = false
-            }
-            audioManager?.mode = AudioManager.MODE_NORMAL
-        } catch (_: Exception) {}
-        onEndCall(secondsElapsed.toLong())
+        val finalDuration = OngoingCallHelper.getCurrentDurationSeconds()
+        OngoingCallHelper.endCall(context)
+        onEndCall(finalDuration)
     }
 
-    val formatDuration = remember(secondsElapsed) {
-        val mins = secondsElapsed / 60
-        val secs = secondsElapsed % 60
-        String.format(java.util.Locale.getDefault(), "%02d:%02d", mins, secs)
-    }
-
-    // Pulsing radar animation for contact avatar during ringing
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse_transition")
-    val pulseScale by infiniteTransition.animateFloat(
+    // Smooth pulsing animation for incoming/dialing avatar rings
+    val infiniteTransition = rememberInfiniteTransition(label = "call_pulse_transition")
+    val outerPulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.25f,
+        targetValue = 1.32f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
+            animation = tween(1100, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse_scale"
+        label = "outer_pulse_scale"
+    )
+    val innerPulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.16f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "inner_pulse_scale"
     )
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.05f,
+        initialValue = 0.34f,
+        targetValue = 0.06f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
+            animation = tween(1100, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulse_alpha"
@@ -301,23 +197,24 @@ fun ActiveCallScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Status Area
+            // Top Status & Call Duration Timer Area
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 28.dp)
+                modifier = Modifier.padding(top = 24.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = when {
-                        isIncoming && !isCallAnswered -> Color(0xFF2E7D32).copy(alpha = 0.15f)
-                        isRinging -> MaterialTheme.colorScheme.primaryContainer
+                        isIncomingRinging -> Color(0xFF2E7D32).copy(alpha = 0.15f)
+                        callSession.isOnHold -> MaterialTheme.colorScheme.tertiaryContainer
+                        isOutgoingDialing -> MaterialTheme.colorScheme.primaryContainer
                         else -> Color(0xFF2E7D32).copy(alpha = 0.15f)
                     },
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 10.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -325,7 +222,7 @@ fun ActiveCallScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         when {
-                            isIncoming && !isCallAnswered -> {
+                            isIncomingRinging -> {
                                 Icon(
                                     imageVector = Icons.Filled.PhoneCallback,
                                     contentDescription = null,
@@ -333,13 +230,27 @@ fun ActiveCallScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "Incoming Call...",
+                                    text = "Incoming Voice Call",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = Color(0xFF2E7D32),
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            isRinging -> {
+                            callSession.isOnHold -> {
+                                Icon(
+                                    imageVector = Icons.Filled.Pause,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Call On Hold",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            isOutgoingDialing -> {
                                 Icon(
                                     imageVector = Icons.Filled.Call,
                                     contentDescription = null,
@@ -371,11 +282,12 @@ fun ActiveCallScreen(
                     }
                 }
 
+                // Call Timer / Status Headline: strictly shows timer ONLY when call is connected
                 Text(
                     text = when {
-                        isIncoming && !isCallAnswered -> "Ringing..."
-                        isRinging -> "Waiting for response..."
-                        else -> formatDuration
+                        isIncomingRinging -> if (callSession.isRingerSilenced) "Ringing (Silenced)" else "Ringing..."
+                        isOutgoingDialing -> "Dialing..."
+                        else -> callSession.formattedDuration
                     },
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
@@ -383,13 +295,14 @@ fun ActiveCallScreen(
                     modifier = Modifier.testTag("call_timer_text")
                 )
 
-                // Quick Simulation Chip if user placed an outgoing call and wants to connect immediately
-                AnimatedVisibility(visible = isRinging && !isIncoming, enter = fadeIn(), exit = fadeOut()) {
+                // If outgoing call has no bound Telecom Call (e.g., simulator/non-default dialer preview), allow manual connect
+                AnimatedVisibility(
+                    visible = isOutgoingDialing && !callSession.hasTelecomCall,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
                     FilledTonalButton(
-                        onClick = {
-                            isRinging = false
-                            isCallAnswered = true
-                        },
+                        onClick = { OngoingCallHelper.markCallConnectedLocally(context) },
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .padding(top = 8.dp)
@@ -401,173 +314,255 @@ fun ActiveCallScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Connect Call (Simulate)", style = MaterialTheme.typography.labelMedium)
+                        Text("Connect Call", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
 
-            // Center Contact Info with Pulsing Rings when ringing
+            // Center Contact Info with Smooth Pulsing Rings
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(150.dp)
+                    modifier = Modifier.size(164.dp)
                 ) {
-                    if (isRinging) {
-                        // Pulsing ripple ring
+                    if (isIncomingRinging || isOutgoingDialing) {
+                        val ringColor = if (isIncomingRinging) {
+                            Color(0xFF2E7D32)
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
                         Box(
                             modifier = Modifier
-                                .size(130.dp)
-                                .scale(pulseScale)
+                                .size(142.dp)
+                                .scale(outerPulseScale)
                                 .clip(CircleShape)
-                                .background(
-                                    if (isIncoming && !isCallAnswered) Color(0xFF2E7D32).copy(alpha = pulseAlpha)
-                                    else MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha)
-                                )
+                                .background(ringColor.copy(alpha = pulseAlpha * 0.7f))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(124.dp)
+                                .scale(innerPulseScale)
+                                .clip(CircleShape)
+                                .background(ringColor.copy(alpha = pulseAlpha))
                         )
                     }
                     ContactAvatar(
-                        nameOrNumber = contactName ?: phoneNumber,
-                        size = 110.dp
+                        nameOrNumber = displayContactName,
+                        size = 112.dp
                     )
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
-                    text = contactName ?: "Unknown Contact",
+                    text = displayContactName,
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("call_contact_name")
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = phoneNumber + if (dtmfInput.isNotEmpty()) " #$dtmfInput" else "",
+                    text = displayPhoneNumber + if (callSession.dtmfDigits.isNotEmpty()) " #${callSession.dtmfDigits}" else "",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Medium
                 )
-                if (isMuted) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.errorContainer
-                    ) {
-                        Text(
-                            text = "Microphone is muted",
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+
+                // Status badges for Mute / Speaker / Hold
+                Row(
+                    modifier = Modifier.padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (callSession.isMuted) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Text(
+                                text = "Mic Muted",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    if (callSession.isSpeakerOn) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "Speakerphone Active",
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            // Bottom Actions Grid
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(22.dp)
-            ) {
-                if (isIncoming && !isCallAnswered) {
-                    // Incoming Call Actions: Decline / Speaker / Answer
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+            // Bottom Actions Area with Smooth Transition between Incoming and Ongoing Call Controls
+            AnimatedContent(
+                targetState = isIncomingRinging,
+                transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+                label = "call_controls_transition"
+            ) { incomingState ->
+                if (incomingState) {
+                    // Incoming Call Screen Controls: Silence Ringer + Decline / Speaker / Answer
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        // Decline Call Button
-                        CallActionButton(
-                            icon = Icons.Filled.CallEnd,
-                            label = "Decline",
-                            isActive = true,
-                            activeContainerColor = MaterialTheme.colorScheme.error,
-                            activeContentColor = MaterialTheme.colorScheme.onError,
-                            onClick = { handleDecline() },
-                            testTag = "call_decline_btn"
-                        )
+                        if (!callSession.isRingerSilenced) {
+                            FilledTonalButton(
+                                onClick = { OngoingCallHelper.silenceIncomingRinger(context) },
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier.testTag("silence_ringer_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.NotificationsOff,
+                                    contentDescription = "Silence Ringer",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Silence Ringtone",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
 
-                        // Speaker Toggle
-                        CallActionButton(
-                            icon = if (isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
-                            label = if (isSpeakerOn) "Speaker ON" else "Speaker",
-                            isActive = isSpeakerOn,
-                            activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            onClick = { isSpeakerOn = !isSpeakerOn },
-                            testTag = "call_speaker_btn"
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Decline Call Button
+                            CallActionButton(
+                                icon = Icons.Filled.CallEnd,
+                                label = "Decline",
+                                isActive = true,
+                                activeContainerColor = MaterialTheme.colorScheme.error,
+                                activeContentColor = MaterialTheme.colorScheme.onError,
+                                buttonSize = 68.dp,
+                                iconSize = 30.dp,
+                                onClick = { handleDecline() },
+                                testTag = "call_decline_btn"
+                            )
 
-                        // Answer Call Button
-                        CallActionButton(
-                            icon = Icons.Filled.Call,
-                            label = "Answer",
-                            isActive = true,
-                            activeContainerColor = Color(0xFF2E7D32),
-                            activeContentColor = Color.White,
-                            onClick = { handleAnswer() },
-                            testTag = "call_answer_btn"
-                        )
+                            // Speaker Pre-Toggle
+                            CallActionButton(
+                                icon = if (callSession.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
+                                label = if (callSession.isSpeakerOn) "Speaker ON" else "Speaker",
+                                isActive = callSession.isSpeakerOn,
+                                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                onClick = { OngoingCallHelper.toggleSpeakerphone(context) },
+                                testTag = "call_speaker_btn"
+                            )
+
+                            // Answer Call Button
+                            CallActionButton(
+                                icon = Icons.Filled.Call,
+                                label = "Answer",
+                                isActive = true,
+                                activeContainerColor = Color(0xFF2E7D32),
+                                activeContentColor = Color.White,
+                                buttonSize = 68.dp,
+                                iconSize = 30.dp,
+                                onClick = { handleAnswer() },
+                                testTag = "call_answer_btn"
+                            )
+                        }
                     }
                 } else {
-                    // Connected Ongoing Call Actions: Mute / Speaker / Dialpad / End Call
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        // Mute Button
-                        CallActionButton(
-                            icon = if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-                            label = if (isMuted) "Muted" else "Mute",
-                            isActive = isMuted,
-                            activeContainerColor = MaterialTheme.colorScheme.errorContainer,
-                            activeContentColor = MaterialTheme.colorScheme.onErrorContainer,
-                            onClick = { isMuted = !isMuted },
-                            testTag = "call_mute_btn"
-                        )
-
-                        // Speaker Button
-                        CallActionButton(
-                            icon = if (isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
-                            label = if (isSpeakerOn) "Speaker ON" else "Speaker",
-                            isActive = isSpeakerOn,
-                            activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            onClick = { isSpeakerOn = !isSpeakerOn },
-                            testTag = "call_speaker_btn"
-                        )
-
-                        // Dialpad Button
-                        CallActionButton(
-                            icon = Icons.Filled.Dialpad,
-                            label = "Keypad",
-                            isActive = showDialpadSheet,
-                            onClick = { showDialpadSheet = true },
-                            testTag = "call_dialpad_btn"
-                        )
-                    }
-
-                    // End Call Big Red Button
-                    Button(
-                        onClick = { handleEndCall() },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        shape = CircleShape,
+                    // Ongoing / Dialing Call Controls: Mute / Speaker / Hold / Keypad + End Call
+                    Column(
                         modifier = Modifier
-                            .size(72.dp)
-                            .testTag("end_call_button")
+                            .fillMaxWidth()
+                            .padding(bottom = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(22.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.CallEnd,
-                            contentDescription = "End Call",
-                            tint = MaterialTheme.colorScheme.onError,
-                            modifier = Modifier.size(32.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Mute Button
+                            CallActionButton(
+                                icon = if (callSession.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                                label = if (callSession.isMuted) "Muted" else "Mute",
+                                isActive = callSession.isMuted,
+                                activeContainerColor = MaterialTheme.colorScheme.errorContainer,
+                                activeContentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                onClick = { OngoingCallHelper.toggleMicrophoneMute(context) },
+                                testTag = "call_mute_btn"
+                            )
+
+                            // Speaker Button
+                            CallActionButton(
+                                icon = if (callSession.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
+                                label = if (callSession.isSpeakerOn) "Speaker ON" else "Speaker",
+                                isActive = callSession.isSpeakerOn,
+                                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                onClick = { OngoingCallHelper.toggleSpeakerphone(context) },
+                                testTag = "call_speaker_btn"
+                            )
+
+                            // Hold Button (when connected)
+                            if (isCallConnected) {
+                                CallActionButton(
+                                    icon = if (callSession.isOnHold) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                    label = if (callSession.isOnHold) "Resume" else "Hold",
+                                    isActive = callSession.isOnHold,
+                                    activeContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    activeContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    onClick = { OngoingCallHelper.toggleCallHold() },
+                                    testTag = "call_hold_btn"
+                                )
+                            }
+
+                            // Dialpad Button
+                            CallActionButton(
+                                icon = Icons.Filled.Dialpad,
+                                label = "Keypad",
+                                isActive = showDialpadSheet,
+                                onClick = { showDialpadSheet = true },
+                                testTag = "call_dialpad_btn"
+                            )
+                        }
+
+                        // End Call Big Red Button
+                        Button(
+                            onClick = { handleEndCall() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .testTag("end_call_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CallEnd,
+                                contentDescription = "End Call",
+                                tint = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -592,7 +587,7 @@ fun ActiveCallScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = dtmfInput.ifBlank { "Tap digits..." },
+                        text = callSession.dtmfDigits.ifBlank { "Tap digits..." },
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -619,26 +614,7 @@ fun ActiveCallScreen(
                                         .testTag("dtmf_$digit")
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
                                         .clickable {
-                                            dtmfInput += digit
-                                            try {
-                                                val tone = when (digit) {
-                                                    "0" -> ToneGenerator.TONE_DTMF_0
-                                                    "1" -> ToneGenerator.TONE_DTMF_1
-                                                    "2" -> ToneGenerator.TONE_DTMF_2
-                                                    "3" -> ToneGenerator.TONE_DTMF_3
-                                                    "4" -> ToneGenerator.TONE_DTMF_4
-                                                    "5" -> ToneGenerator.TONE_DTMF_5
-                                                    "6" -> ToneGenerator.TONE_DTMF_6
-                                                    "7" -> ToneGenerator.TONE_DTMF_7
-                                                    "8" -> ToneGenerator.TONE_DTMF_8
-                                                    "9" -> ToneGenerator.TONE_DTMF_9
-                                                    "*" -> ToneGenerator.TONE_DTMF_S
-                                                    "#" -> ToneGenerator.TONE_DTMF_P
-                                                    else -> ToneGenerator.TONE_DTMF_0
-                                                }
-                                                toneGenerator?.startTone(tone, 120)
-                                            } catch (_: Exception) {}
-                                            XenoInCallService.sendDtmf(digit[0])
+                                            OngoingCallHelper.sendDtmfTone(digit[0], toneGenerator)
                                         }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -674,6 +650,8 @@ private fun CallActionButton(
     isActive: Boolean,
     activeContainerColor: Color = MaterialTheme.colorScheme.primaryContainer,
     activeContentColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    buttonSize: androidx.compose.ui.unit.Dp = 60.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 26.dp,
     onClick: () -> Unit,
     testTag: String
 ) {
@@ -685,7 +663,7 @@ private fun CallActionButton(
             shape = CircleShape,
             color = if (isActive) activeContainerColor else MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier
-                .size(60.dp)
+                .size(buttonSize)
                 .clip(CircleShape)
                 .clickable { onClick() }
                 .testTag(testTag)
@@ -695,7 +673,7 @@ private fun CallActionButton(
                     imageVector = icon,
                     contentDescription = label,
                     tint = if (isActive) activeContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(iconSize)
                 )
             }
         }

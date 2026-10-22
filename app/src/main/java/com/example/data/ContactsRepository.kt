@@ -7,6 +7,7 @@ import android.provider.ContactsContract
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.data.models.ContactItem
+import com.example.util.AppPerformanceHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -24,7 +25,7 @@ class ContactsRepository(private val context: Context) {
             return@withContext emptyList()
         }
 
-        val contactsMap = mutableMapOf<Long, ContactItem>()
+        val contactsMap = LinkedHashMap<Long, ContactItem>()
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
             ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
@@ -78,12 +79,21 @@ class ContactsRepository(private val context: Context) {
             return@withContext emptyList()
         }
 
-        val result = contactsMap.values.sortedBy { it.displayName.lowercase() }
+        val result = contactsMap.values.toList()
+        AppPerformanceHelper.warmUpContactCache(result)
         return@withContext result
     }
 
     suspend fun resolveContactName(phoneNumber: String): String? = withContext(Dispatchers.IO) {
         if (phoneNumber.isBlank()) return@withContext null
+
+        // Fast O(1) memory cache lookup via AppPerformanceHelper
+        val (hit, cachedName) = AppPerformanceHelper.getCachedContactName(phoneNumber)
+        if (hit) {
+            return@withContext cachedName
+        }
+
+        var resolvedName: String? = null
         try {
             val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
                 .appendPath(phoneNumber)
@@ -92,12 +102,16 @@ class ContactsRepository(private val context: Context) {
             contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (idx != -1) return@withContext cursor.getString(idx)
+                    if (idx != -1) {
+                        resolvedName = cursor.getString(idx)
+                    }
                 }
             }
         } catch (e: Exception) {
             Log.d("ContactsRepository", "Could not lookup name for $phoneNumber", e)
         }
-        null
+
+        AppPerformanceHelper.putContactInCache(phoneNumber, resolvedName)
+        resolvedName
     }
 }

@@ -62,19 +62,35 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.XenoTab
 import com.example.ui.viewmodel.XenoViewModel
+import com.example.util.AppPerformanceHelper
 
 class MainActivity : ComponentActivity() {
 
+    private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppPerformanceHelper.optimizeWindowForSmoothness(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
         enableEdgeToEdge()
+        currentIntentState.value = intent
 
         setContent {
             MyApplicationTheme {
                 val viewModel: XenoViewModel = viewModel()
+                val activeIntent by currentIntentState
                 XenoApp(
                     viewModel = viewModel,
-                    initialIntent = intent
+                    initialIntent = activeIntent
                 )
             }
         }
@@ -83,6 +99,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        currentIntentState.value = intent
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        AppPerformanceHelper.onTrimMemory(level)
     }
 }
 
@@ -193,9 +215,39 @@ fun XenoApp(
         permissionsLauncher.launch(perms.toTypedArray())
     }
 
-    // Handle intents (e.g. tel: or smsto:)
+    // Handle intents (e.g. incoming call notification, SMS reply notification, tel: or smsto:)
     LaunchedEffect(initialIntent) {
         initialIntent?.let { intent ->
+            val incomingNumber = intent.getStringExtra("incoming_number")
+            if (!incomingNumber.isNullOrBlank()) {
+                val callerName = intent.getStringExtra("caller_name")
+                val autoAnswer = intent.getBooleanExtra("auto_answer", false)
+                intent.removeExtra("incoming_number")
+                intent.removeExtra("auto_answer")
+                if (autoAnswer) {
+                    viewModel.startActiveCall(incomingNumber, callerName, isIncoming = false)
+                    viewModel.acceptActiveCall()
+                } else {
+                    viewModel.startActiveCall(incomingNumber, callerName, isIncoming = true)
+                }
+                return@LaunchedEffect
+            }
+
+            val openTab = intent.getStringExtra("open_tab")
+            if (openTab == "MESSAGES") {
+                val senderNumber = intent.getStringExtra("sender_number")
+                intent.removeExtra("open_tab")
+                intent.removeExtra("sender_number")
+                viewModel.selectTab(XenoTab.MESSAGES)
+                if (!senderNumber.isNullOrBlank()) {
+                    viewModel.startChatWithNumber(senderNumber)
+                }
+                return@LaunchedEffect
+            } else if (openTab == "CALLS") {
+                intent.removeExtra("open_tab")
+                viewModel.selectTab(XenoTab.CALLS)
+            }
+
             when (intent.action) {
                 Intent.ACTION_DIAL, Intent.ACTION_VIEW -> {
                     val scheme = intent.data?.scheme
@@ -403,7 +455,7 @@ fun XenoApp(
                                  onReplyNotification = { notif, text -> viewModel.replyToNotification(notif, text) }
                             )
                         }
-                        XenoTab.BROWSER -> {
+                        XenoTab.BROWSER, XenoTab.CLONE_SPACE -> {
                             BrowserHubScreen(
                                 dualTab = uiState.browserDualTab,
                                 onDualTabChanged = { viewModel.setBrowserDualTab(it) },
@@ -418,6 +470,7 @@ fun XenoApp(
                                 onUpdateTabUrl = { url, title -> viewModel.updateActiveTabUrl(url, title) },
                                 onUpdateTabLoading = { isLoading, progress -> viewModel.updateActiveTabLoading(isLoading, progress) },
                                 onUpdateTabNavState = { back, fwd -> viewModel.updateActiveTabNavState(back, fwd) },
+                                onToggleTabDesktopMode = { viewModel.toggleActiveTabDesktopMode() },
                                 onSetShowTabSwitcher = { viewModel.setShowTabSwitcher(it) },
                                 onSetShowHistoryDialog = { viewModel.setShowHistoryDialog(it) },
                                 onClearHistory = { viewModel.clearBrowserHistory() },

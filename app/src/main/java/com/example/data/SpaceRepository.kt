@@ -92,6 +92,34 @@ class SpaceRepository(private val context: Context) {
                     lastActiveTime = now,
                     lastUrl = "https://mail.google.com/",
                     isDesktopMode = false
+                ),
+                ClonedAppInstance(
+                    instanceId = "clone_facebook_1",
+                    packageName = "com.facebook.katana",
+                    templateId = "com.facebook.katana",
+                    displayName = "Facebook",
+                    originalName = "Facebook",
+                    targetUrl = "https://m.facebook.com/",
+                    badgeTag = "Clone",
+                    badgeColorHex = "#1877F2",
+                    createdAt = now,
+                    lastActiveTime = now,
+                    lastUrl = "https://m.facebook.com/",
+                    isDesktopMode = false
+                ),
+                ClonedAppInstance(
+                    instanceId = "clone_tiktok_1",
+                    packageName = "com.zhiliaoapp.musically",
+                    templateId = "com.zhiliaoapp.musically",
+                    displayName = "TikTok",
+                    originalName = "TikTok",
+                    targetUrl = "https://www.tiktok.com/",
+                    badgeTag = "Clone",
+                    badgeColorHex = "#FE2C55",
+                    createdAt = now,
+                    lastActiveTime = now,
+                    lastUrl = "https://www.tiktok.com/",
+                    isDesktopMode = false
                 )
             )
         }
@@ -101,7 +129,10 @@ class SpaceRepository(private val context: Context) {
         val jsonStr = prefs.getString("cloned_instances", null)
         if (jsonStr.isNullOrBlank()) {
             val defaultList = getDefaultInitialClones()
-            prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
+            prefs.edit()
+                .putBoolean("gmail_default_clone_added_v1", true)
+                .putBoolean("fb_tiktok_default_clones_added_v1", true)
+                .apply()
             saveClonedInstances(defaultList)
             return defaultList
         }
@@ -129,7 +160,7 @@ class SpaceRepository(private val context: Context) {
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
-                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail or any other app
+                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok or any other app
                 val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
                         origName.contains("whatsapp", ignoreCase = true) ||
                         dispName.contains("whatsapp", ignoreCase = true) ||
@@ -139,15 +170,26 @@ class SpaceRepository(private val context: Context) {
                         origName.contains("gmail", ignoreCase = true) ||
                         dispName.contains("gmail", ignoreCase = true) ||
                         rawTarget.contains("mail.google.com", ignoreCase = true)
-                val resolvedTarget = if (isWa) {
-                    "https://web.whatsapp.com/"
-                } else if (isGmail) {
-                    "https://mail.google.com/"
-                } else if (rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true)) {
-                    rawTarget
-                } else {
-                    needsResave = true
-                    resolveAppUrl(pkg, origName.ifBlank { dispName })
+                val isFacebook = pkg.contains("facebook", ignoreCase = true) ||
+                        origName.contains("facebook", ignoreCase = true) ||
+                        dispName.contains("facebook", ignoreCase = true) ||
+                        rawTarget.contains("facebook.com", ignoreCase = true)
+                val isTiktok = pkg.contains("tiktok", ignoreCase = true) ||
+                        pkg.contains("musically", ignoreCase = true) ||
+                        origName.contains("tiktok", ignoreCase = true) ||
+                        dispName.contains("tiktok", ignoreCase = true) ||
+                        rawTarget.contains("tiktok.com", ignoreCase = true)
+
+                val resolvedTarget = when {
+                    isWa -> "https://web.whatsapp.com/"
+                    isGmail -> "https://mail.google.com/"
+                    isFacebook -> "https://m.facebook.com/"
+                    isTiktok -> "https://www.tiktok.com/"
+                    rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true) -> rawTarget
+                    else -> {
+                        needsResave = true
+                        resolveAppUrl(pkg, origName.ifBlank { dispName })
+                    }
                 }
 
                 val resolvedLast = if (isWa && (rawLast.isBlank() || rawLast.contains("download") || rawLast.equals("about:blank", ignoreCase = true) || !rawLast.startsWith("https://web.whatsapp.com"))) {
@@ -156,6 +198,12 @@ class SpaceRepository(private val context: Context) {
                 } else if (isGmail && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
                     needsResave = true
                     "https://mail.google.com/"
+                } else if (isFacebook && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
+                    needsResave = true
+                    "https://m.facebook.com/"
+                } else if (isTiktok && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
+                    needsResave = true
+                    "https://www.tiktok.com/"
                 } else if (rawLast.isNotBlank() && !rawLast.equals("about:blank", ignoreCase = true)) {
                     rawLast
                 } else {
@@ -191,6 +239,8 @@ class SpaceRepository(private val context: Context) {
                         badgeColorHex = obj.optString("badgeColorHex", when {
                             isWa -> "#25D366"
                             isGmail -> "#EA4335"
+                            isFacebook -> "#1877F2"
+                            isTiktok -> "#FE2C55"
                             else -> "#E1306C"
                         }),
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
@@ -204,7 +254,10 @@ class SpaceRepository(private val context: Context) {
 
         if (list.isEmpty()) {
             val defaultList = getDefaultInitialClones()
-            prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
+            prefs.edit()
+                .putBoolean("gmail_default_clone_added_v1", true)
+                .putBoolean("fb_tiktok_default_clones_added_v1", true)
+                .apply()
             saveClonedInstances(defaultList)
             return defaultList
         }
@@ -239,6 +292,64 @@ class SpaceRepository(private val context: Context) {
                 needsResave = true
             }
             prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
+        }
+
+        // Ensure Facebook and TikTok default clones are added once for existing users
+        if (!prefs.getBoolean("fb_tiktok_default_clones_added_v1", false)) {
+            val now = System.currentTimeMillis()
+            val hasFacebook = list.any {
+                it.packageName.contains("facebook", ignoreCase = true) ||
+                        it.originalName.contains("facebook", ignoreCase = true) ||
+                        it.displayName.contains("facebook", ignoreCase = true) ||
+                        it.targetUrl.contains("facebook.com", ignoreCase = true)
+            }
+            if (!hasFacebook) {
+                list.add(
+                    ClonedAppInstance(
+                        instanceId = "clone_facebook_1",
+                        packageName = "com.facebook.katana",
+                        templateId = "com.facebook.katana",
+                        displayName = "Facebook",
+                        originalName = "Facebook",
+                        targetUrl = "https://m.facebook.com/",
+                        badgeTag = "Clone",
+                        badgeColorHex = "#1877F2",
+                        createdAt = now,
+                        lastActiveTime = now,
+                        lastUrl = "https://m.facebook.com/",
+                        isDesktopMode = false
+                    )
+                )
+                needsResave = true
+            }
+
+            val hasTiktok = list.any {
+                it.packageName.contains("tiktok", ignoreCase = true) ||
+                        it.packageName.contains("musically", ignoreCase = true) ||
+                        it.originalName.contains("tiktok", ignoreCase = true) ||
+                        it.displayName.contains("tiktok", ignoreCase = true) ||
+                        it.targetUrl.contains("tiktok.com", ignoreCase = true)
+            }
+            if (!hasTiktok) {
+                list.add(
+                    ClonedAppInstance(
+                        instanceId = "clone_tiktok_1",
+                        packageName = "com.zhiliaoapp.musically",
+                        templateId = "com.zhiliaoapp.musically",
+                        displayName = "TikTok",
+                        originalName = "TikTok",
+                        targetUrl = "https://www.tiktok.com/",
+                        badgeTag = "Clone",
+                        badgeColorHex = "#FE2C55",
+                        createdAt = now,
+                        lastActiveTime = now,
+                        lastUrl = "https://www.tiktok.com/",
+                        isDesktopMode = false
+                    )
+                )
+                needsResave = true
+            }
+            prefs.edit().putBoolean("fb_tiktok_default_clones_added_v1", true).apply()
         }
 
         if (needsResave) {

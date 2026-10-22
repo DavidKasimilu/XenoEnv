@@ -215,34 +215,6 @@ fun CallsScreen(
                     colors = FilterChipDefaults.filterChipColors()
                 )
             }
-            item {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF2E7D32).copy(alpha = 0.15f),
-                    modifier = Modifier
-                        .clickable { onSimulateIncomingCall() }
-                        .testTag("simulate_incoming_call_chip")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.PhoneInTalk,
-                            contentDescription = null,
-                            tint = Color(0xFF2E7D32),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "+ Test Call Popup",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF2E7D32),
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))

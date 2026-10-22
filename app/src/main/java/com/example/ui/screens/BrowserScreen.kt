@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.DesktopMac
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Fullscreen
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.PhoneAndroid
 import com.example.ui.components.PasswordManagerDialog
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -71,6 +73,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -116,6 +119,160 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val MOBILE_BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
+private const val DESKTOP_BROWSER_USER_AGENT =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+private val MOBILE_BROWSER_HEADERS = mapOf(
+    "Sec-CH-UA" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+    "Sec-CH-UA-Mobile" to "?1",
+    "Sec-CH-UA-Platform" to "\"Android\""
+)
+
+private val DESKTOP_BROWSER_HEADERS = mapOf(
+    "Sec-CH-UA" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+    "Sec-CH-UA-Mobile" to "?0",
+    "Sec-CH-UA-Platform" to "\"Linux\""
+)
+
+/**
+ * Helper function that configures Android WebView to behave as a standard Mobile Chrome Browser
+ * by default, or switches to full Desktop Browser mode when toggled from the 3-dot menu.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, currentUrl: String = "") {
+    val forceDesktop = isDesktopMode || currentUrl.contains("web.whatsapp.com", ignoreCase = true)
+    webView.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        databaseEnabled = true
+        useWideViewPort = true
+        loadWithOverviewMode = true
+        setSupportZoom(true)
+        builtInZoomControls = true
+        displayZoomControls = false
+        safeBrowsingEnabled = false
+        mediaPlaybackRequiresUserGesture = false
+        allowFileAccess = true
+        allowContentAccess = true
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(false)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            offscreenPreRaster = true
+        }
+        @Suppress("DEPRECATION")
+        setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
+        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        userAgentString = if (forceDesktop) DESKTOP_BROWSER_USER_AGENT else MOBILE_BROWSER_USER_AGENT
+    }
+}
+
+/**
+ * Mobile & Desktop Browser Helper Engine:
+ * - In Mobile Mode (default): Emulates a native Chrome Mobile browser with responsive mobile viewport
+ *   (`width=device-width, initial-scale=1.0`), `navigator.userAgentData.mobile = true`, smooth touch
+ *   scrolling, inline/fullscreen video playback support, and popup-to-same-tab link routing.
+ * - In Desktop Mode: Emulates Desktop Chrome with a 1280px desktop viewport (`width=1280`) and
+ *   `navigator.userAgentData.mobile = false` so websites render their desktop layout.
+ */
+private fun injectBrowserHelperEngine(view: WebView?, isDesktopMode: Boolean) {
+    val js = """
+        (function() {
+            try {
+                var isDesktop = $isDesktopMode;
+                if (!window.chrome) {
+                    window.chrome = { runtime: {}, app: { isInstalled: false } };
+                }
+                if (!document.fullscreenEnabled) {
+                    Object.defineProperty(document, 'fullscreenEnabled', { value: true, configurable: true });
+                }
+                if (!document.webkitFullscreenEnabled) {
+                    Object.defineProperty(document, 'webkitFullscreenEnabled', { value: true, configurable: true });
+                }
+                if (window.HTMLVideoElement && !HTMLVideoElement.prototype.webkitSupportsFullscreen) {
+                    HTMLVideoElement.prototype.webkitSupportsFullscreen = true;
+                }
+
+                // Polyfill Client Hints navigator.userAgentData to match Mobile vs Desktop mode
+                Object.defineProperty(navigator, 'userAgentData', {
+                    value: {
+                        brands: [
+                            { brand: 'Google Chrome', version: '131' },
+                            { brand: 'Chromium', version: '131' },
+                            { brand: 'Not_A Brand', version: '24' }
+                        ],
+                        mobile: !isDesktop,
+                        platform: isDesktop ? 'Linux' : 'Android',
+                        getHighEntropyValues: function() {
+                            return Promise.resolve({
+                                architecture: isDesktop ? 'x86' : 'arm',
+                                bitness: '64',
+                                mobile: !isDesktop,
+                                model: isDesktop ? '' : 'Pixel 8 Pro',
+                                platform: isDesktop ? 'Linux' : 'Android',
+                                platformVersion: isDesktop ? '6.5.0' : '14.0.0',
+                                uaFullVersion: '131.0.0.0'
+                            });
+                        }
+                    },
+                    configurable: true
+                });
+
+                // Route window.open into current browsing context so mobile popups/OAuth links never fail
+                if (!window.__xenoPopupPatched) {
+                    window.__xenoPopupPatched = true;
+                    window.open = function(url) {
+                        if (url && typeof url === 'string' && url !== 'about:blank') {
+                            window.location.href = url;
+                        }
+                        return window;
+                    };
+                }
+
+                // Viewport & Mobile/Desktop layout management
+                var head = document.head || document.getElementsByTagName('head')[0];
+                if (head) {
+                    var vp = document.querySelector('meta[name="viewport"]');
+                    if (isDesktop) {
+                        var desktopContent = 'width=1280, initial-scale=0.35, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                        if (!vp) {
+                            vp = document.createElement('meta');
+                            vp.name = 'viewport';
+                            vp.content = desktopContent;
+                            head.appendChild(vp);
+                        } else if (vp.getAttribute('content') !== desktopContent) {
+                            vp.setAttribute('data-original-viewport', vp.getAttribute('content') || '');
+                            vp.setAttribute('content', desktopContent);
+                        }
+                    } else {
+                        var mobileContent = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
+                        if (!vp) {
+                            vp = document.createElement('meta');
+                            vp.name = 'viewport';
+                            vp.content = mobileContent;
+                            head.appendChild(vp);
+                        } else if ((vp.getAttribute('content') || '').indexOf('width=1280') !== -1) {
+                            var orig = vp.getAttribute('data-original-viewport');
+                            vp.setAttribute('content', orig && orig.length > 0 ? orig : mobileContent);
+                        }
+                    }
+
+                    if (!document.getElementById('xeno-mobile-browser-helper-style')) {
+                        var style = document.createElement('style');
+                        style.id = 'xeno-mobile-browser-helper-style';
+                        style.textContent = 'html, body { -webkit-overflow-scrolling: touch !important; -webkit-text-size-adjust: 100%; } video { max-width: 100%; }';
+                        head.appendChild(style);
+                    }
+                }
+            } catch (e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
 enum class BrowserVideoScaleMode(val label: String, val scaleX: Float, val scaleY: Float) {
     FIT("Fit (16:9)", 1.0f, 1.0f),
     FILL_ZOOM("Fill (No Black Bars)", 1.34f, 1.34f),
@@ -137,6 +294,7 @@ fun BrowserScreen(
     onUpdateTabUrl: (String, String) -> Unit,
     onUpdateTabLoading: (Boolean, Int) -> Unit,
     onUpdateTabNavState: (Boolean, Boolean) -> Unit,
+    onToggleTabDesktopMode: () -> Unit = {},
     onSetShowTabSwitcher: (Boolean) -> Unit,
     onSetShowHistoryDialog: (Boolean) -> Unit,
     onClearHistory: () -> Unit,
@@ -201,7 +359,11 @@ fun BrowserScreen(
             else -> "https://www.google.com/search?q=${android.net.Uri.encode(trimmed)}"
         }
         urlInputText = targetUrl
-        activeWebView?.loadUrl(targetUrl)
+        val isDesktop = currentTab?.isDesktopMode == true
+        activeWebView?.let { wv ->
+            applyBrowserModeSettings(wv, isDesktop, targetUrl)
+            wv.loadUrl(targetUrl, if (isDesktop) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS)
+        }
     }
 
     fun triggerLandscapeVideo() {
@@ -684,6 +846,49 @@ fun BrowserScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Desktop Mode",
+                                        fontWeight = if (currentTab?.isDesktopMode == true) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (currentTab?.isDesktopMode == true) Icons.Filled.DesktopMac else Icons.Filled.PhoneAndroid,
+                                        contentDescription = "Desktop Mode"
+                                    )
+                                },
+                                trailingIcon = {
+                                    Checkbox(
+                                        checked = currentTab?.isDesktopMode == true,
+                                        onCheckedChange = null
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    val nextDesktopMode = !(currentTab?.isDesktopMode ?: false)
+                                    onToggleTabDesktopMode()
+                                    activeWebView?.let { wv ->
+                                        wv.tag = nextDesktopMode
+                                        val activeUrl = wv.url ?: currentTab?.url ?: "https://www.google.com"
+                                        val reloadUrl = if (nextDesktopMode) {
+                                            activeUrl
+                                                .replace("://m.youtube.com", "://www.youtube.com")
+                                                .replace("://m.facebook.com", "://www.facebook.com")
+                                                .replace(".m.wikipedia.org", ".wikipedia.org")
+                                        } else {
+                                            activeUrl
+                                        }
+                                        applyBrowserModeSettings(wv, nextDesktopMode, reloadUrl)
+                                        wv.loadUrl(
+                                            reloadUrl,
+                                            if (nextDesktopMode) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("browser_menu_desktop_mode_toggle")
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Space Sandbox") },
                                 leadingIcon = { Icon(Icons.Filled.Layers, null) },
                                 onClick = {
@@ -760,7 +965,11 @@ fun BrowserScreen(
                                 onClick = {
                                     showMenu = false
                                     urlInputText = "https://www.google.com"
-                                    activeWebView?.loadUrl("https://www.google.com")
+                                    val isDesktop = currentTab?.isDesktopMode == true
+                                    activeWebView?.let { wv ->
+                                        applyBrowserModeSettings(wv, isDesktop, "https://www.google.com")
+                                        wv.loadUrl("https://www.google.com", if (isDesktop) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS)
+                                    }
                                 }
                             )
                             DropdownMenuItem(
@@ -857,34 +1066,8 @@ fun BrowserScreen(
                                         setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
                                     } catch (_: Exception) {}
 
-                                    settings.apply {
-                                        javaScriptEnabled = true
-                                        domStorageEnabled = true
-                                        databaseEnabled = true
-                                        loadWithOverviewMode = true
-                                        useWideViewPort = true
-                                        setSupportZoom(true)
-                                        builtInZoomControls = true
-                                        displayZoomControls = false
-                                        safeBrowsingEnabled = false
-                                        mediaPlaybackRequiresUserGesture = false
-                                        @Suppress("DEPRECATION")
-                                        setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
-                                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                        cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                                        val defaultUa = settings.userAgentString ?: ""
-                                        val cleanMobileUa = if (defaultUa.contains("Version/4.0")) {
-                                            defaultUa.replace("Version/4.0 ", "").replace("; wv", "")
-                                        } else {
-                                            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Mobile Safari/537.36"
-                                        }
-
-                                        userAgentString = if (tab.url.contains("whatsapp.com")) {
-                                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                                        } else {
-                                            cleanMobileUa
-                                        }
-                                    }
+                                    applyBrowserModeSettings(this, tab.isDesktopMode, tab.url)
+                                    isNestedScrollingEnabled = true
 
                                     try {
                                         val cm = android.webkit.CookieManager.getInstance()
@@ -892,7 +1075,7 @@ fun BrowserScreen(
                                         cm.setAcceptThirdPartyCookies(this, true)
                                     } catch (_: Exception) {}
 
-                                     setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+                                    setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
                                         try {
                                             val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype)
                                             val request = android.app.DownloadManager.Request(Uri.parse(url)).apply {
@@ -914,22 +1097,6 @@ fun BrowserScreen(
                                         }
                                     }
 
-                                    val fullscreenPolyfill = """
-                                        (function() {
-                                            try {
-                                                if (!document.fullscreenEnabled) {
-                                                    Object.defineProperty(document, 'fullscreenEnabled', { value: true, configurable: true });
-                                                }
-                                                if (!document.webkitFullscreenEnabled) {
-                                                    Object.defineProperty(document, 'webkitFullscreenEnabled', { value: true, configurable: true });
-                                                }
-                                                if (window.HTMLVideoElement && !HTMLVideoElement.prototype.webkitSupportsFullscreen) {
-                                                    HTMLVideoElement.prototype.webkitSupportsFullscreen = true;
-                                                }
-                                            } catch(e) {}
-                                        })();
-                                    """.trimIndent()
-
                                     webViewClient = object : WebViewClient() {
                                         override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                                             super.onReceivedError(view, errorCode, description, failingUrl)
@@ -939,29 +1106,61 @@ fun BrowserScreen(
                                         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                             super.onPageStarted(view, url, favicon)
                                             onUpdateTabLoading(true, 15)
+                                            val isDesktop = (view?.tag as? Boolean) ?: tab.isDesktopMode
                                             if (url != null) {
-                                                if (url.contains("whatsapp.com")) {
-                                                    view?.settings?.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                                                if (view != null) {
+                                                    applyBrowserModeSettings(view, isDesktop, url)
                                                 }
                                                 onUpdateTabNavState(view?.canGoBack() ?: false, view?.canGoForward() ?: false)
                                             }
-                                            view?.evaluateJavascript(fullscreenPolyfill, null)
+                                            injectBrowserHelperEngine(view, isDesktop)
+                                        }
+
+                                        override fun onPageCommitVisible(view: WebView?, url: String?) {
+                                            super.onPageCommitVisible(view, url)
+                                            val isDesktop = (view?.tag as? Boolean) ?: tab.isDesktopMode
+                                            injectBrowserHelperEngine(view, isDesktop)
                                         }
 
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             super.onPageFinished(view, url)
                                             onUpdateTabLoading(false, 100)
+                                            val isDesktop = (view?.tag as? Boolean) ?: tab.isDesktopMode
                                             if (url != null) {
                                                 val title = view?.title ?: ""
                                                 onUpdateTabUrl(url, title)
                                                 onUpdateTabNavState(view?.canGoBack() ?: false, view?.canGoForward() ?: false)
                                             }
-                                            view?.evaluateJavascript(fullscreenPolyfill, null)
+                                            injectBrowserHelperEngine(view, isDesktop)
+                                            try {
+                                                android.webkit.CookieManager.getInstance().flush()
+                                            } catch (_: Exception) {}
+                                        }
+
+                                        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                            super.doUpdateVisitedHistory(view, url, isReload)
+                                            val isDesktop = (view?.tag as? Boolean) ?: tab.isDesktopMode
+                                            injectBrowserHelperEngine(view, isDesktop)
+                                            if (url != null) {
+                                                onUpdateTabNavState(view?.canGoBack() ?: false, view?.canGoForward() ?: false)
+                                            }
                                         }
 
                                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                             val targetUrl = request?.url?.toString() ?: return false
-                                            if (targetUrl.startsWith("whatsapp://") || targetUrl.startsWith("intent://") || targetUrl.startsWith("tel:") || targetUrl.startsWith("mailto:")) {
+                                            if (targetUrl.startsWith("intent://")) {
+                                                try {
+                                                    val parsed = Intent.parseUri(targetUrl, Intent.URI_INTENT_SCHEME)
+                                                    val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
+                                                    if (!fallbackUrl.isNullOrBlank() && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+                                                        view?.loadUrl(fallbackUrl)
+                                                        return true
+                                                    }
+                                                    ctx.startActivity(parsed)
+                                                } catch (_: Exception) {}
+                                                return true
+                                            }
+                                            if (targetUrl.startsWith("whatsapp://") || targetUrl.startsWith("tel:") || targetUrl.startsWith("mailto:")) {
                                                 try {
                                                     val intent = Intent.parseUri(targetUrl, Intent.URI_INTENT_SCHEME)
                                                     ctx.startActivity(intent)
@@ -1019,11 +1218,16 @@ fun BrowserScreen(
                                         }
                                     }
 
-                                    loadUrl(tab.url)
+                                    tag = tab.isDesktopMode
+                                    loadUrl(
+                                        tab.url,
+                                        if (tab.isDesktopMode) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS
+                                    )
                                     activeWebView = this
                                 }
                             },
                             update = { webView ->
+                                webView.tag = tab.isDesktopMode
                                 activeWebView = webView
                             }
                         )
