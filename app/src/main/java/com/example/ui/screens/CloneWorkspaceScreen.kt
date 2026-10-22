@@ -1425,6 +1425,193 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
     view?.evaluateJavascript(js, null)
 }
 
+/**
+ * Dedicated Discord Helper Function (`injectDiscordStabilityAndLoginHelper`) for Clone Space:
+ * 1. Preserves `window.localStorage` across Discord's web bundle initialization (Discord deletes
+ *    `window.localStorage` during startup; caching and restoring a safe getter ensures authentication
+ *    tokens, 2FA sessions, and account switching persist reliably across reloads).
+ * 2. Bypasses "Open in Discord App" / "Download Discord for Android" mobile interstitials and
+ *    automatically clicks "Continue in browser" if shown.
+ * 3. Adapts Discord's login form (`/login`, `/register`) and channel/chat layout (`/channels/...`)
+ *    for mobile touch screens when not in full desktop zoom mode — hiding the desktop QR code panel on
+ *    narrow screens so email/password/2FA inputs are centered and easy to use, and enabling smooth
+ *    horizontal/vertical touch scrolling across servers, channels, and chat history.
+ * 4. Polyfills WebRTC permissions, Notifications, and AudioContext unlock for stable voice channels
+ *    and real-time Gateway WebSocket messaging.
+ */
+private fun injectDiscordStabilityAndLoginHelper(view: WebView?, isDesktopMode: Boolean) {
+    val mobileAdaptiveFlag = if (isDesktopMode) "false" else "true"
+    val js = """
+        (function() {
+            try {
+                // 1. Preserve window.localStorage before Discord's bundle deletes it from window
+                if (!window.__xenoDiscordStorageSaved) {
+                    window.__xenoDiscordStorageSaved = true;
+                    try {
+                        var nativeStorage = window.localStorage;
+                        if (nativeStorage) {
+                            window.__xenoDiscordLocalStorage = nativeStorage;
+                            Object.defineProperty(window, 'localStorage', {
+                                get: function() { return window.__xenoDiscordLocalStorage; },
+                                configurable: true
+                            });
+                        }
+                    } catch(e) {}
+                }
+
+                if (!window.__xenoDiscordPolyfilled) {
+                    window.__xenoDiscordPolyfilled = true;
+
+                    if (!window.chrome) {
+                        window.chrome = { runtime: {}, app: { isInstalled: false } };
+                    }
+
+                    // Polyfill Notification API so Discord Gateway & unread alerts never throw
+                    if (typeof window.Notification === 'undefined' || window.Notification.permission !== 'granted') {
+                        var MockDiscordNotif = function(title, opts) {
+                            this.title = title;
+                            this.options = opts || {};
+                            this.close = function() {};
+                        };
+                        MockDiscordNotif.permission = 'granted';
+                        MockDiscordNotif.requestPermission = function(cb) {
+                            if (typeof cb === 'function') cb('granted');
+                            return Promise.resolve('granted');
+                        };
+                        window.Notification = MockDiscordNotif;
+                    }
+
+                    // Polyfill navigator.permissions for microphone, camera, and notifications
+                    if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+                        var origQuery = navigator.permissions.query.bind(navigator.permissions);
+                        navigator.permissions.query = function(desc) {
+                            var name = (desc && desc.name) ? String(desc.name).toLowerCase() : '';
+                            if (name === 'microphone' || name === 'camera' || name === 'notifications' || name === 'speaker-selection') {
+                                return Promise.resolve({
+                                    name: name,
+                                    state: 'granted',
+                                    status: 'granted',
+                                    onchange: null,
+                                    addEventListener: function() {},
+                                    removeEventListener: function() {}
+                                });
+                            }
+                            return origQuery(desc).catch(function() {
+                                return { state: 'granted', status: 'granted' };
+                            });
+                        };
+                    }
+
+                    // Unlock WebAudio / HTML5 audio on first user tap for Discord message sounds & voice channels
+                    var unlockDiscordAudio = function() {
+                        try {
+                            var AudioCtx = window.AudioContext || window.webkitAudioContext;
+                            if (AudioCtx) {
+                                if (!window.__xenoDiscordAudioCtx) {
+                                    window.__xenoDiscordAudioCtx = new AudioCtx();
+                                }
+                                if (window.__xenoDiscordAudioCtx.state === 'suspended') {
+                                    window.__xenoDiscordAudioCtx.resume();
+                                }
+                            }
+                        } catch(e) {}
+                    };
+                    document.addEventListener('touchstart', unlockDiscordAudio, { passive: true });
+                    document.addEventListener('click', unlockDiscordAudio, { passive: true });
+                }
+
+                // 2. Ensure proper viewport meta tag so login inputs and chat UI scale cleanly
+                var vp = document.querySelector('meta[name="viewport"]');
+                if (!vp && document.head) {
+                    vp = document.createElement('meta');
+                    vp.name = 'viewport';
+                    document.head.appendChild(vp);
+                }
+                if (vp) {
+                    if ($mobileAdaptiveFlag) {
+                        vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+                    } else {
+                        vp.setAttribute('content', 'width=1100, initial-scale=0.45, minimum-scale=0.25, maximum-scale=2.0, user-scalable=yes');
+                    }
+                }
+
+                // 3. Inject responsive CSS for Discord Login, Server Sidebar, Channel List & Chat Scroller
+                var styleEl = document.getElementById('__xeno_discord_helper_css');
+                if (!styleEl && (document.head || document.documentElement)) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = '__xeno_discord_helper_css';
+                    (document.head || document.documentElement).appendChild(styleEl);
+                }
+                if (styleEl) {
+                    if ($mobileAdaptiveFlag) {
+                        styleEl.textContent =
+                            'html, body { background-color: #313338 !important; overscroll-behavior: none !important; } ' +
+                            /* Hide mobile app download banners & upsell notices */
+                            '[class*="downloadApps"], [class*="mobileAppPrompt"], [class*="noticeMobile"], a[href*="play.google.com"], a[href*="itunes.apple.com"] { display: none !important; } ' +
+                            /* Optimize Discord Login & Register Box for mobile portrait screens */
+                            '[class*="authBox"] { width: 94vw !important; max-width: 440px !important; padding: 20px 16px !important; margin: 12px auto !important; box-sizing: border-box !important; } ' +
+                            '[class*="qrLogin"], [class*="verticalSeparator"] { display: none !important; } ' +
+                            '[class*="mainLoginContainer"] { width: 100% !important; } ' +
+                            /* Smooth touch scrolling inside Discord scrollers, server list, channel list, and chat */
+                            '[class*="scroller"] { -webkit-overflow-scrolling: touch !important; touch-action: pan-y !important; } ' +
+                            /* Allow horizontal pan across Discord panels on narrow phone viewports when in /channels/ */
+                            '#app-mount, [class*="appAsidePanelWrapper"], [class*="app_"] { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; } ' +
+                            '[class*="sidebar_"] { width: 195px !important; min-width: 170px !important; } ' +
+                            '[class*="chat_"], [class*="chatContent_"] { min-width: 280px !important; }';
+                    } else {
+                        styleEl.textContent =
+                            'html, body { background-color: #313338 !important; } ' +
+                            '[class*="scroller"] { -webkit-overflow-scrolling: touch !important; }';
+                    }
+                }
+
+                // 4. Auto-bypass any "Continue in browser" / "Open in Discord App" interstitials
+                function bypassDiscordInterstitials() {
+                    var buttons = document.querySelectorAll('button, a');
+                    for (var i = 0; i < buttons.length; i++) {
+                        var btn = buttons[i];
+                        var txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        if (txt === 'continue in browser' ||
+                            txt === 'open discord in your browser' ||
+                            txt === 'continue to discord') {
+                            try { btn.click(); } catch(e) {}
+                        }
+                    }
+
+                    // If landed on discord.com marketing home page instead of /app or /login, route to /app
+                    var path = (window.location.pathname || '/').toLowerCase();
+                    if (window.location.hostname.indexOf('discord.com') !== -1 && (path === '/' || path === '/download')) {
+                        window.location.replace('https://discord.com/app');
+                    }
+                }
+
+                bypassDiscordInterstitials();
+
+                if (!window.__xenoDiscordObserver && window.MutationObserver && document.body) {
+                    var throttle = null;
+                    window.__xenoDiscordObserver = new MutationObserver(function() {
+                        if (throttle) return;
+                        throttle = setTimeout(function() {
+                            throttle = null;
+                            bypassDiscordInterstitials();
+                            try {
+                                if (!window.localStorage && window.__xenoDiscordLocalStorage) {
+                                    Object.defineProperty(window, 'localStorage', {
+                                        get: function() { return window.__xenoDiscordLocalStorage; },
+                                        configurable: true
+                                    });
+                                }
+                            } catch(e) {}
+                        }, 300);
+                    });
+                    window.__xenoDiscordObserver.observe(document.body, { childList: true, subtree: true });
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CloneWorkspaceScreen(
@@ -1504,6 +1691,14 @@ fun CloneWorkspaceScreen(
                 instance.targetUrl.contains("youtu.be", ignoreCase = true)
     }
 
+    val isDiscord = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
+        instance.packageName.contains("discord", ignoreCase = true) ||
+                instance.originalName.contains("discord", ignoreCase = true) ||
+                instance.displayName.contains("discord", ignoreCase = true) ||
+                instance.targetUrl.contains("discord.com", ignoreCase = true) ||
+                instance.targetUrl.contains("discord.gg", ignoreCase = true)
+    }
+
     val isShortVideoSocialApp = isInstagram || isFacebook || isTiktok || isYoutube
 
     val buildRequiredCallPermissions: (Boolean, Boolean) -> Array<String> = remember {
@@ -1548,6 +1743,8 @@ fun CloneWorkspaceScreen(
 
         if (isWhatsapp) {
             injectWhatsAppWebSupportEngine(webViewInstance)
+        } else if (isDiscord) {
+            injectDiscordStabilityAndLoginHelper(webViewInstance, instance.isDesktopMode)
         }
     }
 
@@ -1883,6 +2080,7 @@ fun CloneWorkspaceScreen(
                 .background(
                     when {
                         isWhatsapp -> Color(0xFF111B21)
+                        isDiscord -> Color(0xFF313338)
                         isInstagram || isTiktok || isYoutube -> Color.Black
                         else -> Color.White
                     }
@@ -1978,7 +2176,7 @@ fun CloneWorkspaceScreen(
                                 isNestedScrollingEnabled = true
                                 isFocusable = true
                                 isFocusableInTouchMode = true
-                                if (isYoutube || isTiktok || isFacebook) {
+                                if (isYoutube || isTiktok || isFacebook || isDiscord) {
                                     setOnTouchListener { v, event ->
                                         if (event.action == android.view.MotionEvent.ACTION_DOWN ||
                                             event.action == android.view.MotionEvent.ACTION_MOVE
@@ -1991,6 +2189,7 @@ fun CloneWorkspaceScreen(
                                 setBackgroundColor(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
+                                        isDiscord -> android.graphics.Color.parseColor("#313338")
                                         isInstagram || isTiktok || isYoutube -> android.graphics.Color.BLACK
                                         else -> android.graphics.Color.WHITE
                                     }
@@ -2017,7 +2216,8 @@ fun CloneWorkspaceScreen(
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                         offscreenPreRaster = true
                                     }
-                                    userAgentString = if (isWhatsapp || instance.isDesktopMode) {
+                                    // Discord web client (/app & /login) requires a desktop Chrome User-Agent to serve the full React web app instead of the mobile download splash screen
+                                    userAgentString = if (isWhatsapp || isDiscord || instance.isDesktopMode) {
                                         DESKTOP_USER_AGENT
                                     } else {
                                         MOBILE_USER_AGENT
@@ -2101,6 +2301,8 @@ fun CloneWorkspaceScreen(
                                     private fun injectSocialAppHelpers(view: WebView?, url: String?) {
                                         when {
                                             isWhatsapp -> injectWhatsAppWebSupportEngine(view)
+                                            isDiscord || url?.contains("discord.com", ignoreCase = true) == true || url?.contains("discord.gg", ignoreCase = true) == true ->
+                                                injectDiscordStabilityAndLoginHelper(view, instance.isDesktopMode)
                                             isInstagram || url?.contains("instagram.com", ignoreCase = true) == true ->
                                                 injectInstagramReelsAndScrollHelper(view)
                                             isFacebook || url?.contains("facebook.com", ignoreCase = true) == true ->
@@ -2174,6 +2376,18 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
+                                        if (isDiscord) {
+                                            if (lowerUrl.startsWith("discord://") ||
+                                                lowerUrl.contains("discord.com/download") ||
+                                                lowerUrl.contains("play.google.com/store/apps")
+                                            ) {
+                                                val curr = view?.url ?: ""
+                                                if (!curr.contains("discord.com/app") && !curr.contains("discord.com/login") && !curr.contains("discord.com/channels")) {
+                                                    view?.loadUrl("https://discord.com/app")
+                                                }
+                                                return true
+                                            }
+                                        }
                                         // Convert vnd.youtube:// links into mobile web YouTube URLs
                                         if (lowerUrl.startsWith("vnd.youtube:") || lowerUrl.startsWith("youtube://")) {
                                             val cleaned = url.substringAfter("://").substringAfter(":")
@@ -2189,15 +2403,16 @@ fun CloneWorkspaceScreen(
                                             }
                                             return true
                                         }
-                                        // Prevent Facebook, TikTok, Instagram & YouTube from kicking the user out to Play Store or external app prompts
-                                        if (isFacebook || isTiktok || isInstagram || isYoutube) {
+                                        // Prevent Facebook, TikTok, Instagram, YouTube & Discord from kicking the user out to Play Store or external app prompts
+                                        if (isFacebook || isTiktok || isInstagram || isYoutube || isDiscord) {
                                             if (lowerUrl.contains("play.google.com/store/apps") ||
                                                 lowerUrl.startsWith("market://") ||
                                                 lowerUrl.startsWith("fb://") ||
                                                 lowerUrl.startsWith("fbmessenger://") ||
                                                 lowerUrl.startsWith("tiktok://") ||
                                                 lowerUrl.startsWith("snssdk") ||
-                                                lowerUrl.startsWith("musical://")
+                                                lowerUrl.startsWith("musical://") ||
+                                                lowerUrl.startsWith("discord://")
                                             ) {
                                                 return true
                                             }
@@ -2341,6 +2556,11 @@ fun CloneWorkspaceScreen(
 
                                 val startUrl = when {
                                     isWhatsapp -> "https://web.whatsapp.com/"
+                                    isDiscord -> if (instance.lastUrl.startsWith("http") && instance.lastUrl.contains("discord.com", ignoreCase = true) && !instance.lastUrl.contains("/download", ignoreCase = true)) {
+                                        instance.lastUrl
+                                    } else {
+                                        "https://discord.com/app"
+                                    }
                                     isYoutube -> if (instance.lastUrl.startsWith("http") && (instance.lastUrl.contains("youtube.com", ignoreCase = true) || instance.lastUrl.contains("youtu.be", ignoreCase = true))) {
                                         instance.lastUrl
                                     } else {

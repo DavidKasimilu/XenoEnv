@@ -54,6 +54,7 @@ import com.example.ui.screens.BrowserScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.ContactsScreen
+import com.example.ui.screens.DocsManagerScreen
 import com.example.ui.screens.FileManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
@@ -218,10 +219,9 @@ fun XenoApp(
                 intent.removeExtra("incoming_number")
                 intent.removeExtra("auto_answer")
                 if (autoAnswer) {
-                    viewModel.startActiveCall(incomingNumber, callerName, isIncoming = false)
-                    viewModel.acceptActiveCall()
+                    viewModel.answerIncomingCallFromIntent(incomingNumber, callerName)
                 } else {
-                    viewModel.startActiveCall(incomingNumber, callerName, isIncoming = true)
+                    viewModel.openFullScreenIncomingCall(incomingNumber, callerName)
                 }
                 return@LaunchedEffect
             }
@@ -300,7 +300,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = { viewModel.selectTab(it) },
@@ -310,7 +310,8 @@ fun XenoApp(
             }
         }
     ) { innerPadding ->
-        val effectivePadding = if (isImmersiveVideoActive) PaddingValues(0.dp) else innerPadding
+        val isFullScreenCallActive = uiState.activeCallState != null
+        val effectivePadding = if (isImmersiveVideoActive || isFullScreenCallActive) PaddingValues(0.dp) else innerPadding
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -325,6 +326,20 @@ fun XenoApp(
                     onDeleteVideo = { viewModel.deleteMediaItem(it) },
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (uiState.showDocsManager) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    DocsManagerScreen(
+                        folders = uiState.documentFolders,
+                        isLoading = uiState.isLoadingDocs,
+                        onRefresh = { viewModel.refreshDocumentFolders() },
+                        onOpenDocumentContent = { doc -> viewModel.openDocumentReadOnly(doc) },
+                        onClose = { viewModel.setShowDocsManager(false) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             } else if (uiState.showMediaManager) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -500,6 +515,7 @@ fun XenoApp(
                                 showPasswordManager = uiState.showPasswordManager,
                                 onSetShowPasswordManager = { viewModel.setShowPasswordManager(it) },
                                 onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
+                                onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },
@@ -535,6 +551,22 @@ fun XenoApp(
                 }
             }
         }
+
+            // Top In-App Incoming Call & SMS Notification Popup Overlay
+            InAppNotificationOverlay(
+                incomingSms = uiState.incomingSmsPopup,
+                incomingCall = if (uiState.activeCallState == null) uiState.incomingCallPopup else null,
+                onMarkSmsRead = { viewModel.markSmsPopupAsRead(it) },
+                onReplySms = { viewModel.replySmsPopup(it) },
+                onDismissSms = { viewModel.dismissSmsPopup() },
+                onAcceptCall = { viewModel.acceptCallPopup(it) },
+                onDeclineCall = { viewModel.declineCallPopup(it) },
+                onDismissCall = { viewModel.dismissCallPopup() },
+                onExpandCall = { viewModel.expandCallPopupToFullScreen(it) },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(20f)
+            )
     }
 
     // New Chat Dialog

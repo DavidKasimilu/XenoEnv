@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -103,11 +104,15 @@ fun ActiveCallScreen(
 
     // Ensure OngoingCallHelper session is initialized and keep screen awake during active/incoming call
     LaunchedEffect(phoneNumber, contactName, isIncoming) {
-        XenoOverlayService.dismissCallOverlay(context)
+        OngoingCallHelper.dismissIncomingCallPopup(context)
         val current = OngoingCallHelper.sessionFlow.value
         if (current.phase == CallPhase.IDLE || current.phoneNumber != phoneNumber) {
             if (isIncoming) {
-                OngoingCallHelper.startIncomingSession(phoneNumber, contactName)
+                OngoingCallHelper.startIncomingSession(
+                    phoneNumber = phoneNumber,
+                    contactName = contactName,
+                    openFullScreenImmediately = true
+                )
             } else {
                 OngoingCallHelper.startOutgoingSession(phoneNumber, contactName)
             }
@@ -133,7 +138,7 @@ fun ActiveCallScreen(
         }
     }
 
-    val isIncomingRinging = callSession.phase == CallPhase.INCOMING_RINGING || (isIncoming && !callSession.isConnected)
+    val isIncomingRinging = callSession.phase == CallPhase.INCOMING_RINGING
     val isOutgoingDialing = callSession.phase == CallPhase.OUTGOING_DIALING && !isIncomingRinging
     val isCallConnected = callSession.isConnected
     val displayContactName = callSession.contactName?.takeIf { it.isNotBlank() }
@@ -142,7 +147,11 @@ fun ActiveCallScreen(
     val displayPhoneNumber = callSession.phoneNumber.ifBlank { phoneNumber }
 
     fun handleAnswer() {
-        OngoingCallHelper.answerIncomingCall(context)
+        OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+            context = context,
+            phoneNumber = displayPhoneNumber,
+            contactName = displayContactName
+        )
         onAcceptCall?.invoke()
     }
 
@@ -191,6 +200,7 @@ fun ActiveCallScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
+            .systemBarsPadding()
             .testTag("active_call_screen"),
         contentAlignment = Alignment.Center
     ) {

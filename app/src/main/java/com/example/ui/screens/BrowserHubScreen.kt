@@ -97,6 +97,7 @@ fun BrowserHubScreen(
     showPasswordManager: Boolean = false,
     onSetShowPasswordManager: (Boolean) -> Unit = {},
     onSetShowMediaManager: (Boolean) -> Unit = {},
+    onSetShowDocsManager: (Boolean) -> Unit = {},
     onSavePassword: (domain: String, title: String, username: String, pass: String) -> Unit = { _, _, _, _ -> },
     onDeletePassword: (Long) -> Unit = {},
     onPlayVideo: (MediaItem) -> Unit = {},
@@ -170,6 +171,7 @@ fun BrowserHubScreen(
                         onDeleteClone = onDeleteClone,
                         onCloseFromDock = onCloseFromDock,
                         onOpenMedia = { onSetShowMediaManager(true) },
+                        onOpenDocs = { onSetShowDocsManager(true) },
                         onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) }
                     )
                 }

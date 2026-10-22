@@ -134,6 +134,20 @@ class SpaceRepository(private val context: Context) {
                     lastActiveTime = now,
                     lastUrl = "https://m.youtube.com/",
                     isDesktopMode = false
+                ),
+                ClonedAppInstance(
+                    instanceId = "clone_discord_1",
+                    packageName = "com.discord",
+                    templateId = "com.discord",
+                    displayName = "Discord",
+                    originalName = "Discord",
+                    targetUrl = "https://discord.com/app",
+                    badgeTag = "Clone",
+                    badgeColorHex = "#5865F2",
+                    createdAt = now,
+                    lastActiveTime = now,
+                    lastUrl = "https://discord.com/app",
+                    isDesktopMode = false
                 )
             )
         }
@@ -147,6 +161,7 @@ class SpaceRepository(private val context: Context) {
                 .putBoolean("gmail_default_clone_added_v1", true)
                 .putBoolean("fb_tiktok_default_clones_added_v1", true)
                 .putBoolean("youtube_default_clone_added_v1", true)
+                .putBoolean("discord_default_clone_added_v1", true)
                 .apply()
             saveClonedInstances(defaultList)
             return defaultList
@@ -175,7 +190,7 @@ class SpaceRepository(private val context: Context) {
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
-                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok, YouTube or any other app
+                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok, YouTube, Discord or any other app
                 val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
                         origName.contains("whatsapp", ignoreCase = true) ||
                         dispName.contains("whatsapp", ignoreCase = true) ||
@@ -199,6 +214,11 @@ class SpaceRepository(private val context: Context) {
                         dispName.contains("youtube", ignoreCase = true) ||
                         rawTarget.contains("youtube.com", ignoreCase = true) ||
                         rawTarget.contains("youtu.be", ignoreCase = true)
+                val isDiscord = pkg.contains("discord", ignoreCase = true) ||
+                        origName.contains("discord", ignoreCase = true) ||
+                        dispName.contains("discord", ignoreCase = true) ||
+                        rawTarget.contains("discord.com", ignoreCase = true) ||
+                        rawTarget.contains("discord.gg", ignoreCase = true)
 
                 val resolvedTarget = when {
                     isWa -> "https://web.whatsapp.com/"
@@ -206,6 +226,7 @@ class SpaceRepository(private val context: Context) {
                     isFacebook -> "https://m.facebook.com/"
                     isTiktok -> "https://www.tiktok.com/"
                     isYoutube -> "https://m.youtube.com/"
+                    isDiscord -> "https://discord.com/app"
                     rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true) -> rawTarget
                     else -> {
                         needsResave = true
@@ -228,6 +249,9 @@ class SpaceRepository(private val context: Context) {
                 } else if (isYoutube && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
                     needsResave = true
                     "https://m.youtube.com/"
+                } else if (isDiscord && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true) || rawLast.contains("discord.com/download", ignoreCase = true))) {
+                    needsResave = true
+                    "https://discord.com/app"
                 } else if (rawLast.isNotBlank() && !rawLast.equals("about:blank", ignoreCase = true)) {
                     rawLast
                 } else {
@@ -266,6 +290,7 @@ class SpaceRepository(private val context: Context) {
                             isFacebook -> "#1877F2"
                             isTiktok -> "#FE2C55"
                             isYoutube -> "#FF0000"
+                            isDiscord -> "#5865F2"
                             else -> "#E1306C"
                         }),
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
@@ -283,6 +308,7 @@ class SpaceRepository(private val context: Context) {
                 .putBoolean("gmail_default_clone_added_v1", true)
                 .putBoolean("fb_tiktok_default_clones_added_v1", true)
                 .putBoolean("youtube_default_clone_added_v1", true)
+                .putBoolean("discord_default_clone_added_v1", true)
                 .apply()
             saveClonedInstances(defaultList)
             return defaultList
@@ -408,6 +434,37 @@ class SpaceRepository(private val context: Context) {
                 needsResave = true
             }
             prefs.edit().putBoolean("youtube_default_clone_added_v1", true).apply()
+        }
+
+        // Ensure Discord default clone is added once for existing users
+        if (!prefs.getBoolean("discord_default_clone_added_v1", false)) {
+            val now = System.currentTimeMillis()
+            val hasDiscord = list.any {
+                it.packageName.contains("discord", ignoreCase = true) ||
+                        it.originalName.contains("discord", ignoreCase = true) ||
+                        it.displayName.contains("discord", ignoreCase = true) ||
+                        it.targetUrl.contains("discord.com", ignoreCase = true)
+            }
+            if (!hasDiscord) {
+                list.add(
+                    ClonedAppInstance(
+                        instanceId = "clone_discord_1",
+                        packageName = "com.discord",
+                        templateId = "com.discord",
+                        displayName = "Discord",
+                        originalName = "Discord",
+                        targetUrl = "https://discord.com/app",
+                        badgeTag = "Clone",
+                        badgeColorHex = "#5865F2",
+                        createdAt = now,
+                        lastActiveTime = now,
+                        lastUrl = "https://discord.com/app",
+                        isDesktopMode = false
+                    )
+                )
+                needsResave = true
+            }
+            prefs.edit().putBoolean("discord_default_clone_added_v1", true).apply()
         }
 
         if (needsResave) {

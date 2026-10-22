@@ -9,6 +9,7 @@ import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.TelecomManager
 import android.util.Log
+import com.example.data.models.IncomingCallPopup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,7 +43,8 @@ data class OngoingCallSession(
     val isOnHold: Boolean = false,
     val isRingerSilenced: Boolean = false,
     val dtmfDigits: String = "",
-    val hasTelecomCall: Boolean = false
+    val hasTelecomCall: Boolean = false,
+    val isFullScreenCallVisible: Boolean = false
 ) {
     val isConnected: Boolean
         get() = phase == CallPhase.ACTIVE || phase == CallPhase.HOLDING
@@ -55,9 +57,11 @@ data class OngoingCallSession(
 }
 
 /**
- * Centralized helper for managing incoming and ongoing call screen state,
- * accurate call duration counting (starting strictly when Call.STATE_ACTIVE is reached),
- * and hardware audio routing (speakerphone, microphone mute, hold, DTMF, ringer silence).
+ * Centralized helper for managing:
+ * 1. Incoming calls (deduplication, contact name resolution, ringer control, state management),
+ * 2. Incoming call popup banner (reactive popup state synchronized with system notification & overlay),
+ * 3. Full-screen call screen transition when answered (accurate call duration counting starting at 00:00
+ *    and hardware audio routing for speakerphone, microphone mute, hold, and DTMF).
  */
 object OngoingCallHelper {
 
@@ -68,6 +72,9 @@ object OngoingCallHelper {
 
     private val _sessionFlow = MutableStateFlow(OngoingCallSession())
     val sessionFlow: StateFlow<OngoingCallSession> = _sessionFlow.asStateFlow()
+
+    private val _incomingPopupFlow = MutableStateFlow<IncomingCallPopup?>(null)
+    val incomingPopupFlow: StateFlow<IncomingCallPopup?> = _incomingPopupFlow.asStateFlow()
 
     @Volatile
     private var lastIncomingNumber: String = ""
@@ -119,8 +126,77 @@ object OngoingCallHelper {
         return true
     }
 
+    /**
+     * Helper function to handle an incoming call, initialize the ringing session,
+     * trigger the in-app Incoming Call Popup (and system heads-up notification),
+     * and prepare for transitioning to the full-screen call screen upon answer.
+     */
+    fun handleIncomingCallEvent(
+        context: Context,
+        phoneNumber: String,
+        contactName: String? = null,
+        showPopup: Boolean = true
+    ): IncomingCallPopup {
+        val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
+        val resolvedName = contactName?.takeIf { it.isNotBlank() }
+            ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
+
+        startIncomingSession(
+            phoneNumber = cleanNumber,
+            contactName = resolvedName,
+            openFullScreenImmediately = !showPopup
+        )
+
+        val popup = IncomingCallPopup(
+            callerName = resolvedName,
+            callerNumber = cleanNumber
+        )
+
+        if (showPopup) {
+            _incomingPopupFlow.value = popup
+        } else {
+            _incomingPopupFlow.value = null
+        }
+
+        XenoNotificationHelper.showCallNotification(
+            context = context,
+            callerName = resolvedName,
+            callerNumber = cleanNumber
+        )
+
+        return popup
+    }
+
+    fun showIncomingCallPopup(phoneNumber: String, contactName: String?): IncomingCallPopup {
+        val popup = IncomingCallPopup(
+            callerName = contactName?.takeIf { it.isNotBlank() },
+            callerNumber = phoneNumber
+        )
+        _incomingPopupFlow.value = popup
+        return popup
+    }
+
+    fun dismissIncomingCallPopup(context: Context) {
+        _incomingPopupFlow.value = null
+        XenoOverlayService.dismissCallOverlay(context)
+    }
+
+    /**
+     * Expands an active incoming call popup into the full-screen incoming call view
+     * while still ringing.
+     */
+    fun expandIncomingCallToFullScreen(context: Context) {
+        _incomingPopupFlow.value = null
+        XenoOverlayService.dismissCallOverlay(context)
+        val current = _sessionFlow.value
+        if (current.phoneNumber.isNotBlank()) {
+            _sessionFlow.value = current.copy(isFullScreenCallVisible = true)
+        }
+    }
+
     fun startOutgoingSession(phoneNumber: String, contactName: String?) {
         stopDurationTimer()
+        _incomingPopupFlow.value = null
         val existingCall = XenoInCallService.currentCall
         val isAlreadyActive = existingCall?.state == Call.STATE_ACTIVE
         val now = System.currentTimeMillis()
@@ -141,7 +217,8 @@ object OngoingCallHelper {
             isSpeakerOn = false,
             isOnHold = false,
             dtmfDigits = "",
-            hasTelecomCall = existingCall != null
+            hasTelecomCall = existingCall != null,
+            isFullScreenCallVisible = true
         )
 
         if (isAlreadyActive && connectTime != null) {
@@ -149,16 +226,26 @@ object OngoingCallHelper {
         }
     }
 
-    fun startIncomingSession(phoneNumber: String, contactName: String?) {
+    fun startIncomingSession(
+        phoneNumber: String,
+        contactName: String?,
+        openFullScreenImmediately: Boolean = false
+    ) {
         val current = _sessionFlow.value
         val existingCall = XenoInCallService.currentCall
         val isAlreadyActive = existingCall?.state == Call.STATE_ACTIVE
 
-        // If already showing this incoming call, only enrich contactName if needed
-        if (current.phase == CallPhase.INCOMING_RINGING && current.phoneNumber == phoneNumber) {
-            if (!contactName.isNullOrBlank() && current.contactName.isNullOrBlank()) {
-                _sessionFlow.value = current.copy(contactName = contactName)
+        // If already showing this incoming call, only enrich contactName or visibility if needed
+        if ((current.phase == CallPhase.INCOMING_RINGING || current.phase == CallPhase.ACTIVE) && current.phoneNumber == phoneNumber) {
+            val updatedName = if (!contactName.isNullOrBlank() && current.contactName.isNullOrBlank()) {
+                contactName
+            } else {
+                current.contactName
             }
+            _sessionFlow.value = current.copy(
+                contactName = updatedName,
+                isFullScreenCallVisible = current.isFullScreenCallVisible || openFullScreenImmediately || isAlreadyActive
+            )
             return
         }
 
@@ -182,7 +269,8 @@ object OngoingCallHelper {
             isOnHold = false,
             isRingerSilenced = false,
             dtmfDigits = "",
-            hasTelecomCall = existingCall != null
+            hasTelecomCall = existingCall != null,
+            isFullScreenCallVisible = openFullScreenImmediately || isAlreadyActive
         )
 
         if (isAlreadyActive && connectTime != null) {
@@ -195,6 +283,10 @@ object OngoingCallHelper {
         val current = _sessionFlow.value
         if (current.phoneNumber == phoneNumber && current.contactName.isNullOrBlank()) {
             _sessionFlow.value = current.copy(contactName = contactName)
+        }
+        val currentPopup = _incomingPopupFlow.value
+        if (currentPopup != null && currentPopup.callerNumber == phoneNumber && currentPopup.callerName.isNullOrBlank()) {
+            _incomingPopupFlow.value = currentPopup.copy(callerName = contactName)
         }
     }
 
@@ -242,7 +334,8 @@ object OngoingCallHelper {
             }
 
             Call.STATE_ACTIVE -> {
-                // Call is now connected! Start call duration timer from 00:00 if not started yet
+                // Call is now connected! Dismiss any incoming popup and open full-screen call screen with timer at 00:00
+                _incomingPopupFlow.value = null
                 val now = System.currentTimeMillis()
                 val telecomConnectMs = call?.details?.connectTimeMillis?.takeIf { it > 0L && (now - it) in 0..3600_000L }
                 val connectTimestamp = current.connectedAtMillis ?: telecomConnectMs ?: now
@@ -254,7 +347,8 @@ object OngoingCallHelper {
                     connectedAtMillis = connectTimestamp,
                     durationSeconds = initialElapsed,
                     isOnHold = false,
-                    hasTelecomCall = call != null
+                    hasTelecomCall = call != null,
+                    isFullScreenCallVisible = true
                 )
                 startDurationTimer(connectTimestamp)
             }
@@ -266,18 +360,21 @@ object OngoingCallHelper {
                     phase = CallPhase.HOLDING,
                     connectedAtMillis = connectTimestamp,
                     isOnHold = true,
-                    hasTelecomCall = call != null
+                    hasTelecomCall = call != null,
+                    isFullScreenCallVisible = true
                 )
                 startDurationTimer(connectTimestamp)
             }
 
             Call.STATE_DISCONNECTED, Call.STATE_DISCONNECTING -> {
+                _incomingPopupFlow.value = null
                 val finalDuration = getCurrentDurationSeconds()
                 stopDurationTimer()
                 _sessionFlow.value = current.copy(
                     phase = CallPhase.DISCONNECTED,
                     durationSeconds = finalDuration,
-                    hasTelecomCall = false
+                    hasTelecomCall = false,
+                    isFullScreenCallVisible = false
                 )
             }
         }
@@ -294,6 +391,7 @@ object OngoingCallHelper {
     }
 
     fun markCallConnectedLocally(context: Context) {
+        _incomingPopupFlow.value = null
         val current = _sessionFlow.value
         val now = System.currentTimeMillis()
         val connectTimestamp = current.connectedAtMillis ?: now
@@ -302,37 +400,65 @@ object OngoingCallHelper {
             phase = CallPhase.ACTIVE,
             connectedAtMillis = connectTimestamp,
             durationSeconds = ((now - connectTimestamp) / 1000L).coerceAtLeast(0L),
-            isOnHold = false
+            isOnHold = false,
+            isFullScreenCallVisible = true
         )
         startDurationTimer(connectTimestamp)
     }
 
-    fun answerIncomingCall(context: Context) {
+    /**
+     * Helper function that answers an incoming call from any UI surface (incoming call popup,
+     * system notification, floating overlay, or full-screen incoming screen), dismisses all
+     * popups/notifications, starts the call duration timer at 00:00, and transitions into the
+     * full-screen active call screen.
+     */
+    fun answerIncomingCallAndOpenFullScreen(
+        context: Context,
+        phoneNumber: String? = null,
+        contactName: String? = null
+    ): OngoingCallSession {
         silenceIncomingRinger(context)
+        dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
         configureCallAudioMode(context, active = true)
         XenoInCallService.answerCall()
 
         val now = System.currentTimeMillis()
         val current = _sessionFlow.value
+        val effectiveNumber = phoneNumber?.takeIf { it.isNotBlank() } ?: current.phoneNumber
+        val effectiveName = contactName?.takeIf { it.isNotBlank() }
+            ?: current.contactName
+            ?: XenoNotificationHelper.resolveContactNameQuick(context, effectiveNumber)
         val connectTimestamp = current.connectedAtMillis ?: now
-        _sessionFlow.value = current.copy(
+
+        val connectedSession = current.copy(
+            phoneNumber = effectiveNumber,
+            contactName = effectiveName,
+            isIncoming = true,
             phase = CallPhase.ACTIVE,
             connectedAtMillis = connectTimestamp,
             durationSeconds = 0L,
             isOnHold = false,
-            isRingerSilenced = true
+            isRingerSilenced = true,
+            isFullScreenCallVisible = true
         )
+        _sessionFlow.value = connectedSession
         startDurationTimer(connectTimestamp)
 
         // Re-apply speaker preference if user toggled speaker before answering
         if (current.isSpeakerOn) {
             setSpeakerphone(context, true)
         }
+        return connectedSession
+    }
+
+    fun answerIncomingCall(context: Context) {
+        answerIncomingCallAndOpenFullScreen(context)
     }
 
     fun declineIncomingCall(context: Context) {
         silenceIncomingRinger(context)
+        dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
         XenoInCallService.rejectCall()
         stopDurationTimer()
@@ -347,6 +473,7 @@ object OngoingCallHelper {
             0L
         }
         silenceIncomingRinger(context)
+        dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
         XenoInCallService.endCall()
         stopDurationTimer()

@@ -135,8 +135,12 @@ class XenoInCallService : InCallService() {
         if (state == Call.STATE_RINGING) {
             if (handle.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(handle)) {
                 val resolvedName = XenoNotificationHelper.resolveContactNameQuick(applicationContext, handle)
-                OngoingCallHelper.startIncomingSession(handle, resolvedName)
-                XenoNotificationHelper.showCallNotification(applicationContext, resolvedName, handle)
+                OngoingCallHelper.handleIncomingCallEvent(
+                    context = applicationContext,
+                    phoneNumber = handle,
+                    contactName = resolvedName,
+                    showPopup = true
+                )
 
                 if (onIncomingCallListener != null) {
                     onIncomingCallListener?.invoke(handle)

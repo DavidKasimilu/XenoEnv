@@ -13,9 +13,13 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.BrowserRepository
 import com.example.data.CallLogRepository
 import com.example.data.ContactsRepository
+import com.example.data.DocumentFileItem
+import com.example.data.DocumentFolderItem
+import com.example.data.DocumentRepository
 import com.example.data.DownloadRepository
 import com.example.data.GalleryRepository
 import com.example.data.GameSpaceRepository
+import com.example.data.LoadedDocumentContent
 import com.example.data.PasswordRepository
 import com.example.data.SmsRepository
 import com.example.data.SpaceRepository
@@ -134,6 +138,11 @@ data class XenoUiState(
     val selectedVideoItem: MediaItem? = null,
     val isVideoControlsHidden: Boolean = false,
     val showMediaManager: Boolean = false,
+
+    // Docs Reader state
+    val showDocsManager: Boolean = false,
+    val documentFolders: List<DocumentFolderItem> = emptyList(),
+    val isLoadingDocs: Boolean = false,
     // Notification state
     val deviceNotifications: List<DeviceNotification> = emptyList(),
     val hasNotificationAccess: Boolean = false,
@@ -178,6 +187,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val gameSpaceRepo = GameSpaceRepository(application)
     private val passwordRepo = PasswordRepository(application)
     private val downloadRepo = DownloadRepository(application)
+    private val documentRepo = DocumentRepository(application)
 
     private val callPrefs = application.getSharedPreferences("xeno_call_prefs", Context.MODE_PRIVATE)
     private val recentInMemoryCalls = CopyOnWriteArrayList<CallLogEntry>()
@@ -216,8 +226,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         XenoInCallService.onCallEndedListener = {
-            dismissCallPopup()
+            val pendingPopup = _uiState.value.incomingCallPopup
             val active = _uiState.value.activeCallState
+            dismissCallPopup()
             if (active != null) {
                 val session = OngoingCallHelper.sessionFlow.value
                 val elapsed = OngoingCallHelper.getCurrentDurationSeconds()
@@ -226,9 +237,51 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     endActiveCall(elapsed)
                 }
+            } else if (pendingPopup != null) {
+                declineCallPopup(pendingPopup)
             } else {
                 OngoingCallHelper.endCall(getApplication())
                 triggerPostCallHistorySync()
+            }
+        }
+
+        viewModelScope.launch {
+            OngoingCallHelper.incomingPopupFlow.collect { popup ->
+                if (_uiState.value.incomingCallPopup != popup) {
+                    _uiState.value = _uiState.value.copy(incomingCallPopup = popup)
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            OngoingCallHelper.sessionFlow.collect { session ->
+                when {
+                    session.phase == CallPhase.IDLE -> {
+                        if (_uiState.value.activeCallState != null || _uiState.value.incomingCallPopup != null) {
+                            _uiState.value = _uiState.value.copy(
+                                activeCallState = null,
+                                incomingCallPopup = null
+                            )
+                        }
+                    }
+                    session.isFullScreenCallVisible && session.phoneNumber.isNotBlank() && session.phase != CallPhase.DISCONNECTED -> {
+                        val currentActive = _uiState.value.activeCallState
+                        if (currentActive == null || currentActive.phoneNumber != session.phoneNumber) {
+                            _uiState.value = _uiState.value.copy(
+                                activeCallState = ActiveCallState(
+                                    phoneNumber = session.phoneNumber,
+                                    contactName = session.contactName,
+                                    isIncoming = session.isIncoming
+                                ),
+                                incomingCallPopup = null
+                            )
+                        } else if (!session.contactName.isNullOrBlank() && currentActive.contactName.isNullOrBlank()) {
+                            _uiState.value = _uiState.value.copy(
+                                activeCallState = currentActive.copy(contactName = session.contactName)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -774,6 +827,28 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setShowDocsManager(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showDocsManager = show)
+        if (show) {
+            refreshDocumentFolders()
+        }
+    }
+
+    fun refreshDocumentFolders() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingDocs = true)
+            val folders = documentRepo.scanDeviceDocumentFolders()
+            _uiState.value = _uiState.value.copy(
+                documentFolders = folders,
+                isLoadingDocs = false
+            )
+        }
+    }
+
+    suspend fun openDocumentReadOnly(item: DocumentFileItem): LoadedDocumentContent {
+        return documentRepo.openDocumentReadOnly(item)
+    }
+
     fun addCustomMedia(uri: Uri, isVideo: Boolean, displayName: String = if (isVideo) "Video.mp4" else "Photo.jpg") {
         viewModelScope.launch {
             val item = galleryRepo.importMediaUri(uri, isVideo)
@@ -1133,42 +1208,115 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value.activeChatMessages
             }
 
+            val isViewingSameThread = currentChat != null &&
+                (currentChat.threadId == threadId ||
+                    XenoNotificationHelper.normalizePhoneKey(currentChat.address) == XenoNotificationHelper.normalizePhoneKey(address))
+
             _uiState.value = _uiState.value.copy(
                 smsThreads = threads,
-                activeChatMessages = updatedMessages
+                activeChatMessages = updatedMessages,
+                incomingSmsPopup = if (!isViewingSameThread) {
+                    IncomingSmsPopup(
+                        threadId = threadId,
+                        senderName = contactName,
+                        senderNumber = address,
+                        body = body
+                    )
+                } else {
+                    _uiState.value.incomingSmsPopup
+                }
             )
         }
     }
 
+    /**
+     * Helper function to handle incoming calls:
+     * Resolves caller identity, starts the incoming ringing session in OngoingCallHelper,
+     * and displays the Incoming Call Popup banner so the user can accept (opening the
+     * full-screen call screen) or decline.
+     */
     fun handleIncomingCall(number: String) {
         viewModelScope.launch {
             val contactName = contactsRepo.resolveContactName(number)
             OngoingCallHelper.updateContactNameIfMissing(number, contactName)
 
-            XenoNotificationHelper.showCallNotification(
+            val popup = OngoingCallHelper.handleIncomingCallEvent(
                 context = getApplication(),
-                callerName = contactName,
-                callerNumber = number
+                phoneNumber = number,
+                contactName = contactName,
+                showPopup = true
             )
 
-            startActiveCall(phoneNumber = number, contactName = contactName, isIncoming = true)
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = popup,
+                activeCallState = null
+            )
+        }
+    }
+
+    fun openFullScreenIncomingCall(phoneNumber: String, callerName: String?) {
+        viewModelScope.launch {
+            val resolvedName = callerName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactName(phoneNumber)
+            OngoingCallHelper.startIncomingSession(
+                phoneNumber = phoneNumber,
+                contactName = resolvedName,
+                openFullScreenImmediately = true
+            )
+            OngoingCallHelper.expandIncomingCallToFullScreen(getApplication())
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = null,
+                activeCallState = ActiveCallState(
+                    phoneNumber = phoneNumber,
+                    contactName = resolvedName,
+                    isIncoming = true
+                )
+            )
+        }
+    }
+
+    fun answerIncomingCallFromIntent(phoneNumber: String, callerName: String?) {
+        viewModelScope.launch {
+            val resolvedName = callerName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactName(phoneNumber)
+            val connectedSession = OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+                context = getApplication(),
+                phoneNumber = phoneNumber,
+                contactName = resolvedName
+            )
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = null,
+                activeCallState = ActiveCallState(
+                    phoneNumber = connectedSession.phoneNumber.ifBlank { phoneNumber },
+                    contactName = connectedSession.contactName ?: resolvedName,
+                    isIncoming = true
+                )
+            )
         }
     }
 
     fun acceptActiveCall() {
-        OngoingCallHelper.answerIncomingCall(getApplication())
-        val call = _uiState.value.activeCallState
-        if (call != null) {
-            _uiState.value = _uiState.value.copy(
-                activeCallState = call.copy(isIncoming = false)
+        val currentCall = _uiState.value.activeCallState
+        val connectedSession = OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+            context = getApplication(),
+            phoneNumber = currentCall?.phoneNumber,
+            contactName = currentCall?.contactName
+        )
+        _uiState.value = _uiState.value.copy(
+            incomingCallPopup = null,
+            activeCallState = ActiveCallState(
+                phoneNumber = currentCall?.phoneNumber ?: connectedSession.phoneNumber,
+                contactName = currentCall?.contactName ?: connectedSession.contactName,
+                isIncoming = true
             )
-        }
+        )
     }
 
     fun declineActiveCall() {
         OngoingCallHelper.declineIncomingCall(getApplication())
         val call = _uiState.value.activeCallState
-        _uiState.value = _uiState.value.copy(activeCallState = null)
+        _uiState.value = _uiState.value.copy(
+            activeCallState = null,
+            incomingCallPopup = null
+        )
         if (call != null) {
             val now = System.currentTimeMillis()
             val newEntry = CallLogEntry(
@@ -1221,19 +1369,49 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissCallPopup() {
+        OngoingCallHelper.dismissIncomingCallPopup(getApplication())
         XenoNotificationHelper.cancelCallNotification(getApplication())
         _uiState.value = _uiState.value.copy(incomingCallPopup = null)
     }
 
+    fun expandCallPopupToFullScreen(popup: IncomingCallPopup) {
+        OngoingCallHelper.expandIncomingCallToFullScreen(getApplication())
+        _uiState.value = _uiState.value.copy(
+            incomingCallPopup = null,
+            activeCallState = ActiveCallState(
+                phoneNumber = popup.callerNumber,
+                contactName = popup.callerName,
+                isIncoming = true
+            )
+        )
+    }
+
+    /**
+     * Answers the call from the Incoming Call Popup and immediately opens the
+     * full-screen call screen (ActiveCallScreen) with the timer starting at 00:00.
+     */
     fun acceptCallPopup(popup: IncomingCallPopup) {
-        dismissCallPopup()
-        XenoInCallService.answerCall()
-        startActiveCall(popup.callerNumber, popup.callerName, isIncoming = false)
+        val connectedSession = OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+            context = getApplication(),
+            phoneNumber = popup.callerNumber,
+            contactName = popup.callerName
+        )
+        _uiState.value = _uiState.value.copy(
+            incomingCallPopup = null,
+            activeCallState = ActiveCallState(
+                phoneNumber = connectedSession.phoneNumber.ifBlank { popup.callerNumber },
+                contactName = connectedSession.contactName ?: popup.callerName,
+                isIncoming = true
+            )
+        )
     }
 
     fun declineCallPopup(popup: IncomingCallPopup) {
-        dismissCallPopup()
-        XenoInCallService.rejectCall()
+        OngoingCallHelper.declineIncomingCall(getApplication())
+        _uiState.value = _uiState.value.copy(
+            incomingCallPopup = null,
+            activeCallState = null
+        )
         val now = System.currentTimeMillis()
         val newEntry = CallLogEntry(
             id = now,
@@ -1300,13 +1478,17 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val number = callerNumber ?: "+1 (555) 014-4921"
         val name = callerName ?: "Alice Smith"
 
-        XenoNotificationHelper.showCallNotification(
+        val popup = OngoingCallHelper.handleIncomingCallEvent(
             context = getApplication(),
-            callerName = name,
-            callerNumber = number
+            phoneNumber = number,
+            contactName = name,
+            showPopup = true
         )
 
-        startActiveCall(phoneNumber = number, contactName = name, isIncoming = true)
+        _uiState.value = _uiState.value.copy(
+            incomingCallPopup = popup,
+            activeCallState = null
+        )
     }
 
     fun loadInstalledGames(context: android.content.Context) {

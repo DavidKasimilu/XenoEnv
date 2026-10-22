@@ -72,6 +72,7 @@ fun InAppNotificationOverlay(
     onAcceptCall: (IncomingCallPopup) -> Unit,
     onDeclineCall: (IncomingCallPopup) -> Unit,
     onDismissCall: () -> Unit,
+    onExpandCall: (IncomingCallPopup) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -93,6 +94,7 @@ fun InAppNotificationOverlay(
                     popup = call,
                     onAccept = { onAcceptCall(call) },
                     onDecline = { onDeclineCall(call) },
+                    onExpandFullScreen = { onExpandCall(call) },
                     onDismiss = onDismissCall
                 )
             }
@@ -305,6 +307,7 @@ fun InAppCallPopupCard(
     popup: IncomingCallPopup,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
+    onExpandFullScreen: () -> Unit = {},
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -320,22 +323,23 @@ fun InAppCallPopupCard(
     )
 
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
-        border = BorderStroke(1.5.dp, Color(0xFF2E7D32).copy(alpha = 0.4f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+        border = BorderStroke(1.5.dp, Color(0xFF2E7D32).copy(alpha = 0.45f)),
         modifier = modifier
             .fillMaxWidth()
+            .clickable { onExpandFullScreen() }
             .testTag("in_app_call_popup")
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp)
+                .padding(16.dp)
         ) {
-            // Header: Ringing Status + Close button
+            // Header: Ringing Status + Full-Screen / Dismiss actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -347,7 +351,7 @@ fun InAppCallPopupCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(30.dp)
                             .scale(pulseScale)
                             .clip(CircleShape)
                             .background(Color(0xFF2E7D32).copy(alpha = 0.18f)),
@@ -400,34 +404,48 @@ fun InAppCallPopupCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Body: Caller Name & Number
-            Column(modifier = Modifier.fillMaxWidth()) {
+            // Body: Caller Avatar, Name & Number (Tapping opens Full-Screen Call View)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onExpandFullScreen() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 val displayName = popup.callerName?.takeIf { it.isNotBlank() } ?: popup.callerNumber
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                ContactAvatar(
+                    nameOrNumber = displayName,
+                    size = 46.dp
                 )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
-                if (popup.callerName != null && popup.callerName != popup.callerNumber) {
-                    Text(
-                        text = popup.callerNumber,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(
-                        text = "Cellular voice call",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (popup.callerName != null && popup.callerName != popup.callerNumber) {
+                        Text(
+                            text = popup.callerNumber,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "Tap to expand • Answer opens full screen",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Action Buttons: Decline (Red) + Accept (Green)
+            // Action Buttons: Decline (Red) + Answer (Green, opens Full-Screen Call Screen)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -443,7 +461,7 @@ fun InAppCallPopupCard(
                     ),
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(48.dp)
                         .testTag("call_popup_decline_btn")
                 ) {
                     Icon(
@@ -459,7 +477,7 @@ fun InAppCallPopupCard(
                     )
                 }
 
-                // Accept Button (Green)
+                // Accept / Answer Button (Green) -> Answers call & launches Full-Screen Call Screen
                 Button(
                     onClick = onAccept,
                     shape = RoundedCornerShape(14.dp),
@@ -469,7 +487,7 @@ fun InAppCallPopupCard(
                     ),
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(48.dp)
                         .testTag("call_popup_accept_btn")
                 ) {
                     Icon(
@@ -479,7 +497,7 @@ fun InAppCallPopupCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Accept",
+                        text = "Answer",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )

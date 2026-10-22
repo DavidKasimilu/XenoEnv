@@ -29,11 +29,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.HeadsetMic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +80,7 @@ fun SpaceSandboxScreen(
     onDeleteClone: (String) -> Unit,
     onCloseFromDock: (String) -> Unit,
     onOpenMedia: () -> Unit = {},
+    onOpenDocs: () -> Unit = {},
     onBackToBrowser: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -153,6 +157,10 @@ fun SpaceSandboxScreen(
             MediaShortcutIconItem(
                 onClick = onOpenMedia
             )
+
+            DocsShortcutIconItem(
+                onClick = onOpenDocs
+            )
         }
 
         Spacer(modifier = Modifier.height(36.dp))
@@ -220,6 +228,59 @@ private fun MediaShortcutIconItem(
     }
 }
 
+@Composable
+private fun DocsShortcutIconItem(
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(96.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp)
+            .testTag("clone_space_docs_shortcut")
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(68.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF0EA5E9),
+                                Color(0xFF2563EB)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Description,
+                    contentDescription = "Docs",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Docs",
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CloneAppIconItem(
@@ -275,6 +336,14 @@ private fun CloneAppIconItem(
                 instance.targetUrl.contains("youtu.be", ignoreCase = true)
     }
 
+    val isDiscord = remember(instance) {
+        instance.packageName.contains("discord", ignoreCase = true) ||
+                instance.originalName.contains("discord", ignoreCase = true) ||
+                instance.displayName.contains("discord", ignoreCase = true) ||
+                instance.targetUrl.contains("discord.com", ignoreCase = true) ||
+                instance.targetUrl.contains("discord.gg", ignoreCase = true)
+    }
+
     val appIcon = remember(instance.packageName) {
         try {
             if (instance.packageName.isNotBlank()) {
@@ -293,7 +362,8 @@ private fun CloneAppIconItem(
         isGmail,
         isFacebook,
         isTiktok,
-        isYoutube
+        isYoutube,
+        isDiscord
     ) {
         when {
             isInstagram && instance.displayName == "Instagram (Clone 1)" -> "Instagram"
@@ -302,6 +372,7 @@ private fun CloneAppIconItem(
             isFacebook && instance.displayName.startsWith("Facebook", ignoreCase = true) -> "Facebook"
             isTiktok && instance.displayName.startsWith("TikTok", ignoreCase = true) -> "TikTok"
             isYoutube && instance.displayName.startsWith("YouTube", ignoreCase = true) -> "YouTube"
+            isDiscord && instance.displayName.startsWith("Discord", ignoreCase = true) -> "Discord"
             else -> instance.displayName.ifBlank { instance.originalName }
         }
     }
@@ -501,6 +572,29 @@ private fun CloneAppIconItem(
                                 modifier = Modifier.size(24.dp)
                             )
                         }
+                    }
+                } else if (isDiscord) {
+                    // Authentic Discord Blurple Icon
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF5865F2),
+                                        Color(0xFF4752C4)
+                                    )
+                                )
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.SportsEsports,
+                            contentDescription = "Discord",
+                            tint = Color.White,
+                            modifier = Modifier.size(34.dp)
+                        )
                     }
                 } else {
                     AppIconImage(

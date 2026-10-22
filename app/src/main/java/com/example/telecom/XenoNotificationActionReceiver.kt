@@ -16,7 +16,11 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
                 val callerNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
                 val callerName = intent.getStringExtra(EXTRA_NAME)
 
-                OngoingCallHelper.answerIncomingCall(context)
+                OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+                    context = context,
+                    phoneNumber = callerNumber,
+                    contactName = callerName
+                )
 
                 val appIntent = Intent(context, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP

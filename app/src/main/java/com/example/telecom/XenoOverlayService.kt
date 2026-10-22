@@ -56,18 +56,18 @@ object XenoOverlayService {
             numberTv?.text = "Incoming Call ($callerNumber)"
 
             btnDecline?.setOnClickListener {
-                XenoInCallService.rejectCall()
-                dismissCallOverlay(context)
-                XenoNotificationHelper.cancelCallNotification(context)
+                OngoingCallHelper.declineIncomingCall(context)
             }
 
             btnAnswer?.setOnClickListener {
-                XenoInCallService.answerCall()
-                dismissCallOverlay(context)
-                XenoNotificationHelper.cancelCallNotification(context)
+                OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
+                    context = context,
+                    phoneNumber = callerNumber,
+                    contactName = callerName
+                )
 
                 val intent = Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
                     putExtra("caller_name", callerName)
