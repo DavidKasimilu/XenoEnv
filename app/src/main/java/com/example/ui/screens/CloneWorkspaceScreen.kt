@@ -934,19 +934,27 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
 
 /**
  * Non-intrusive Facebook Feed, Watch & Reels Video and Smooth Scrolling Helper Engine:
- * Optimizes passive touch listeners, GPU layer promotion, inline video playback, pre-buffering,
- * automatic viewport play/pause, and suppresses intrusive "Open in App" overlays.
+ * Optimizes native touch scrolling, inline Watch/Reels video playback, pre-buffering,
+ * stall recovery, and suppresses intrusive "Open in App" banners without breaking
+ * Reels vertical swipes or Stories horizontal carousels.
  */
 private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Passive touch & wheel listener optimization for 60fps+ News Feed, Watch & Reels scrolling
-                if (!window.__xenoFbPassivePatched) {
-                    window.__xenoFbPassivePatched = true;
+                // 1. Environment & Page Visibility stabilization so Facebook Watch/Reels never throttle
+                if (!window.__xenoFbEnvPatched) {
+                    window.__xenoFbEnvPatched = true;
+                    try {
+                        Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    } catch(e) {}
+
+                    // Passive wheel optimization only — keep touchstart/touchmove native so Facebook Reels & Stories swipes work smoothly
                     var origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                        if (type === 'wheel' || type === 'mousewheel') {
                             var newOpts = options;
                             if (typeof options === 'boolean') {
                                 newOpts = { capture: options, passive: true };
@@ -961,23 +969,29 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                         }
                         return origAddEventListener.call(this, type, listener, options);
                     };
+
+                    // Unlock audio on first user tap
+                    window.__xenoFbAudioUnlocked = false;
+                    document.addEventListener('touchend', function() {
+                        window.__xenoFbAudioUnlocked = true;
+                    }, { passive: true });
                 }
 
-                // 2. Smooth Scroll, GPU Layer Promotion & Reels/Watch Snap CSS
+                // 2. Clean Smooth Scroll & Non-Destructive App-Banner Suppression CSS
                 var styleId = 'xeno-fb-video-smooth-style';
                 if (!document.getElementById(styleId) && document.head) {
                     var st = document.createElement('style');
                     st.id = styleId;
                     st.textContent =
-                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'html, body { -webkit-overflow-scrolling: touch !important; -webkit-tap-highlight-color: transparent !important; } ' +
                         'div[role="main"], div[role="feed"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
-                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; } ' +
-                        'a[href*="intent://"], a[href*="fb://"], div[data-sigil*="m-promo-jewel"], div[id*="smartbanner"] { display: none !important; } ' +
+                        'video { backface-visibility: hidden; -webkit-backface-visibility: hidden; } ' +
+                        'div[data-sigil*="m-promo-jewel"], div[id*="smartbanner"], div[data-sigil="m-app-upsell"] { display: none !important; } ' +
                         '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
                     document.head.appendChild(st);
                 }
 
-                // 3. Facebook Watch & Reels Inline Video Playback, Preload & Viewport Intersection Optimizer
+                // 3. Facebook Watch & Reels Inline Video Playback, Preload & Off-Screen Pause Optimizer
                 if (!window.__xenoFbVideoHelper) {
                     window.__xenoFbVideoHelper = {
                         userPausedMap: new WeakMap(),
@@ -990,16 +1004,8 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                             entries.forEach(function(entry) {
                                 var vid = entry.target;
                                 if (!vid || vid.tagName !== 'VIDEO') return;
-                                if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.65) {
                                     vid.preload = 'auto';
-                                    try {
-                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
-                                        var idx = allVids.indexOf(vid);
-                                        if (idx >= 0 && idx + 1 < allVids.length) {
-                                            allVids[idx + 1].preload = 'auto';
-                                        }
-                                    } catch(e) {}
-
                                     if (vid.paused && !window.__xenoFbVideoHelper.userPausedMap.get(vid)) {
                                         var playPromise = vid.play();
                                         if (playPromise && typeof playPromise.catch === 'function') {
@@ -1011,13 +1017,14 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                                             });
                                         }
                                     }
-                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.15) {
+                                } else if (!entry.isIntersecting && entry.intersectionRatio <= 0.05) {
+                                    // Only pause completely off-screen feed videos so active Reels/Watch transitions never stutter
                                     if (!vid.paused) {
                                         try { vid.pause(); } catch(e) {}
                                     }
                                 }
                             });
-                        }, { threshold: [0.0, 0.15, 0.6, 0.85] });
+                        }, { threshold: [0.0, 0.05, 0.65] });
                     }
                 }
 
@@ -1025,8 +1032,8 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                     var videos = document.querySelectorAll('video');
                     for (var i = 0; i < videos.length; i++) {
                         var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', '');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', '');
                         v.playsInline = true;
                         if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
                             v.preload = 'auto';
@@ -1038,7 +1045,7 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                                 var self = this;
                                 setTimeout(function() {
                                     window.__xenoFbVideoHelper.userPausedMap.set(self, self.paused);
-                                }, 80);
+                                }, 100);
                             }, { passive: true });
 
                             v.addEventListener('stalled', function() {
@@ -1053,6 +1060,21 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                             }
                         }
                     }
+
+                    // Convert any intent:// links with fallback URLs into direct web links so tapping Reels/videos stays in web player
+                    var intentLinks = document.querySelectorAll('a[href^="intent://"]');
+                    for (var j = 0; j < intentLinks.length; j++) {
+                        var href = intentLinks[j].getAttribute('href') || '';
+                        var match = href.match(/S\.browser_fallback_url=([^;]+)/);
+                        if (match && match[1]) {
+                            try {
+                                var decoded = decodeURIComponent(match[1]);
+                                if (decoded.indexOf('http') === 0 && decoded.indexOf('play.google.com') === -1) {
+                                    intentLinks[j].setAttribute('href', decoded);
+                                }
+                            } catch(e) {}
+                        }
+                    }
                 }
 
                 optimizeFacebookVideos();
@@ -1064,7 +1086,7 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
                             optimizeFacebookVideos();
-                        }, 180);
+                        }, 220);
                     });
                     window.__xenoFbMutationObserver.observe(document.body, {
                         childList: true,
@@ -1079,157 +1101,123 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
 
 /**
  * Non-intrusive TikTok Vertical Video Feed & Smooth Swipe Helper Engine:
- * Optimizes full-screen vertical video snap scrolling, passive touch responsiveness,
- * inline HD video playback, next-video pre-buffering, audio unlock, and suppresses
- * "Open in TikTok App" bottom-sheet interruptions.
+ * - Preserves TikTok's native non-passive touchmove Swiper gesture engine and inline CSS `transform: translate3d(...)`
+ *   so vertical video swiping works smoothly.
+ * - Spoofs standard Chrome Mobile environment (`navigator.webdriver = false`, `window.chrome`, Page Visibility)
+ *   so TikTok's `xgplayer` MSE video streams load and play without WebView restrictions.
+ * - Automatically dismisses "Open TikTok App" / "Not now" modal prompts via their close action rather than
+ *   hiding layout containers or leaving invisible modal backdrops.
  */
 private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Passive touch & wheel listener optimization for zero-latency vertical video swipes
-                if (!window.__xenoTtPassivePatched) {
-                    window.__xenoTtPassivePatched = true;
-                    var origAddEventListener = EventTarget.prototype.addEventListener;
-                    EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
-                            var newOpts = options;
-                            if (typeof options === 'boolean') {
-                                newOpts = { capture: options, passive: true };
-                            } else if (typeof options === 'object' && options !== null) {
-                                if (typeof options.passive === 'undefined') {
-                                    newOpts = Object.assign({}, options, { passive: true });
-                                }
-                            } else if (typeof options === 'undefined') {
-                                newOpts = { passive: true };
-                            }
-                            return origAddEventListener.call(this, type, listener, newOpts);
+                // 1. Browser Environment & Page Visibility Stabilization for TikTok xgplayer
+                if (!window.__xenoTtEnvPatched) {
+                    window.__xenoTtEnvPatched = true;
+                    try {
+                        Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                        if (!window.chrome) {
+                            window.chrome = { runtime: {} };
                         }
-                        return origAddEventListener.call(this, type, listener, options);
-                    };
+                    } catch(e) {}
 
-                    // Unlock video audio on first user touch interaction
+                    // Unlock TikTok video audio on first user touch/tap interaction
                     window.__xenoTtAudioUnlocked = false;
-                    document.addEventListener('touchstart', function() {
-                        if (!window.__xenoTtAudioUnlocked) {
-                            window.__xenoTtAudioUnlocked = true;
-                            var vids = document.querySelectorAll('video');
-                            for (var i = 0; i < vids.length; i++) {
-                                if (!vids[i].paused && vids[i].muted) {
-                                    vids[i].muted = false;
-                                }
+                    var unlockTikTokAudio = function() {
+                        window.__xenoTtAudioUnlocked = true;
+                        var vids = document.querySelectorAll('video');
+                        for (var i = 0; i < vids.length; i++) {
+                            var v = vids[i];
+                            if (v.muted) {
+                                v.muted = false;
+                                v.volume = 1.0;
+                            }
+                            if (v.paused && v.readyState >= 2 && !v.__xenoUserPaused) {
+                                v.play().catch(function(){});
                             }
                         }
-                    }, { passive: true });
+                        // Also click TikTok's unmute overlay button if visible
+                        try {
+                            var unmuteBtn = document.querySelector('[data-e2e*="video-sound"], [class*="DivVoiceControl"] button, [aria-label*="Unmute"]');
+                            if (unmuteBtn && (unmuteBtn.innerText || '').toLowerCase().indexOf('unmute') !== -1) {
+                                unmuteBtn.click();
+                            }
+                        } catch(e) {}
+                    };
+                    document.addEventListener('touchend', unlockTikTokAudio, { passive: true, once: true });
+                    document.addEventListener('click', unlockTikTokAudio, { passive: true, once: true });
                 }
 
-                // 2. Smooth Vertical Snap Scroll, GPU Video Promotion & App-Banner Suppression CSS
+                // 2. Non-destructive CSS: Never override `transform` on `video` or Swiper slides, and never hide broad `*OpenApp*` wrapper divs
                 var styleId = 'xeno-tt-video-smooth-style';
                 if (!document.getElementById(styleId) && document.head) {
                     var st = document.createElement('style');
                     st.id = styleId;
                     st.textContent =
-                        'html, body { background-color: #000 !important; -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: none !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
-                        'main, div[class*="Swiper"], div[class*="feed"], div[class*="VideoList"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; scroll-snap-stop: always !important; } ' +
-                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; object-fit: cover !important; } ' +
-                        'div[class*=" GuideModal"], div[class*="AppBanner"], div[class*="DownloadGuide"], div[class*="OpenApp"], div[data-e2e*="open-app"], div[data-e2e*="launch-app"] { display: none !important; pointer-events: none !important; } ' +
+                        'html, body { background-color: #000 !important; -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: none !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                        'video { backface-visibility: hidden; -webkit-backface-visibility: hidden; } ' +
+                        '[data-e2e="abb-banner"], [data-e2e="FloatingBar"], a[href^="intent://"], a[href^="snssdk"], a[href^="tiktok://"] { display: none !important; } ' +
                         '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
                     document.head.appendChild(st);
                 }
 
-                // 3. TikTok Video Preloader, Auto-Loop & Viewport Intersection Optimizer
-                if (!window.__xenoTtVideoHelper) {
-                    window.__xenoTtVideoHelper = {
-                        userPausedMap: new WeakMap(),
-                        observedVideos: new WeakSet(),
-                        observer: null
-                    };
-
-                    if ('IntersectionObserver' in window) {
-                        window.__xenoTtVideoHelper.observer = new IntersectionObserver(function(entries) {
-                            entries.forEach(function(entry) {
-                                var vid = entry.target;
-                                if (!vid || vid.tagName !== 'VIDEO') return;
-                                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
-                                    vid.preload = 'auto';
-                                    vid.loop = true;
-                                    // Pre-buffer the next 2 TikTok videos in the feed for instant swipe transitions
-                                    try {
-                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
-                                        var idx = allVids.indexOf(vid);
-                                        if (idx >= 0 && idx + 1 < allVids.length) {
-                                            allVids[idx + 1].preload = 'auto';
-                                        }
-                                        if (idx >= 0 && idx + 2 < allVids.length) {
-                                            allVids[idx + 2].preload = 'auto';
-                                        }
-                                    } catch(e) {}
-
-                                    if (vid.paused && !window.__xenoTtVideoHelper.userPausedMap.get(vid)) {
-                                        if (window.__xenoTtAudioUnlocked) {
-                                            vid.muted = false;
-                                        }
-                                        var playPromise = vid.play();
-                                        if (playPromise && typeof playPromise.catch === 'function') {
-                                            playPromise.catch(function() {
-                                                if (!vid.muted) {
-                                                    vid.muted = true;
-                                                    vid.play().catch(function(){});
-                                                }
-                                            });
-                                        }
-                                    }
-                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.2) {
-                                    // Pause off-screen TikTok videos immediately so audio never overlaps and scrolling stays 60fps
-                                    if (!vid.paused) {
-                                        try { vid.pause(); } catch(e) {}
-                                    }
-                                }
-                            });
-                        }, { threshold: [0.0, 0.2, 0.55, 0.85] });
-                    }
-                }
-
-                function optimizeTikTokVideos() {
+                // 3. Configure inline playback & gently dismiss "Open TikTok" / "Not now" prompts without fighting xgplayer's internal play/pause lifecycle
+                function optimizeTikTokExperience() {
                     var videos = document.querySelectorAll('video');
                     for (var i = 0; i < videos.length; i++) {
                         var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', '');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', '');
+                        if (!v.hasAttribute('x5-playsinline')) v.setAttribute('x5-playsinline', 'true');
                         v.playsInline = true;
                         v.loop = true;
-                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
-                            v.preload = 'auto';
-                        }
 
-                        if (!window.__xenoTtVideoHelper.observedVideos.has(v)) {
-                            window.__xenoTtVideoHelper.observedVideos.add(v);
+                        if (!v.__xenoTtObserved) {
+                            v.__xenoTtObserved = true;
                             v.addEventListener('click', function() {
                                 var self = this;
                                 if (self.muted) {
                                     self.muted = false;
-                                    window.__xenoTtAudioUnlocked = true;
+                                    self.volume = 1.0;
                                 }
                                 setTimeout(function() {
-                                    window.__xenoTtVideoHelper.userPausedMap.set(self, self.paused);
-                                }, 80);
+                                    self.__xenoUserPaused = self.paused;
+                                }, 120);
                             }, { passive: true });
 
-                            v.addEventListener('stalled', function() {
+                            v.addEventListener('loadeddata', function() {
                                 var self = this;
-                                if (!self.paused && self.readyState >= 2) {
-                                    self.play().catch(function(){});
+                                if (window.__xenoTtAudioUnlocked && self.muted) {
+                                    self.muted = false;
+                                }
+                                if (self.paused && !self.__xenoUserPaused) {
+                                    self.play().catch(function() {
+                                        self.muted = true;
+                                        self.play().catch(function(){});
+                                    });
                                 }
                             }, { passive: true });
+                        }
+                    }
 
-                            if (window.__xenoTtVideoHelper.observer) {
-                                window.__xenoTtVideoHelper.observer.observe(v);
-                            }
+                    // Safely click "Not now" / "Continue on web" buttons on TikTok's app-promotion bottom sheet so its backdrop closes cleanly
+                    var buttons = document.querySelectorAll('button, div[role="button"], p, span');
+                    for (var b = 0; b < buttons.length; b++) {
+                        var el = buttons[b];
+                        if (el.children && el.children.length > 1) continue;
+                        var txt = (el.textContent || '').trim().toLowerCase();
+                        if (txt === 'not now' || txt === 'continue on browser' || txt === 'continue on web' || txt === 'stay on web') {
+                            try {
+                                el.click();
+                            } catch(e) {}
                         }
                     }
                 }
 
-                optimizeTikTokVideos();
+                optimizeTikTokExperience();
 
                 if (!window.__xenoTtMutationObserver && window.MutationObserver && document.body) {
                     var throttleTimer = null;
@@ -1237,8 +1225,8 @@ private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
                         if (throttleTimer) return;
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
-                            optimizeTikTokVideos();
-                        }, 160);
+                            optimizeTikTokExperience();
+                        }, 250);
                     });
                     window.__xenoTtMutationObserver.observe(document.body, {
                         childList: true,
@@ -1252,174 +1240,168 @@ private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
 }
 
 /**
- * Non-intrusive YouTube & YouTube Shorts Video Playback and Smooth Swipe Helper Engine:
- * - Optimizes passive touch & wheel listeners for 60fps+ home feed scrolling and vertical Shorts swiping.
- * - Promotes YouTube HTML5 video player and Shorts containers to GPU hardware layers (`translateZ(0)`).
- * - Enforces smooth scroll-snap physics on YouTube Shorts (`scroll-snap-stop: always`), pre-buffers
- *   upcoming Shorts in the DOM, unlocks audio on touch, pauses off-screen decoders, and suppresses
- *   intrusive "Open in YouTube App" banners/modals.
+ * Non-intrusive YouTube & YouTube Shorts Video Playback and Smooth Scroll Helper Engine:
+ * - Forces passive `touchstart`, `touchmove`, and `wheel` listeners (even when YouTube's overlay
+ *   manager passes `{ passive: false }`) so YouTube can never block vertical page scrolling.
+ * - Continuously unlocks `html` and `body` (`overflow-y: auto !important; position: static !important;
+ *   height: auto !important; touch-action: pan-y !important;`) on the YouTube Home feed, Watch page,
+ *   and Search results so users can freely scroll down to see and load more videos.
+ * - Preserves inline `transform: translate3d(...)` on `#shorts-container` slides for smooth Shorts swiping.
  */
 private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Passive touch & wheel listener optimization for zero-latency YouTube Shorts swipes & feed scrolling
-                if (!window.__xenoYtPassivePatched) {
-                    window.__xenoYtPassivePatched = true;
+                // 1. Force passive touch & wheel listeners so YouTube's overlay/polymer handlers can NEVER call preventDefault() to block vertical scrolling
+                if (!window.__xenoYtEnvPatched) {
+                    window.__xenoYtEnvPatched = true;
+                    try {
+                        Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                        if (!window.chrome) {
+                            window.chrome = { runtime: {} };
+                        }
+                    } catch(e) {}
+
                     var origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
                         if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
-                            var newOpts = options;
+                            var newOpts = { passive: true, capture: false };
                             if (typeof options === 'boolean') {
                                 newOpts = { capture: options, passive: true };
                             } else if (typeof options === 'object' && options !== null) {
-                                if (typeof options.passive === 'undefined') {
-                                    newOpts = Object.assign({}, options, { passive: true });
-                                }
-                            } else if (typeof options === 'undefined') {
-                                newOpts = { passive: true };
+                                newOpts = Object.assign({}, options, { passive: true });
                             }
                             return origAddEventListener.call(this, type, listener, newOpts);
                         }
                         return origAddEventListener.call(this, type, listener, options);
                     };
 
-                    // Keep Page Visibility active so YouTube player never throttles or pauses mid-stream
-                    try {
-                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
-                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
-                    } catch(e) {}
-
-                    // Unlock YouTube Shorts audio on first user touch interaction
+                    // Unlock YouTube & Shorts audio on first user interaction
                     window.__xenoYtAudioUnlocked = false;
-                    document.addEventListener('touchstart', function() {
-                        if (!window.__xenoYtAudioUnlocked) {
-                            window.__xenoYtAudioUnlocked = true;
-                            var vids = document.querySelectorAll('video');
-                            for (var i = 0; i < vids.length; i++) {
-                                if (!vids[i].paused && vids[i].muted) {
-                                    vids[i].muted = false;
-                                }
+                    var unlockYtAudio = function() {
+                        window.__xenoYtAudioUnlocked = true;
+                        var vids = document.querySelectorAll('video');
+                        for (var i = 0; i < vids.length; i++) {
+                            var v = vids[i];
+                            if (!v.paused && v.muted) {
+                                v.muted = false;
+                                v.volume = 1.0;
                             }
                         }
-                    }, { passive: true });
+                        try {
+                            var unmuteBtn = document.querySelector('.ytp-unmute, button[aria-label*="Tap to unmute"], button[aria-label*="Unmute"]');
+                            if (unmuteBtn && unmuteBtn.offsetParent !== null) {
+                                unmuteBtn.click();
+                            }
+                        } catch(e) {}
+                    };
+                    document.addEventListener('touchend', unlockYtAudio, { passive: true, once: true });
+                    document.addEventListener('click', unlockYtAudio, { passive: true, once: true });
                 }
 
-                // 2. Smooth YouTube Feed & Shorts Scroll-Snap, GPU Video Layer Promotion & App-Banner Suppression CSS
+                // 2. Guaranteed Scrollable CSS for YouTube Home Feed, Watch Page & Search + Smooth Shorts
                 var styleId = 'xeno-yt-shorts-smooth-style';
                 if (!document.getElementById(styleId) && document.head) {
                     var st = document.createElement('style');
                     st.id = styleId;
                     st.textContent =
-                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
-                        'ytm-app, #app, ytm-browse, ytm-watch, ytm-shorts, #shorts-container, .reel-video-in-sequence, ytm-reel-shelf-renderer, div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
-                        '#shorts-container > *, .reel-video-in-sequence, ytm-reel-video-renderer, ytd-reel-video-renderer { scroll-snap-stop: always !important; scroll-snap-align: start !important; transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; will-change: transform !important; } ' +
-                        'video, .html5-video-player, #player-container-id, #movie_player { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; } ' +
-                        'ytm-mealbar-promo-renderer, ytm-app-banner, .upsell-dialog-renderer, ytm-statement-banner-renderer, ytm-ClarificationRenderer, a[href*="intent://"], a[href*="vnd.youtube"] { display: none !important; pointer-events: none !important; } ' +
-                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                        'html:not([data-xeno-shorts="true"]), body:not([data-xeno-shorts="true"]) { ' +
+                        '  overflow-y: auto !important; overflow-x: hidden !important; ' +
+                        '  position: static !important; height: auto !important; min-height: 100% !important; ' +
+                        '  touch-action: pan-y pinch-zoom !important; -webkit-overflow-scrolling: touch !important; ' +
+                        '  overscroll-behavior-y: auto !important; -webkit-tap-highlight-color: transparent !important; ' +
+                        '} ' +
+                        'ytm-app, #app, ytm-browse, ytm-watch, ytm-search, .page-container, ' +
+                        'ytm-single-column-browse-results-renderer, ytm-single-column-watch-next-results-renderer, ' +
+                        'ytm-rich-grid-renderer, ytm-section-list-renderer, ytm-item-section-renderer { ' +
+                        '  overflow-y: visible !important; touch-action: pan-y !important; -webkit-overflow-scrolling: touch !important; ' +
+                        '} ' +
+                        'ytm-shorts, #shorts-container, .reel-video-in-sequence { -webkit-overflow-scrolling: touch !important; } ' +
+                        'video { backface-visibility: hidden; -webkit-backface-visibility: hidden; } ' +
+                        'ytm-mealbar-promo-renderer, ytm-app-banner, .upsell-dialog-renderer, .mealbar-promo-renderer, ' +
+                        'ytm-statement-banner-renderer, ytm-promoted-sparkles-web-renderer, .upsell-dialog-backdrop { ' +
+                        '  display: none !important; pointer-events: none !important; ' +
+                        '}';
                     document.head.appendChild(st);
                 }
 
-                // 3. YouTube & Shorts Video Preloader, Inline Playback & Viewport Intersection Optimizer
-                if (!window.__xenoYtVideoHelper) {
-                    window.__xenoYtVideoHelper = {
-                        userPausedMap: new WeakMap(),
-                        observedVideos: new WeakSet(),
-                        observer: null
-                    };
-
-                    if ('IntersectionObserver' in window) {
-                        window.__xenoYtVideoHelper.observer = new IntersectionObserver(function(entries) {
-                            entries.forEach(function(entry) {
-                                var vid = entry.target;
-                                if (!vid || vid.tagName !== 'VIDEO') return;
-                                var isShortsPage = window.location.pathname.indexOf('/shorts') !== -1;
-
-                                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
-                                    vid.preload = 'auto';
-                                    if (isShortsPage) {
-                                        vid.loop = true;
-                                    }
-                                    // Pre-buffer upcoming Shorts / videos in the DOM for zero-lag vertical swiping
-                                    try {
-                                        var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
-                                        var idx = allVids.indexOf(vid);
-                                        if (idx >= 0 && idx + 1 < allVids.length) {
-                                            allVids[idx + 1].preload = 'auto';
-                                        }
-                                        if (idx >= 0 && idx + 2 < allVids.length) {
-                                            allVids[idx + 2].preload = 'auto';
-                                        }
-                                    } catch(e) {}
-
-                                    if (isShortsPage && vid.paused && !window.__xenoYtVideoHelper.userPausedMap.get(vid)) {
-                                        if (window.__xenoYtAudioUnlocked) {
-                                            vid.muted = false;
-                                        }
-                                        var playPromise = vid.play();
-                                        if (playPromise && typeof playPromise.catch === 'function') {
-                                            playPromise.catch(function() {
-                                                if (!vid.muted) {
-                                                    vid.muted = true;
-                                                    vid.play().catch(function(){});
-                                                }
-                                            });
-                                        }
-                                    }
-                                } else if (!entry.isIntersecting || entry.intersectionRatio < 0.2) {
-                                    // Pause off-screen Shorts so background decoders never cause scroll jank or audio overlap
-                                    if (isShortsPage && !vid.paused) {
-                                        try { vid.pause(); } catch(e) {}
-                                    }
-                                }
-                            });
-                        }, { threshold: [0.0, 0.2, 0.55, 0.85] });
-                    }
-                }
-
-                function optimizeYouTubeAndShortsVideos() {
+                // 3. Actively unlock body/html scroll locks, dismiss blocking modals/scrims, and configure inline video playback
+                function optimizeYouTubeAndShorts() {
                     var isShortsPage = window.location.pathname.indexOf('/shorts') !== -1;
+
+                    if (document.documentElement && document.body) {
+                        if (isShortsPage) {
+                            document.documentElement.setAttribute('data-xeno-shorts', 'true');
+                            document.body.setAttribute('data-xeno-shorts', 'true');
+                        } else {
+                            document.documentElement.removeAttribute('data-xeno-shorts');
+                            document.body.removeAttribute('data-xeno-shorts');
+
+                            // Force-clear any inline overflow:hidden or position:fixed scroll locks set by YouTube popups
+                            document.documentElement.style.setProperty('overflow-y', 'auto', 'important');
+                            document.documentElement.style.setProperty('position', 'static', 'important');
+                            document.documentElement.style.setProperty('height', 'auto', 'important');
+                            document.documentElement.style.setProperty('touch-action', 'pan-y', 'important');
+
+                            document.body.style.setProperty('overflow-y', 'auto', 'important');
+                            document.body.style.setProperty('position', 'static', 'important');
+                            document.body.style.setProperty('height', 'auto', 'important');
+                            document.body.style.setProperty('top', 'auto', 'important');
+                            document.body.style.setProperty('touch-action', 'pan-y', 'important');
+                            document.body.classList.remove('no-scroll', 'modal-open', 'lock-scroll');
+                            document.body.removeAttribute('scroll-locked');
+                        }
+                    }
+
+                    // Dismiss any "Open in YouTube App" / "Stay in browser" / consent prompts and clear orphaned scrims
+                    var dismissBtns = document.querySelectorAll(
+                        'ytm-mealbar-promo-renderer button[aria-label*="Dismiss"], ' +
+                        'ytm-mealbar-promo-renderer .mealbar-promo-renderer-dismiss-button, ' +
+                        '.upsell-dialog-dismiss-button button, ' +
+                        'button[aria-label="Close"], ' +
+                        'c3-overlay button'
+                    );
+                    for (var d = 0; d < dismissBtns.length; d++) {
+                        try { dismissBtns[d].click(); } catch(e) {}
+                    }
+
+                    // If an invisible c3-overlay or backdrop scrim is blocking touch scrolling without a visible dialog, disable its pointer-events
+                    var overlays = document.querySelectorAll('c3-overlay, .c3-overlay, tp-yt-iron-overlay-backdrop');
+                    for (var k = 0; k < overlays.length; k++) {
+                        var ov = overlays[k];
+                        var parentDialog = ov.closest('ytm-mealbar-promo-renderer, .upsell-dialog-renderer');
+                        if (parentDialog || !document.querySelector('dialog[open]')) {
+                            ov.style.setProperty('display', 'none', 'important');
+                            ov.style.setProperty('pointer-events', 'none', 'important');
+                        }
+                    }
+
                     var videos = document.querySelectorAll('video');
                     for (var i = 0; i < videos.length; i++) {
                         var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', '');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', '');
                         v.playsInline = true;
-                        if (isShortsPage) {
-                            v.loop = true;
-                        }
-                        if (!v.preload || v.preload === 'none' || v.preload === 'metadata') {
+                        if (!v.preload || v.preload === 'none') {
                             v.preload = 'auto';
                         }
 
-                        if (!window.__xenoYtVideoHelper.observedVideos.has(v)) {
-                            window.__xenoYtVideoHelper.observedVideos.add(v);
-                            v.addEventListener('click', function() {
+                        if (!v.__xenoYtObserved) {
+                            v.__xenoYtObserved = true;
+                            v.addEventListener('loadedmetadata', function() {
                                 var self = this;
-                                if (self.muted) {
+                                self.playsInline = true;
+                                if (window.__xenoYtAudioUnlocked && self.muted) {
                                     self.muted = false;
-                                    window.__xenoYtAudioUnlocked = true;
-                                }
-                                setTimeout(function() {
-                                    window.__xenoYtVideoHelper.userPausedMap.set(self, self.paused);
-                                }, 80);
-                            }, { passive: true });
-
-                            v.addEventListener('stalled', function() {
-                                var self = this;
-                                if (!self.paused && self.readyState >= 2) {
-                                    self.play().catch(function(){});
                                 }
                             }, { passive: true });
-
-                            if (window.__xenoYtVideoHelper.observer) {
-                                window.__xenoYtVideoHelper.observer.observe(v);
-                            }
                         }
                     }
                 }
 
-                optimizeYouTubeAndShortsVideos();
+                optimizeYouTubeAndShorts();
 
                 if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
                     var throttleTimer = null;
@@ -1427,12 +1409,14 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         if (throttleTimer) return;
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
-                            optimizeYouTubeAndShortsVideos();
-                        }, 160);
+                            optimizeYouTubeAndShorts();
+                        }, 180);
                     });
                     window.__xenoYtMutationObserver.observe(document.body, {
                         childList: true,
-                        subtree: true
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['style', 'class']
                     });
                 }
             } catch(e) {}
@@ -1978,18 +1962,32 @@ fun CloneWorkspaceScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth Reels, TikTok, Facebook Watch, YouTube Shorts & video calls
+                                // Use software layer if emulator GPU crashed, otherwise hardware layer for smooth scrolling & video playback
                                 if (useSoftwareLayer || (isWhatsapp && !isVideoCallActive)) {
                                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                 } else {
                                     setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 }
-                                isVerticalScrollBarEnabled = !isShortVideoSocialApp
+                                isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
                                 isHorizontalScrollBarEnabled = !isShortVideoSocialApp
-                                if (isShortVideoSocialApp) {
+                                if (isInstagram || isTiktok) {
                                     overScrollMode = View.OVER_SCROLL_NEVER
+                                } else {
+                                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                                 }
                                 isNestedScrollingEnabled = true
+                                isFocusable = true
+                                isFocusableInTouchMode = true
+                                if (isYoutube || isTiktok || isFacebook) {
+                                    setOnTouchListener { v, event ->
+                                        if (event.action == android.view.MotionEvent.ACTION_DOWN ||
+                                            event.action == android.view.MotionEvent.ACTION_MOVE
+                                        ) {
+                                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                                        }
+                                        false
+                                    }
+                                }
                                 setBackgroundColor(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
@@ -2118,8 +2116,10 @@ fun CloneWorkspaceScreen(
                                         isLoading = true
                                         injectSocialAppHelpers(view, url)
                                         url?.let {
-                                            currentUrl = it
-                                            onUrlChanged(it)
+                                            if (it.startsWith("http://") || it.startsWith("https://")) {
+                                                currentUrl = it
+                                                onUrlChanged(it)
+                                            }
                                         }
                                         canGoBack = view?.canGoBack() == true
                                     }
@@ -2136,8 +2136,10 @@ fun CloneWorkspaceScreen(
                                             CookieManager.getInstance().flush()
                                         } catch (_: Exception) {}
                                         url?.let {
-                                            currentUrl = it
-                                            onUrlChanged(it)
+                                            if (it.startsWith("http://") || it.startsWith("https://")) {
+                                                currentUrl = it
+                                                onUrlChanged(it)
+                                            }
                                         }
                                         currentTitle = view?.title ?: instance.displayName
                                         canGoBack = view?.canGoBack() == true
@@ -2147,8 +2149,10 @@ fun CloneWorkspaceScreen(
                                         super.doUpdateVisitedHistory(view, url, isReload)
                                         injectSocialAppHelpers(view, url)
                                         url?.let {
-                                            currentUrl = it
-                                            onUrlChanged(it)
+                                            if (it.startsWith("http://") || it.startsWith("https://")) {
+                                                currentUrl = it
+                                                onUrlChanged(it)
+                                            }
                                         }
                                         canGoBack = view?.canGoBack() == true
                                     }
@@ -2170,6 +2174,21 @@ fun CloneWorkspaceScreen(
                                                 return true
                                             }
                                         }
+                                        // Convert vnd.youtube:// links into mobile web YouTube URLs
+                                        if (lowerUrl.startsWith("vnd.youtube:") || lowerUrl.startsWith("youtube://")) {
+                                            val cleaned = url.substringAfter("://").substringAfter(":")
+                                            if (cleaned.isNotBlank()) {
+                                                val webYtUrl = when {
+                                                    cleaned.startsWith("http://") || cleaned.startsWith("https://") -> cleaned
+                                                    cleaned.contains("youtube.com") || cleaned.contains("youtu.be") -> "https://${cleaned.trimStart('/')}"
+                                                    else -> "https://m.youtube.com/watch?v=${cleaned.trimStart('/')}"
+                                                }
+                                                if (webYtUrl != view?.url) {
+                                                    view?.loadUrl(webYtUrl)
+                                                }
+                                            }
+                                            return true
+                                        }
                                         // Prevent Facebook, TikTok, Instagram & YouTube from kicking the user out to Play Store or external app prompts
                                         if (isFacebook || isTiktok || isInstagram || isYoutube) {
                                             if (lowerUrl.contains("play.google.com/store/apps") ||
@@ -2178,9 +2197,7 @@ fun CloneWorkspaceScreen(
                                                 lowerUrl.startsWith("fbmessenger://") ||
                                                 lowerUrl.startsWith("tiktok://") ||
                                                 lowerUrl.startsWith("snssdk") ||
-                                                lowerUrl.startsWith("musical://") ||
-                                                lowerUrl.startsWith("vnd.youtube:") ||
-                                                lowerUrl.startsWith("youtube://")
+                                                lowerUrl.startsWith("musical://")
                                             ) {
                                                 return true
                                             }
@@ -2189,11 +2206,25 @@ fun CloneWorkspaceScreen(
                                             try {
                                                 val parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
                                                 val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
-                                                if (!fallbackUrl.isNullOrBlank() &&
-                                                    (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://")) &&
-                                                    !fallbackUrl.contains("play.google.com/store/apps", ignoreCase = true)
+                                                val candidateUrl = if (!fallbackUrl.isNullOrBlank()) {
+                                                    fallbackUrl
+                                                } else {
+                                                    // Extract embedded https:// URL from intent://<host>/<path>#Intent;scheme=https;...
+                                                    val dataStr = parsed.dataString
+                                                    if (!dataStr.isNullOrBlank() && (dataStr.startsWith("http://") || dataStr.startsWith("https://"))) {
+                                                        dataStr
+                                                    } else if (url.contains("scheme=https", ignoreCase = true) || url.contains("scheme=http", ignoreCase = true)) {
+                                                        val hostAndPath = url.removePrefix("intent://").substringBefore("#Intent")
+                                                        if (hostAndPath.isNotBlank()) "https://$hostAndPath" else null
+                                                    } else null
+                                                }
+                                                if (!candidateUrl.isNullOrBlank() &&
+                                                    (candidateUrl.startsWith("http://") || candidateUrl.startsWith("https://")) &&
+                                                    !candidateUrl.contains("play.google.com/store/apps", ignoreCase = true) &&
+                                                    !candidateUrl.contains("tiktok.com/download", ignoreCase = true) &&
+                                                    candidateUrl != view?.url
                                                 ) {
-                                                    view?.loadUrl(fallbackUrl)
+                                                    view?.loadUrl(candidateUrl)
                                                 }
                                             } catch (_: Exception) {}
                                             return true
@@ -2308,10 +2339,24 @@ fun CloneWorkspaceScreen(
                                     }
                                 }
 
-                                val startUrl = if (isWhatsapp) {
-                                    "https://web.whatsapp.com/"
-                                } else {
-                                    instance.lastUrl
+                                val startUrl = when {
+                                    isWhatsapp -> "https://web.whatsapp.com/"
+                                    isYoutube -> if (instance.lastUrl.startsWith("http") && (instance.lastUrl.contains("youtube.com", ignoreCase = true) || instance.lastUrl.contains("youtu.be", ignoreCase = true))) {
+                                        instance.lastUrl
+                                    } else {
+                                        "https://m.youtube.com/"
+                                    }
+                                    isTiktok -> if (instance.lastUrl.startsWith("http") && instance.lastUrl.contains("tiktok.com", ignoreCase = true) && !instance.lastUrl.contains("/download", ignoreCase = true)) {
+                                        instance.lastUrl
+                                    } else {
+                                        "https://www.tiktok.com/"
+                                    }
+                                    isFacebook -> if (instance.lastUrl.startsWith("http") && instance.lastUrl.contains("facebook.com", ignoreCase = true)) {
+                                        instance.lastUrl
+                                    } else {
+                                        "https://m.facebook.com/"
+                                    }
+                                    else -> instance.lastUrl.ifBlank { instance.targetUrl }
                                 }
                                 val extraHeaders = if (isWhatsapp) {
                                     WHATSAPP_WEB_HEADERS
