@@ -258,6 +258,7 @@ object XenoNotificationHelper {
             putExtra("open_tab", "CALLS")
             putExtra("incoming_number", callerNumber)
             putExtra("caller_name", resolvedName)
+            putExtra("open_full_screen_call", true)
         }
 
         val pendingIntent = PendingIntent.getActivity(

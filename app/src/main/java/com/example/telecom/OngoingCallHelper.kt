@@ -1,14 +1,18 @@
 package com.example.telecom
 
+import android.app.KeyguardManager
 import android.content.Context
+import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.os.PowerManager
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.TelecomManager
 import android.util.Log
+import com.example.MainActivity
 import com.example.data.models.IncomingCallPopup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +66,8 @@ data class OngoingCallSession(
  * 2. Incoming call popup banner (reactive popup state synchronized with system notification & overlay),
  * 3. Full-screen call screen transition when answered (accurate call duration counting starting at 00:00
  *    and hardware audio routing for speakerphone, microphone mute, hold, and DTMF).
+ * 4. Screen wake-up & full-screen incoming call launch when the device screen is turned off, locked,
+ *    or when the user is on the home screen / outside the app.
  */
 object OngoingCallHelper {
 
@@ -69,6 +75,9 @@ object OngoingCallHelper {
 
     private val helperScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var timerJob: Job? = null
+
+    @Volatile
+    private var incomingCallWakeLock: PowerManager.WakeLock? = null
 
     private val _sessionFlow = MutableStateFlow(OngoingCallSession())
     val sessionFlow: StateFlow<OngoingCallSession> = _sessionFlow.asStateFlow()
@@ -81,6 +90,86 @@ object OngoingCallHelper {
 
     @Volatile
     private var lastIncomingTriggerTimestamp: Long = 0L
+
+    /**
+     * Checks whether the device screen is turned off, locked on the keyguard, or the user is
+     * currently at the home screen / outside the app rather than actively inside MainActivity.
+     */
+    fun isScreenOffOrAppInBackground(context: Context): Boolean {
+        return try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val isScreenOff = powerManager?.isInteractive == false
+            val isDeviceLocked = keyguardManager?.isKeyguardLocked == true
+            val isNotInApp = !MainActivity.isAppInForeground
+            isScreenOff || isDeviceLocked || isNotInApp
+        } catch (_: Exception) {
+            !MainActivity.isAppInForeground
+        }
+    }
+
+    /**
+     * Wakes up the device display hardware when an incoming call arrives while the screen is off.
+     */
+    @Suppress("DEPRECATION")
+    fun wakeDeviceScreenForIncomingCall(context: Context) {
+        try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            releaseIncomingWakeLock()
+            val wakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+                "Xeno:IncomingCallWakeLock"
+            ).apply {
+                setReferenceCounted(false)
+            }
+            wakeLock.acquire(60_000L)
+            incomingCallWakeLock = wakeLock
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire incoming call wake lock: ${e.message}")
+        }
+    }
+
+    fun releaseIncomingWakeLock() {
+        try {
+            incomingCallWakeLock?.let { wl ->
+                if (wl.isHeld) {
+                    wl.release()
+                }
+            }
+        } catch (_: Exception) {}
+        incomingCallWakeLock = null
+    }
+
+    /**
+     * Wakes the screen and launches MainActivity directly into the full-screen incoming call screen
+     * (`ActiveCallScreen`) so the user can pickup (Answer) or hangup (Decline) when the phone screen
+     * was off, locked, or at the home screen.
+     */
+    fun launchFullScreenIncomingCallActivity(
+        context: Context,
+        phoneNumber: String,
+        contactName: String?
+    ) {
+        wakeDeviceScreenForIncomingCall(context)
+        try {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                putExtra("open_tab", "CALLS")
+                putExtra("incoming_number", phoneNumber)
+                putExtra("caller_name", contactName)
+                putExtra("wake_full_screen_call", true)
+                putExtra("incoming_call_ts", System.currentTimeMillis())
+            }
+            context.startActivity(launchIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not launch full-screen incoming call activity: ${e.message}")
+        }
+    }
 
     fun formatCallDuration(seconds: Long): String {
         val safeSeconds = seconds.coerceAtLeast(0L)
@@ -128,8 +217,8 @@ object OngoingCallHelper {
 
     /**
      * Helper function to handle an incoming call, initialize the ringing session,
-     * trigger the in-app Incoming Call Popup (and system heads-up notification),
-     * and prepare for transitioning to the full-screen call screen upon answer.
+     * trigger the in-app Incoming Call Popup (when actively inside the app) OR wake the screen
+     * and open the full-screen Incoming Call Screen (when the screen is off, locked, or on the home screen).
      */
     fun handleIncomingCallEvent(
         context: Context,
@@ -141,10 +230,12 @@ object OngoingCallHelper {
         val resolvedName = contactName?.takeIf { it.isNotBlank() }
             ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
 
+        val wakeForFullScreen = !showPopup || isScreenOffOrAppInBackground(context)
+
         startIncomingSession(
             phoneNumber = cleanNumber,
             contactName = resolvedName,
-            openFullScreenImmediately = !showPopup
+            openFullScreenImmediately = wakeForFullScreen
         )
 
         val popup = IncomingCallPopup(
@@ -152,7 +243,7 @@ object OngoingCallHelper {
             callerNumber = cleanNumber
         )
 
-        if (showPopup) {
+        if (!wakeForFullScreen) {
             _incomingPopupFlow.value = popup
         } else {
             _incomingPopupFlow.value = null
@@ -163,6 +254,14 @@ object OngoingCallHelper {
             callerName = resolvedName,
             callerNumber = cleanNumber
         )
+
+        if (wakeForFullScreen) {
+            launchFullScreenIncomingCallActivity(
+                context = context,
+                phoneNumber = cleanNumber,
+                contactName = resolvedName
+            )
+        }
 
         return popup
     }
@@ -367,6 +466,7 @@ object OngoingCallHelper {
             }
 
             Call.STATE_DISCONNECTED, Call.STATE_DISCONNECTING -> {
+                releaseIncomingWakeLock()
                 _incomingPopupFlow.value = null
                 val finalDuration = getCurrentDurationSeconds()
                 stopDurationTimer()
@@ -457,6 +557,7 @@ object OngoingCallHelper {
     }
 
     fun declineIncomingCall(context: Context) {
+        releaseIncomingWakeLock()
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
@@ -472,6 +573,7 @@ object OngoingCallHelper {
         } else {
             0L
         }
+        releaseIncomingWakeLock()
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)

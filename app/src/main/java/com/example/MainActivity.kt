@@ -66,46 +66,84 @@ import com.example.ui.viewmodel.XenoViewModel
 
 class MainActivity : ComponentActivity() {
 
-    private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
+    companion object {
+        @Volatile
+        var isAppInForeground: Boolean = false
+    }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
+    private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
+    private val intentTriggerCounter = androidx.compose.runtime.mutableIntStateOf(0)
+
+    private fun applyLockScreenAndWakeFlags() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            }
             @Suppress("DEPRECATION")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
-        }
+        } catch (_: Exception) {}
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        applyLockScreenAndWakeFlags()
         enableEdgeToEdge()
         currentIntentState.value = intent
+        intentTriggerCounter.intValue++
 
         setContent {
             MyApplicationTheme {
                 val viewModel: XenoViewModel = viewModel()
                 val activeIntent by currentIntentState
+                val triggerTick by intentTriggerCounter
                 XenoApp(
                     viewModel = viewModel,
-                    initialIntent = activeIntent
+                    initialIntent = activeIntent,
+                    intentTriggerTick = triggerTick
                 )
             }
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        isAppInForeground = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isAppInForeground = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        isAppInForeground = false
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (!intent.getStringExtra("incoming_number").isNullOrBlank() ||
+            intent.getBooleanExtra("wake_full_screen_call", false)
+        ) {
+            applyLockScreenAndWakeFlags()
+        }
         setIntent(intent)
         currentIntentState.value = intent
+        intentTriggerCounter.intValue++
     }
 }
 
 @Composable
 fun XenoApp(
     viewModel: XenoViewModel,
-    initialIntent: Intent?
+    initialIntent: Intent?,
+    intentTriggerTick: Int = 0
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -210,7 +248,7 @@ fun XenoApp(
     }
 
     // Handle intents (e.g. incoming call notification, SMS reply notification, tel: or smsto:)
-    LaunchedEffect(initialIntent) {
+    LaunchedEffect(initialIntent, intentTriggerTick) {
         initialIntent?.let { intent ->
             val incomingNumber = intent.getStringExtra("incoming_number")
             if (!incomingNumber.isNullOrBlank()) {
@@ -218,6 +256,7 @@ fun XenoApp(
                 val autoAnswer = intent.getBooleanExtra("auto_answer", false)
                 intent.removeExtra("incoming_number")
                 intent.removeExtra("auto_answer")
+                intent.removeExtra("wake_full_screen_call")
                 if (autoAnswer) {
                     viewModel.answerIncomingCallFromIntent(incomingNumber, callerName)
                 } else {
