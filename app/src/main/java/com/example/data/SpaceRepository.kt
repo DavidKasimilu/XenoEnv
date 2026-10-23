@@ -20,7 +20,6 @@ class SpaceRepository(private val context: Context) {
                 pkg.contains("whatsapp") || name.contains("whatsapp") -> "https://web.whatsapp.com/"
                 pkg.contains("telegram") || name.contains("telegram") -> "https://web.telegram.org/"
                 pkg.contains("twitter") || name.contains("twitter") || pkg.contains(".x.") || name == "x" -> "https://x.com/"
-                pkg.contains("tiktok") || name.contains("tiktok") -> "https://www.tiktok.com/"
                 pkg.contains("facebook") || name.contains("facebook") -> "https://m.facebook.com/"
                 pkg.contains("discord") || name.contains("discord") -> "https://discord.com/app"
                 pkg.contains("reddit") || name.contains("reddit") -> "https://www.reddit.com/"
@@ -108,20 +107,6 @@ class SpaceRepository(private val context: Context) {
                     isDesktopMode = false
                 ),
                 ClonedAppInstance(
-                    instanceId = "clone_tiktok_1",
-                    packageName = "com.zhiliaoapp.musically",
-                    templateId = "com.zhiliaoapp.musically",
-                    displayName = "TikTok",
-                    originalName = "TikTok",
-                    targetUrl = "https://www.tiktok.com/",
-                    badgeTag = "Clone",
-                    badgeColorHex = "#FE2C55",
-                    createdAt = now,
-                    lastActiveTime = now,
-                    lastUrl = "https://www.tiktok.com/",
-                    isDesktopMode = false
-                ),
-                ClonedAppInstance(
                     instanceId = "clone_youtube_1",
                     packageName = "com.google.android.youtube",
                     templateId = "com.google.android.youtube",
@@ -190,7 +175,22 @@ class SpaceRepository(private val context: Context) {
                 val rawTarget = obj.optString("targetUrl", "")
                 val rawLast = obj.optString("lastUrl", "")
 
-                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, TikTok, YouTube, Discord or any other app
+                val isTiktok = pkg.contains("tiktok", ignoreCase = true) ||
+                        pkg.contains("musically", ignoreCase = true) ||
+                        origName.contains("tiktok", ignoreCase = true) ||
+                        dispName.contains("tiktok", ignoreCase = true) ||
+                        rawTarget.contains("tiktok.com", ignoreCase = true)
+                val isTermux = pkg.contains("termux", ignoreCase = true) ||
+                        origName.contains("termux", ignoreCase = true) ||
+                        dispName.contains("termux", ignoreCase = true) ||
+                        rawTarget.startsWith("termux://", ignoreCase = true)
+
+                if (isTiktok || isTermux) {
+                    needsResave = true
+                    continue
+                }
+
+                // Auto-repair missing or blank URL for Instagram, WhatsApp, Gmail, Facebook, YouTube, Discord or any other app
                 val isWa = pkg.contains("whatsapp", ignoreCase = true) ||
                         origName.contains("whatsapp", ignoreCase = true) ||
                         dispName.contains("whatsapp", ignoreCase = true) ||
@@ -204,11 +204,6 @@ class SpaceRepository(private val context: Context) {
                         origName.contains("facebook", ignoreCase = true) ||
                         dispName.contains("facebook", ignoreCase = true) ||
                         rawTarget.contains("facebook.com", ignoreCase = true)
-                val isTiktok = pkg.contains("tiktok", ignoreCase = true) ||
-                        pkg.contains("musically", ignoreCase = true) ||
-                        origName.contains("tiktok", ignoreCase = true) ||
-                        dispName.contains("tiktok", ignoreCase = true) ||
-                        rawTarget.contains("tiktok.com", ignoreCase = true)
                 val isYoutube = pkg.contains("youtube", ignoreCase = true) ||
                         origName.contains("youtube", ignoreCase = true) ||
                         dispName.contains("youtube", ignoreCase = true) ||
@@ -224,7 +219,6 @@ class SpaceRepository(private val context: Context) {
                     isWa -> "https://web.whatsapp.com/"
                     isGmail -> "https://mail.google.com/"
                     isFacebook -> "https://m.facebook.com/"
-                    isTiktok -> "https://www.tiktok.com/"
                     isYoutube -> "https://m.youtube.com/"
                     isDiscord -> "https://discord.com/app"
                     rawTarget.isNotBlank() && !rawTarget.equals("about:blank", ignoreCase = true) -> rawTarget
@@ -243,9 +237,6 @@ class SpaceRepository(private val context: Context) {
                 } else if (isFacebook && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
                     needsResave = true
                     "https://m.facebook.com/"
-                } else if (isTiktok && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
-                    needsResave = true
-                    "https://www.tiktok.com/"
                 } else if (isYoutube && (rawLast.isBlank() || rawLast.equals("about:blank", ignoreCase = true))) {
                     needsResave = true
                     "https://m.youtube.com/"
@@ -288,7 +279,6 @@ class SpaceRepository(private val context: Context) {
                             isWa -> "#25D366"
                             isGmail -> "#EA4335"
                             isFacebook -> "#1877F2"
-                            isTiktok -> "#FE2C55"
                             isYoutube -> "#FF0000"
                             isDiscord -> "#5865F2"
                             else -> "#E1306C"
@@ -346,7 +336,7 @@ class SpaceRepository(private val context: Context) {
             prefs.edit().putBoolean("gmail_default_clone_added_v1", true).apply()
         }
 
-        // Ensure Facebook and TikTok default clones are added once for existing users
+        // Ensure Facebook default clone is added once for existing users
         if (!prefs.getBoolean("fb_tiktok_default_clones_added_v1", false)) {
             val now = System.currentTimeMillis()
             val hasFacebook = list.any {
@@ -369,33 +359,6 @@ class SpaceRepository(private val context: Context) {
                         createdAt = now,
                         lastActiveTime = now,
                         lastUrl = "https://m.facebook.com/",
-                        isDesktopMode = false
-                    )
-                )
-                needsResave = true
-            }
-
-            val hasTiktok = list.any {
-                it.packageName.contains("tiktok", ignoreCase = true) ||
-                        it.packageName.contains("musically", ignoreCase = true) ||
-                        it.originalName.contains("tiktok", ignoreCase = true) ||
-                        it.displayName.contains("tiktok", ignoreCase = true) ||
-                        it.targetUrl.contains("tiktok.com", ignoreCase = true)
-            }
-            if (!hasTiktok) {
-                list.add(
-                    ClonedAppInstance(
-                        instanceId = "clone_tiktok_1",
-                        packageName = "com.zhiliaoapp.musically",
-                        templateId = "com.zhiliaoapp.musically",
-                        displayName = "TikTok",
-                        originalName = "TikTok",
-                        targetUrl = "https://www.tiktok.com/",
-                        badgeTag = "Clone",
-                        badgeColorHex = "#FE2C55",
-                        createdAt = now,
-                        lastActiveTime = now,
-                        lastUrl = "https://www.tiktok.com/",
                         isDesktopMode = false
                     )
                 )
@@ -505,6 +468,7 @@ class SpaceRepository(private val context: Context) {
     ): ClonedAppInstance {
         val resolvedUrl = resolveAppUrl(packageName, appName)
         val isWa = packageName.contains("whatsapp", ignoreCase = true) || appName.contains("whatsapp", ignoreCase = true)
+        val isTermux = packageName.contains("termux", ignoreCase = true) || appName.contains("termux", ignoreCase = true)
         val newClone = ClonedAppInstance(
             instanceId = "clone_${UUID.randomUUID().toString().take(8)}",
             packageName = packageName,
@@ -512,8 +476,20 @@ class SpaceRepository(private val context: Context) {
             displayName = displayName.ifBlank { appName },
             originalName = appName,
             targetUrl = resolvedUrl,
-            badgeTag = badgeTag.ifBlank { if (isWa) "Web" else "Clone" },
-            badgeColorHex = badgeColorHex.ifBlank { if (isWa) "#25D366" else "#E1306C" },
+            badgeTag = badgeTag.ifBlank {
+                when {
+                    isWa -> "Web"
+                    isTermux -> "Shell"
+                    else -> "Clone"
+                }
+            },
+            badgeColorHex = badgeColorHex.ifBlank {
+                when {
+                    isWa -> "#25D366"
+                    isTermux -> "#10B981"
+                    else -> "#E1306C"
+                }
+            },
             createdAt = System.currentTimeMillis(),
             lastActiveTime = System.currentTimeMillis(),
             lastUrl = resolvedUrl,

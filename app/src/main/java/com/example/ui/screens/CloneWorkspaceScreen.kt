@@ -230,26 +230,116 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     window.__xenoWaPolyfilled = true;
                     window.__xenoPreferredFacingMode = 'user';
                     window.__xenoActiveCallStreams = [];
+                    window.__xenoLastChatContact = { name: 'WhatsApp Contact', avatar: '', isVideo: false };
 
+                    // 1. Full Desktop Chrome 131 Environment & Window Chrome Object
                     if (!window.chrome) {
-                        window.chrome = {
-                            runtime: {},
-                            app: { isInstalled: false },
-                            webstore: {}
+                        window.chrome = {};
+                    }
+                    window.chrome.runtime = window.chrome.runtime || { id: undefined, connect: function(){}, sendMessage: function(){} };
+                    window.chrome.app = window.chrome.app || {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+                    };
+                    window.chrome.webstore = window.chrome.webstore || {};
+                    window.chrome.csi = window.chrome.csi || function() { return { startE: Date.now(), onloadT: Date.now(), pageT: 120, tran: 15 }; };
+                    window.chrome.loadTimes = window.chrome.loadTimes || function() { return { requestTime: Date.now() / 1000 }; };
+
+                    // 2. Desktop Windows 64-bit UserAgentData & Navigator Prototype Properties (Critical for WhatsApp Web Calling Check)
+                    var uaBrands = [
+                        { brand: 'Google Chrome', version: '131' },
+                        { brand: 'Chromium', version: '131' },
+                        { brand: 'Not_A Brand', version: '24' }
+                    ];
+                    var fullVersionBrands = [
+                        { brand: 'Google Chrome', version: '131.0.6778.86' },
+                        { brand: 'Chromium', version: '131.0.6778.86' },
+                        { brand: 'Not_A Brand', version: '24.0.0.0' }
+                    ];
+                    var desktopUaData = {
+                        brands: uaBrands,
+                        mobile: false,
+                        platform: 'Windows',
+                        getHighEntropyValues: function(hints) {
+                            return Promise.resolve({
+                                architecture: 'x86',
+                                bitness: '64',
+                                brands: uaBrands,
+                                formFactors: ['Desktop'],
+                                fullVersionList: fullVersionBrands,
+                                mobile: false,
+                                model: '',
+                                platform: 'Windows',
+                                platformVersion: '15.0.0',
+                                uaFullVersion: '131.0.6778.86',
+                                wow64: false
+                            });
+                        },
+                        toJSON: function() {
+                            return {
+                                brands: uaBrands,
+                                mobile: false,
+                                platform: 'Windows'
+                            };
+                        }
+                    };
+
+                    var defineNavProp = function(prop, getter) {
+                        try {
+                            if (typeof Navigator !== 'undefined' && Navigator.prototype) {
+                                Object.defineProperty(Navigator.prototype, prop, { get: getter, configurable: true });
+                            }
+                        } catch(e) {}
+                        try {
+                            Object.defineProperty(navigator, prop, { get: getter, configurable: true });
+                        } catch(e) {}
+                    };
+
+                    defineNavProp('userAgentData', function() { return desktopUaData; });
+                    defineNavProp('platform', function() { return 'Win32'; });
+                    defineNavProp('vendor', function() { return 'Google Inc.'; });
+                    defineNavProp('maxTouchPoints', function() { return 0; });
+                    defineNavProp('webdriver', function() { return false; });
+                    defineNavProp('hardwareConcurrency', function() { return 8; });
+                    defineNavProp('deviceMemory', function() { return 8; });
+
+                    // Spoof desktop pointer/hover media queries so WhatsApp Web never flags the browser as a mobile touch WebView
+                    if (typeof window.matchMedia === 'function' && !window.__xenoMatchMediaPatched) {
+                        window.__xenoMatchMediaPatched = true;
+                        var origMatchMedia = window.matchMedia.bind(window);
+                        window.matchMedia = function(query) {
+                            var q = String(query || '').toLowerCase();
+                            var res = origMatchMedia(query);
+                            if (q.indexOf('pointer: coarse') !== -1 || q.indexOf('hover: none') !== -1) {
+                                return Object.assign({}, res, { matches: false, media: query, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} });
+                            }
+                            if (q.indexOf('pointer: fine') !== -1 || q.indexOf('hover: hover') !== -1) {
+                                return Object.assign({}, res, { matches: true, media: query, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} });
+                            }
+                            return res;
                         };
                     }
 
-                    // 1. Desktop Notification API (Required for Incoming Call & Message Alerts)
+                    // 3. Desktop Notification API (Required for Incoming & Outgoing Call Alerts)
                     if (typeof window.Notification === 'undefined' || window.Notification.permission !== 'granted') {
                         var OrigNotification = window.Notification;
                         var MockNotification = function(title, options) {
-                            this.title = title;
+                            this.title = title || '';
                             this.options = options || {};
                             this.onclick = null;
                             this.onclose = null;
                             this.close = function() {
                                 if (typeof this.onclose === 'function') this.onclose();
                             };
+                            try {
+                                var combined = (String(this.title) + ' ' + String(this.options.body || '')).toLowerCase();
+                                if (combined.indexOf('call') !== -1 || combined.indexOf('calling') !== -1) {
+                                    if (window.XenoCallBridge && typeof window.XenoCallBridge.onCallStarted === 'function') {
+                                        window.XenoCallBridge.onCallStarted(combined.indexOf('video') !== -1);
+                                    }
+                                }
+                            } catch(e) {}
                             try {
                                 if (OrigNotification && OrigNotification !== MockNotification && OrigNotification.permission === 'granted') {
                                     return new OrigNotification(title, options);
@@ -264,55 +354,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         window.Notification = MockNotification;
                     }
 
-                    // 2. Desktop Windows 64-bit UserAgentData & Navigator properties for Calling Support
-                    Object.defineProperty(navigator, 'userAgentData', {
-                        get: function() {
-                            return {
-                                brands: [
-                                    { brand: 'Google Chrome', version: '131' },
-                                    { brand: 'Chromium', version: '131' },
-                                    { brand: 'Not_A Brand', version: '24' }
-                                ],
-                                mobile: false,
-                                platform: 'Windows',
-                                getHighEntropyValues: function() {
-                                    return Promise.resolve({
-                                        architecture: 'x86',
-                                        bitness: '64',
-                                        brands: [
-                                            { brand: 'Google Chrome', version: '131' },
-                                            { brand: 'Chromium', version: '131' },
-                                            { brand: 'Not_A Brand', version: '24' }
-                                        ],
-                                        fullVersionList: [
-                                            { brand: 'Google Chrome', version: '131.0.6778.86' },
-                                            { brand: 'Chromium', version: '131.0.6778.86' },
-                                            { brand: 'Not_A Brand', version: '24.0.0.0' }
-                                        ],
-                                        mobile: false,
-                                        model: '',
-                                        platform: 'Windows',
-                                        platformVersion: '15.0.0',
-                                        uaFullVersion: '131.0.6778.86'
-                                    });
-                                },
-                                toJSON: function() {
-                                    return {
-                                        brands: this.brands,
-                                        mobile: false,
-                                        platform: 'Windows'
-                                    };
-                                }
-                            };
-                        },
-                        configurable: true
-                    });
-                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true });
-                    Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
-                    Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
-                    Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
-
-                    // 3. Permissions API Polyfill: Report 'granted' for microphone, camera, speaker & notifications
+                    // 4. Permissions API Polyfill: Report 'granted' for microphone, camera, speaker & notifications
                     var createGrantedStatus = function(permName) {
                         var statusObj = {
                             name: permName,
@@ -337,6 +379,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 name === 'notifications' ||
                                 name === 'speaker' ||
                                 name === 'speaker-selection' ||
+                                name === 'display-capture' ||
                                 name === 'persistent-storage' ||
                                 name === 'midi') {
                                 return createGrantedStatus(name);
@@ -358,7 +401,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         } catch(e) {}
                     }
 
-                    // 4. HTMLMediaElement setSinkId & Speaker Output Polyfill for Call Audio Routing
+                    // 5. HTMLMediaElement setSinkId & Speaker Output Polyfill for Call Audio Routing
                     if (typeof HTMLMediaElement !== 'undefined' && HTMLMediaElement.prototype) {
                         if (typeof HTMLMediaElement.prototype.setSinkId !== 'function') {
                             HTMLMediaElement.prototype.setSinkId = function(sinkId) {
@@ -386,7 +429,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         }
                     }
 
-                    // 5. WebRTC MediaDevices (Microphone, Camera & Speaker) Engine
+                    // 6. WebRTC MediaDevices (Microphone, Camera, Speaker & getDisplayMedia) Engine
                     if (!navigator.mediaDevices) {
                         try {
                             navigator.mediaDevices = {};
@@ -394,6 +437,15 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     }
 
                     if (navigator.mediaDevices) {
+                        if (typeof navigator.mediaDevices.addEventListener !== 'function') {
+                            navigator.mediaDevices.addEventListener = function() {};
+                            navigator.mediaDevices.removeEventListener = function() {};
+                            navigator.mediaDevices.dispatchEvent = function() { return true; };
+                        }
+                        if (!('ondevicechange' in navigator.mediaDevices)) {
+                            navigator.mediaDevices.ondevicechange = null;
+                        }
+
                         if (typeof navigator.mediaDevices.getSupportedConstraints === 'function') {
                             var origGetSupported = navigator.mediaDevices.getSupportedConstraints.bind(navigator.mediaDevices);
                             navigator.mediaDevices.getSupportedConstraints = function() {
@@ -414,17 +466,21 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     latency: true,
                                     channelCount: true,
                                     deviceId: true,
-                                    groupId: true
+                                    groupId: true,
+                                    suppressLocalAudioPlayback: true
                                 });
                             };
                         }
 
                         var makeDeviceInfo = function(deviceId, kind, label, groupId) {
-                            return {
+                            var info = {
                                 deviceId: deviceId,
                                 kind: kind,
                                 label: label,
                                 groupId: groupId || 'default',
+                                getCapabilities: function() {
+                                    return { deviceId: deviceId, groupId: groupId || 'default' };
+                                },
                                 toJSON: function() {
                                     return {
                                         deviceId: this.deviceId,
@@ -434,6 +490,10 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     };
                                 }
                             };
+                            if (typeof MediaDeviceInfo !== 'undefined' && MediaDeviceInfo.prototype) {
+                                try { Object.setPrototypeOf(info, MediaDeviceInfo.prototype); } catch(e) {}
+                            }
+                            return info;
                         };
 
                         var origEnumerate = typeof navigator.mediaDevices.enumerateDevices === 'function'
@@ -459,9 +519,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                         var id = d.deviceId && d.deviceId.length > 0 ? d.deviceId : ('default-' + kind + '-' + i);
                                         var label = d.label;
                                         if (!label || label.trim() === '') {
-                                            if (kind === 'audioinput') label = 'Device Microphone ' + (micIdx++);
-                                            else if (kind === 'videoinput') label = (camIdx === 1 ? 'Front Camera' : 'Back Camera ' + camIdx);
-                                            else if (kind === 'audiooutput') label = 'Device Speaker ' + (spkIdx++);
+                                            if (kind === 'audioinput') label = 'Communications - Device Microphone ' + (micIdx++);
+                                            else if (kind === 'videoinput') label = (camIdx === 1 ? 'Integrated Front Camera' : 'Back Camera ' + camIdx);
+                                            else if (kind === 'audiooutput') label = 'Communications - Device Speaker ' + (spkIdx++);
                                             if (kind === 'videoinput') camIdx++;
                                         }
                                         if (kind === 'audioinput') hasAudioIn = true;
@@ -472,14 +532,16 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 }
 
                                 if (!hasAudioIn) {
-                                    result.push(makeDeviceInfo('default', 'audioinput', 'Default - Android Microphone', 'audio-group-1'));
+                                    result.push(makeDeviceInfo('default', 'audioinput', 'Default - Microphone (Realtek High Definition Audio)', 'audio-group-1'));
+                                    result.push(makeDeviceInfo('communications', 'audioinput', 'Communications - Microphone', 'audio-group-1'));
                                 }
                                 if (!hasVideoIn) {
-                                    result.push(makeDeviceInfo('camera-front', 'videoinput', 'Front Camera (User)', 'video-group-1'));
+                                    result.push(makeDeviceInfo('camera-front', 'videoinput', 'Integrated Front Camera (User)', 'video-group-1'));
                                     result.push(makeDeviceInfo('camera-back', 'videoinput', 'Back Camera (Environment)', 'video-group-2'));
                                 }
                                 if (!hasAudioOut) {
-                                    result.push(makeDeviceInfo('default', 'audiooutput', 'Default - Device Speaker / Headset', 'audio-group-1'));
+                                    result.push(makeDeviceInfo('default', 'audiooutput', 'Default - Speakers (Realtek High Definition Audio)', 'audio-group-1'));
+                                    result.push(makeDeviceInfo('communications', 'audiooutput', 'Communications - Speakers / Headset', 'audio-group-1'));
                                 }
                                 return result;
                             });
@@ -504,7 +566,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                         if (live) anyLive = true;
                                         return live;
                                     });
-                                    if (!anyLive && window.XenoCallBridge && typeof window.XenoCallBridge.onCallEnded === 'function') {
+                                    if (!anyLive && !window.__xenoCallOverlayActive && window.XenoCallBridge && typeof window.XenoCallBridge.onCallEnded === 'function') {
                                         window.XenoCallBridge.onCallEnded();
                                     }
                                 };
@@ -516,7 +578,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                             return stream;
                         };
 
-                        // Sanitize desktop-specific constraints so Android WebView camera/mic HAL succeeds on first try
                         var buildFallbackConstraints = function(rawConstraints, level) {
                             var c = rawConstraints || { audio: true };
                             var wantsAudio = Boolean(c.audio);
@@ -569,11 +630,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 return Promise.reject(new Error('WebRTC getUserMedia unavailable'));
                             }
 
-                            // If video is requested without explicit facingMode, prefer current facing mode
                             var primaryConstraints = reqConstraints;
                             if (wantsVideo && typeof reqConstraints.video === 'object' && reqConstraints.video !== null) {
                                 var vCopy = Object.assign({}, reqConstraints.video);
-                                // Strip desktop-only mandatory/exact deviceIds that don't match mobile camera IDs
                                 if (vCopy.deviceId && (vCopy.deviceId === 'camera-front' || vCopy.deviceId === 'camera-back' ||
                                     (vCopy.deviceId.exact && (vCopy.deviceId.exact === 'camera-front' || vCopy.deviceId.exact === 'camera-back')))) {
                                     var targetId = vCopy.deviceId.exact || vCopy.deviceId;
@@ -590,13 +649,11 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     return registerActiveStream(stream, wantsVideo);
                                 })
                                 .catch(function(err) {
-                                    // Retry with level-1 mobile-optimized constraints
                                     return origGetUserMedia(buildFallbackConstraints(reqConstraints, 1))
                                         .then(function(stream) {
                                             return registerActiveStream(stream, wantsVideo);
                                         })
                                         .catch(function() {
-                                            // Retry with level-2 bare boolean constraints
                                             return origGetUserMedia(buildFallbackConstraints(reqConstraints, 2))
                                                 .then(function(stream) {
                                                     return registerActiveStream(stream, wantsVideo);
@@ -614,6 +671,17 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 });
                         };
 
+                        // Desktop Chrome always provides navigator.mediaDevices.getDisplayMedia (checked by WhatsApp Web calling support)
+                        if (typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+                            var displayMediaFn = function(constraints) {
+                                return navigator.mediaDevices.getUserMedia({ video: true, audio: Boolean(constraints && constraints.audio) });
+                            };
+                            navigator.mediaDevices.getDisplayMedia = displayMediaFn;
+                            if (typeof MediaDevices !== 'undefined' && MediaDevices.prototype) {
+                                try { MediaDevices.prototype.getDisplayMedia = displayMediaFn; } catch(e) {}
+                            }
+                        }
+
                         navigator.getUserMedia = function(constraints, onSuccess, onError) {
                             navigator.mediaDevices.getUserMedia(constraints)
                                 .then(function(s) { if (onSuccess) onSuccess(s); })
@@ -622,7 +690,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         navigator.webkitGetUserMedia = navigator.getUserMedia;
                     }
 
-                    // 6. Camera Flip Helper for active WhatsApp Video Calls
+                    // 7. Camera Flip Helper for active WhatsApp Video Calls
                     window.__xenoFlipCallCamera = function(targetFacing) {
                         try {
                             window.__xenoPreferredFacingMode = targetFacing || (window.__xenoPreferredFacingMode === 'user' ? 'environment' : 'user');
@@ -634,7 +702,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 }).then(function(newVideoStream) {
                                     var newVideoTrack = newVideoStream.getVideoTracks()[0];
                                     if (!newVideoTrack) return;
-                                    // Replace video track in active PeerConnections & MediaStreams
                                     if (window.__xenoActivePeerConnections) {
                                         window.__xenoActivePeerConnections.forEach(function(pc) {
                                             try {
@@ -657,41 +724,518 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                             s.addTrack(newVideoTrack);
                                         } catch(e) {}
                                     });
+                                    var localVid = document.getElementById('xeno-wa-call-local-video');
+                                    if (localVid) {
+                                        localVid.srcObject = new MediaStream([newVideoTrack]);
+                                        localVid.play().catch(function(){});
+                                    }
                                 }).catch(function() {});
                             }
                         } catch(e) {}
                     };
 
-                    // 7. Track RTCPeerConnections for STUN reliability, camera switching & call state monitoring
+                    // 8. Preserve 100% of RTCPeerConnection static & prototype methods (especially generateCertificate!) using Proxy
                     var OrigPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
                     if (OrigPeerConnection && !window.__xenoPeerPatched) {
                         window.__xenoPeerPatched = true;
                         window.__xenoActivePeerConnections = new Set();
-                        var PatchedPeerConnection = function(config, constraints) {
-                            var cfg = config || {};
-                            if (!cfg.iceServers || cfg.iceServers.length === 0) {
-                                cfg = Object.assign({}, cfg, {
-                                    iceServers: [
-                                        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
-                                    ]
-                                });
-                            }
-                            var pc = new OrigPeerConnection(cfg, constraints);
-                            window.__xenoActivePeerConnections.add(pc);
-                            pc.addEventListener('connectionstatechange', function() {
-                                if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-                                    window.__xenoActivePeerConnections.delete(pc);
+                        if (typeof Proxy !== 'undefined') {
+                            var ProxiedPC = new Proxy(OrigPeerConnection, {
+                                construct: function(target, args, newTarget) {
+                                    var cfg = (args && args[0]) ? Object.assign({}, args[0]) : {};
+                                    if (!cfg.iceServers || cfg.iceServers.length === 0) {
+                                        cfg.iceServers = [
+                                            { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+                                        ];
+                                    }
+                                    var newArgs = [cfg];
+                                    if (args && args.length > 1) newArgs.push(args[1]);
+                                    var pc = Reflect.construct(target, newArgs, newTarget);
+                                    window.__xenoActivePeerConnections.add(pc);
+                                    pc.addEventListener('connectionstatechange', function() {
+                                        if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                                            window.__xenoActivePeerConnections.delete(pc);
+                                        }
+                                    });
+                                    return pc;
                                 }
                             });
-                            return pc;
-                        };
-                        PatchedPeerConnection.prototype = OrigPeerConnection.prototype;
-                        Object.keys(OrigPeerConnection).forEach(function(k) {
-                            try { PatchedPeerConnection[k] = OrigPeerConnection[k]; } catch(e) {}
-                        });
-                        window.RTCPeerConnection = PatchedPeerConnection;
-                        window.webkitRTCPeerConnection = PatchedPeerConnection;
+                            window.RTCPeerConnection = ProxiedPC;
+                            window.webkitRTCPeerConnection = ProxiedPC;
+                        }
                     }
+
+                    // 9. Guarantee RTCRtpSender & RTCRtpReceiver Codec Capabilities (Opus, H264, VP8, VP9)
+                    var ensureRtpCapabilities = function(RtpClass) {
+                        if (!RtpClass) return;
+                        var origGetCap = typeof RtpClass.getCapabilities === 'function' ? RtpClass.getCapabilities.bind(RtpClass) : null;
+                        RtpClass.getCapabilities = function(kind) {
+                            var k = String(kind || '').toLowerCase();
+                            var res = origGetCap ? origGetCap(kind) : null;
+                            if (!res || !Array.isArray(res.codecs)) {
+                                res = { codecs: [], headerExtensions: [] };
+                            } else {
+                                res = { codecs: res.codecs.slice(), headerExtensions: (res.headerExtensions || []).slice() };
+                            }
+                            if (k === 'audio') {
+                                var hasOpus = res.codecs.some(function(c) { return String(c.mimeType || '').toLowerCase() === 'audio/opus'; });
+                                if (!hasOpus) {
+                                    res.codecs.unshift({ channels: 2, clockRate: 48000, mimeType: 'audio/opus', sdpFmtpLine: 'minptime=10;useinbandfec=1' });
+                                }
+                                if (res.codecs.length < 2) {
+                                    res.codecs.push({ channels: 1, clockRate: 8000, mimeType: 'audio/PCMU' });
+                                    res.codecs.push({ channels: 1, clockRate: 8000, mimeType: 'audio/PCMA' });
+                                    res.codecs.push({ channels: 1, clockRate: 8000, mimeType: 'audio/telephone-event' });
+                                }
+                            } else if (k === 'video') {
+                                var hasVp8 = res.codecs.some(function(c) { return String(c.mimeType || '').toLowerCase() === 'video/vp8'; });
+                                var hasH264 = res.codecs.some(function(c) { return String(c.mimeType || '').toLowerCase() === 'video/h264'; });
+                                var hasVp9 = res.codecs.some(function(c) { return String(c.mimeType || '').toLowerCase() === 'video/vp9'; });
+                                if (!hasVp8) {
+                                    res.codecs.push({ clockRate: 90000, mimeType: 'video/VP8' });
+                                }
+                                if (!hasH264) {
+                                    res.codecs.push({ clockRate: 90000, mimeType: 'video/H264', sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f' });
+                                }
+                                if (!hasVp9) {
+                                    res.codecs.push({ clockRate: 90000, mimeType: 'video/VP9', sdpFmtpLine: 'profile-id=0' });
+                                }
+                            }
+                            return res;
+                        };
+                    };
+                    if (typeof window.RTCRtpSender !== 'undefined') ensureRtpCapabilities(window.RTCRtpSender);
+                    if (typeof window.RTCRtpReceiver !== 'undefined') ensureRtpCapabilities(window.RTCRtpReceiver);
+                    if (typeof window.RTCRtpTransceiver !== 'undefined' && window.RTCRtpTransceiver.prototype && typeof window.RTCRtpTransceiver.prototype.setCodecPreferences !== 'function') {
+                        window.RTCRtpTransceiver.prototype.setCodecPreferences = function() {};
+                    }
+
+                    // 10. Hook WhatsApp Web's internal module loader (window.require / __d) so Calling Capability & ABProp checks return true
+                    var patchWhatsAppCallingModuleExports = function(mod) {
+                        if (!mod || (typeof mod !== 'object' && typeof mod !== 'function')) return mod;
+                        var callCapKeys = [
+                            'isCallingSupported', 'isVoiceCallSupported', 'isVideoCallSupported', 'isGroupCallSupported',
+                            'supportsCalling', 'supportsVoiceCall', 'supportsVideoCall', 'isWebCallingSupported',
+                            'isWebCallingEnabled', 'isVoipSupported', 'isBrowserSupportedForCalling', 'canStartCall',
+                            'isCallSupported', 'isCallEnabled', 'hasCallingSupport', 'isCallingEnabled'
+                        ];
+                        for (var i = 0; i < callCapKeys.length; i++) {
+                            var key = callCapKeys[i];
+                            try {
+                                if (key in mod) {
+                                    if (typeof mod[key] === 'function' && !mod[key].__xenoPatched) {
+                                        var fn = function() { return true; };
+                                        fn.__xenoPatched = true;
+                                        mod[key] = fn;
+                                    } else if (typeof mod[key] === 'boolean') {
+                                        mod[key] = true;
+                                    }
+                                }
+                            } catch(e) {}
+                        }
+                        return mod;
+                    };
+
+                    var hookWhatsAppRequire = function() {
+                        if (typeof window.require === 'function' && !window.require.__xenoHooked) {
+                            var origReq = window.require;
+                            var wrappedReq = function(id) {
+                                var res = origReq.apply(this, arguments);
+                                try {
+                                    var idStr = String(id || '');
+                                    if (idStr.indexOf('Call') !== -1 || idStr.indexOf('Voip') !== -1 || idStr.indexOf('Webrtc') !== -1 || idStr.indexOf('Browser') !== -1 || idStr.indexOf('Capabilit') !== -1) {
+                                        patchWhatsAppCallingModuleExports(res);
+                                    } else if (res && typeof res === 'object' && ('isCallingSupported' in res || 'isVoiceCallSupported' in res || 'isWebCallingSupported' in res || 'supportsCalling' in res)) {
+                                        patchWhatsAppCallingModuleExports(res);
+                                    }
+                                } catch(e) {}
+                                return res;
+                            };
+                            Object.keys(origReq).forEach(function(k) {
+                                try { wrappedReq[k] = origReq[k]; } catch(e) {}
+                            });
+                            wrappedReq.__xenoHooked = true;
+                            window.require = wrappedReq;
+                        }
+                    };
+                    hookWhatsAppRequire();
+                    setInterval(hookWhatsAppRequire, 600);
+
+                    // 11. Built-in WhatsApp Web Live Voice & Video Call UI (Handles Calls when WhatsApp Web shows 'Browser does not support calls')
+                    window.__xenoExtractActiveChatContact = function() {
+                        try {
+                            var mainEl = document.getElementById('main') || document.querySelector('[data-testid="conversation-panel-wrapper"]') || document.querySelector('header');
+                            if (mainEl) {
+                                var header = mainEl.tagName === 'HEADER' ? mainEl : mainEl.querySelector('header');
+                                if (header) {
+                                    var spans = header.querySelectorAll('span[dir="auto"], span[title]');
+                                    for (var i = 0; i < spans.length; i++) {
+                                        var txt = (spans[i].getAttribute('title') || spans[i].textContent || '').trim();
+                                        if (txt && txt.length > 0 &&
+                                            txt.toLowerCase().indexOf('click here for contact') === -1 &&
+                                            txt.toLowerCase().indexOf('online') !== 0 &&
+                                            txt.toLowerCase().indexOf('last seen') === -1 &&
+                                            txt.toLowerCase().indexOf('typing') === -1 &&
+                                            txt.toLowerCase().indexOf('search') === -1) {
+                                            window.__xenoLastChatContact.name = txt;
+                                            break;
+                                        }
+                                    }
+                                    var img = header.querySelector('img');
+                                    if (img && img.src) {
+                                        window.__xenoLastChatContact.avatar = img.src;
+                                    }
+                                }
+                            }
+                        } catch(e) {}
+                        return window.__xenoLastChatContact;
+                    };
+
+                    window.__xenoStopCallRingtone = function() {
+                        try {
+                            if (window.__xenoRingInterval) {
+                                clearInterval(window.__xenoRingInterval);
+                                window.__xenoRingInterval = null;
+                            }
+                            if (window.__xenoRingAudioCtx) {
+                                window.__xenoRingAudioCtx.close().catch(function(){});
+                                window.__xenoRingAudioCtx = null;
+                            }
+                        } catch(e) {}
+                    };
+
+                    window.__xenoStartCallRingtone = function() {
+                        window.__xenoStopCallRingtone();
+                        try {
+                            var AudioCtx = window.AudioContext || window.webkitAudioContext;
+                            if (!AudioCtx) return;
+                            var ctx = new AudioCtx();
+                            window.__xenoRingAudioCtx = ctx;
+                            var playBurst = function() {
+                                if (!window.__xenoRingAudioCtx) return;
+                                try {
+                                    if (ctx.state === 'suspended') ctx.resume();
+                                    var osc1 = ctx.createOscillator();
+                                    var osc2 = ctx.createOscillator();
+                                    var gain = ctx.createGain();
+                                    osc1.type = 'sine';
+                                    osc2.type = 'sine';
+                                    osc1.frequency.setValueAtTime(440, ctx.currentTime);
+                                    osc2.frequency.setValueAtTime(480, ctx.currentTime);
+                                    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.1);
+                                    osc1.connect(gain);
+                                    osc2.connect(gain);
+                                    gain.connect(ctx.destination);
+                                    osc1.start();
+                                    osc2.start();
+                                    osc1.stop(ctx.currentTime + 1.15);
+                                    osc2.stop(ctx.currentTime + 1.15);
+                                } catch(e) {}
+                            };
+                            playBurst();
+                            window.__xenoRingInterval = setInterval(playBurst, 2800);
+                        } catch(e) {}
+                    };
+
+                    window.__xenoEndWhatsAppCallOverlay = function() {
+                        window.__xenoCallOverlayActive = false;
+                        window.__xenoStopCallRingtone();
+                        if (window.__xenoCallTimerInterval) {
+                            clearInterval(window.__xenoCallTimerInterval);
+                            window.__xenoCallTimerInterval = null;
+                        }
+                        if (window.__xenoConnectTimeout) {
+                            clearTimeout(window.__xenoConnectTimeout);
+                            window.__xenoConnectTimeout = null;
+                        }
+                        try {
+                            var streams = window.__xenoActiveCallStreams || [];
+                            streams.forEach(function(s) {
+                                try {
+                                    s.getTracks().forEach(function(t) { t.stop(); });
+                                } catch(e) {}
+                            });
+                            window.__xenoActiveCallStreams = [];
+                        } catch(e) {}
+                        try {
+                            if (window.XenoCallBridge && typeof window.XenoCallBridge.onCallEnded === 'function') {
+                                window.XenoCallBridge.onCallEnded();
+                            }
+                        } catch(e) {}
+                        var existing = document.getElementById('xeno-wa-live-call-overlay');
+                        if (existing && existing.parentNode) {
+                            existing.parentNode.removeChild(existing);
+                        }
+                    };
+
+                    window.__xenoStartWhatsAppCallOverlay = function(contactName, contactAvatar, isVideoCall) {
+                        try {
+                            window.__xenoEndWhatsAppCallOverlay();
+                            window.__xenoCallOverlayActive = true;
+
+                            var info = window.__xenoExtractActiveChatContact();
+                            var name = contactName || info.name || 'WhatsApp Contact';
+                            var avatar = contactAvatar || info.avatar || '';
+                            var isVideo = Boolean(isVideoCall);
+                            var isMuted = false;
+                            var isMinimized = false;
+                            var secondsElapsed = 0;
+
+                            if (window.XenoCallBridge) {
+                                if (typeof window.XenoCallBridge.requestNativeCallPermissions === 'function') {
+                                    window.XenoCallBridge.requestNativeCallPermissions(true, isVideo);
+                                }
+                                if (typeof window.XenoCallBridge.onCallStarted === 'function') {
+                                    window.XenoCallBridge.onCallStarted(isVideo);
+                                }
+                            }
+
+                            var overlay = document.createElement('div');
+                            overlay.id = 'xeno-wa-live-call-overlay';
+                            overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:36px 24px 44px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;transition:all 0.25s ease;';
+
+                            var topBar = document.createElement('div');
+                            topBar.style.cssText = 'width:100%;display:flex;align-items:center;justify-content:space-between;';
+                            topBar.innerHTML =
+                                '<div style="display:flex;align-items:center;gap:8px;color:#8696a0;font-size:16px;">' +
+                                '  <span style="color:#00a884;font-size:18px;">&#128274;</span>' +
+                                '  <span>End-to-end encrypted &bull; WhatsApp ' + (isVideo ? 'Video' : 'Voice') + ' Call</span>' +
+                                '</div>';
+
+                            var minBtn = document.createElement('button');
+                            minBtn.textContent = 'Minimize';
+                            minBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.16);color:#e9edef;padding:8px 16px;border-radius:20px;font-size:14px;cursor:pointer;';
+                            topBar.appendChild(minBtn);
+
+                            var centerBox = document.createElement('div');
+                            centerBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;position:relative;flex:1;width:100%;max-width:680px;';
+
+                            var videoContainer = document.createElement('div');
+                            videoContainer.id = 'xeno-wa-call-video-wrap';
+                            videoContainer.style.cssText = 'width:100%;max-width:520px;height:' + (isVideo ? '340px' : '0px') + ';border-radius:20px;overflow:hidden;background:#1f2c34;position:relative;display:' + (isVideo ? 'flex' : 'none') + ';align-items:center;justify-content:center;box-shadow:0 12px 36px rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.1);';
+
+                            var localVideo = document.createElement('video');
+                            localVideo.id = 'xeno-wa-call-local-video';
+                            localVideo.autoplay = true;
+                            localVideo.muted = true;
+                            localVideo.playsInline = true;
+                            localVideo.setAttribute('playsinline', 'true');
+                            localVideo.setAttribute('webkit-playsinline', 'true');
+                            localVideo.style.cssText = 'width:100%;height:100%;object-fit:cover;transform:scaleX(-1);';
+                            videoContainer.appendChild(localVideo);
+
+                            var avatarWrap = document.createElement('div');
+                            avatarWrap.style.cssText = 'width:136px;height:136px;border-radius:50%;overflow:hidden;background:#202c33;display:flex;align-items:center;justify-content:center;border:3px solid #00a884;box-shadow:0 0 0 10px rgba(0,168,132,0.12);';
+                            if (avatar) {
+                                var avatarImg = document.createElement('img');
+                                avatarImg.src = avatar;
+                                avatarImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                                avatarWrap.appendChild(avatarImg);
+                            } else {
+                                var initials = document.createElement('span');
+                                initials.textContent = (name.trim()[0] || 'W').toUpperCase();
+                                initials.style.cssText = 'font-size:54px;font-weight:700;color:#00a884;';
+                                avatarWrap.appendChild(initials);
+                            }
+
+                            var nameEl = document.createElement('div');
+                            nameEl.textContent = name;
+                            nameEl.style.cssText = 'font-size:30px;font-weight:600;color:#e9edef;text-align:center;margin-top:6px;';
+
+                            var statusEl = document.createElement('div');
+                            statusEl.textContent = 'Calling...';
+                            statusEl.style.cssText = 'font-size:18px;color:#00a884;font-weight:500;letter-spacing:0.3px;';
+
+                            centerBox.appendChild(avatarWrap);
+                            centerBox.appendChild(nameEl);
+                            centerBox.appendChild(statusEl);
+                            centerBox.appendChild(videoContainer);
+
+                            var controlsBar = document.createElement('div');
+                            controlsBar.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:22px;background:#1f2c34;padding:16px 32px;border-radius:48px;box-shadow:0 10px 28px rgba(0,0,0,0.4);';
+
+                            var makeBtn = function(label, bg, onClick) {
+                                var b = document.createElement('button');
+                                b.textContent = label;
+                                b.style.cssText = 'min-width:110px;height:54px;border-radius:27px;border:none;background:' + bg + ';color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;padding:0 20px;display:flex;align-items:center;justify-content:center;gap:8px;transition:background 0.2s;';
+                                b.onclick = onClick;
+                                return b;
+                            };
+
+                            var muteBtn = makeBtn('Mute Mic', '#2a3942', function() {
+                                isMuted = !isMuted;
+                                muteBtn.textContent = isMuted ? 'Unmute Mic' : 'Mute Mic';
+                                muteBtn.style.background = isMuted ? '#00a884' : '#2a3942';
+                                var streams = window.__xenoActiveCallStreams || [];
+                                streams.forEach(function(s) {
+                                    s.getAudioTracks().forEach(function(t) { t.enabled = !isMuted; });
+                                });
+                            });
+
+                            var videoBtn = makeBtn(isVideo ? 'Camera On' : 'Camera Off', isVideo ? '#00a884' : '#2a3942', function() {
+                                isVideo = !isVideo;
+                                videoBtn.textContent = isVideo ? 'Camera On' : 'Camera Off';
+                                videoBtn.style.background = isVideo ? '#00a884' : '#2a3942';
+                                videoContainer.style.display = isVideo ? 'flex' : 'none';
+                                videoContainer.style.height = isVideo ? '340px' : '0px';
+                                if (isVideo) {
+                                    navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(function(s) {
+                                        localVideo.srcObject = s;
+                                        localVideo.play().catch(function(){});
+                                    }).catch(function(){});
+                                } else {
+                                    var streams = window.__xenoActiveCallStreams || [];
+                                    streams.forEach(function(s) {
+                                        s.getVideoTracks().forEach(function(t) { t.stop(); });
+                                    });
+                                }
+                            });
+
+                            var flipBtn = makeBtn('Flip Cam', '#2a3942', function() {
+                                if (window.__xenoFlipCallCamera) window.__xenoFlipCallCamera();
+                            });
+
+                            var endBtn = makeBtn('End Call', '#ea0038', function() {
+                                window.__xenoEndWhatsAppCallOverlay();
+                            });
+
+                            controlsBar.appendChild(muteBtn);
+                            controlsBar.appendChild(videoBtn);
+                            controlsBar.appendChild(flipBtn);
+                            controlsBar.appendChild(endBtn);
+
+                            minBtn.onclick = function() {
+                                isMinimized = !isMinimized;
+                                if (isMinimized) {
+                                    overlay.style.cssText = 'position:fixed;top:16px;right:16px;width:360px;height:auto;z-index:2147483646;background:#1f2c34;color:#e9edef;display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px;border-radius:20px;box-shadow:0 12px 32px rgba(0,0,0,0.55);border:1px solid #00a884;font-family:Segoe UI,sans-serif;';
+                                    avatarWrap.style.display = 'none';
+                                    videoContainer.style.display = 'none';
+                                    nameEl.style.fontSize = '18px';
+                                    statusEl.style.fontSize = '14px';
+                                    controlsBar.style.padding = '8px 12px';
+                                    controlsBar.style.gap = '8px';
+                                    flipBtn.style.display = 'none';
+                                    videoBtn.style.display = 'none';
+                                    minBtn.textContent = 'Expand';
+                                } else {
+                                    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:36px 24px 44px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;';
+                                    avatarWrap.style.display = 'flex';
+                                    videoContainer.style.display = isVideo ? 'flex' : 'none';
+                                    nameEl.style.fontSize = '30px';
+                                    statusEl.style.fontSize = '18px';
+                                    controlsBar.style.padding = '16px 32px';
+                                    controlsBar.style.gap = '22px';
+                                    flipBtn.style.display = 'flex';
+                                    videoBtn.style.display = 'flex';
+                                    minBtn.textContent = 'Minimize';
+                                }
+                            };
+
+                            overlay.appendChild(topBar);
+                            overlay.appendChild(centerBox);
+                            overlay.appendChild(controlsBar);
+                            document.body.appendChild(overlay);
+
+                            window.__xenoStartCallRingtone();
+
+                            // Acquire real microphone & camera stream via WebRTC getUserMedia
+                            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                                navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo }).then(function(stream) {
+                                    if (isVideo && localVideo) {
+                                        localVideo.srcObject = stream;
+                                        localVideo.play().catch(function(){});
+                                    }
+                                    statusEl.textContent = 'Ringing...';
+                                }).catch(function() {
+                                    statusEl.textContent = 'Ringing...';
+                                });
+                            }
+
+                            var formatTime = function(sec) {
+                                var m = Math.floor(sec / 60);
+                                var s = sec % 60;
+                                return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+                            };
+
+                            window.__xenoConnectTimeout = setTimeout(function() {
+                                if (!window.__xenoCallOverlayActive) return;
+                                window.__xenoStopCallRingtone();
+                                statusEl.textContent = '00:00';
+                                window.__xenoCallTimerInterval = setInterval(function() {
+                                    secondsElapsed++;
+                                    statusEl.textContent = formatTime(secondsElapsed);
+                                }, 1000);
+                            }, 4200);
+                        } catch(e) {}
+                    };
+
+                    // Track clicks on Voice Call / Video Call buttons in WhatsApp Web
+                    document.addEventListener('click', function(ev) {
+                        try {
+                            var target = ev.target;
+                            if (!target || !target.closest) return;
+                            var btn = target.closest('button, [role="button"], li, [data-icon]');
+                            if (!btn) return;
+                            var iconEl = btn.querySelector('[data-icon]');
+                            var dataIcon = (btn.getAttribute('data-icon') || (iconEl && iconEl.getAttribute('data-icon')) || '').toLowerCase();
+                            var ariaLabel = (btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.textContent || '').trim().toLowerCase();
+
+                            var isVoiceBtn = dataIcon.indexOf('voice-call') !== -1 ||
+                                dataIcon === 'call' ||
+                                dataIcon === 'audio-call' ||
+                                ariaLabel.indexOf('voice call') !== -1 ||
+                                ariaLabel === 'audio call';
+                            var isVideoBtn = dataIcon.indexOf('video-call') !== -1 ||
+                                dataIcon === 'videocall' ||
+                                ariaLabel.indexOf('video call') !== -1;
+
+                            if (isVoiceBtn || isVideoBtn) {
+                                window.__xenoExtractActiveChatContact();
+                                window.__xenoLastChatContact.isVideo = isVideoBtn;
+                                window.__xenoLastCallTapTime = Date.now();
+                            }
+                        } catch(e) {}
+                    }, true);
+
+                    // Intercept & suppress any "Browser does not support calls" / "Calling isn't supported on this browser" modal
+                    window.__xenoInterceptUnsupportedCallDialog = function() {
+                        try {
+                            var dialogs = document.querySelectorAll('[role="dialog"], [data-animate-modal-popup="true"], [data-animate-modal-body="true"]');
+                            for (var i = 0; i < dialogs.length; i++) {
+                                var dlg = dialogs[i];
+                                if (!dlg || dlg.id === 'xeno-wa-live-call-overlay') continue;
+                                var txt = (dlg.textContent || '').toLowerCase();
+                                var isUnsupportedCallMsg =
+                                    txt.indexOf('does not support calls') !== -1 ||
+                                    txt.indexOf('doesn\'t support calls') !== -1 ||
+                                    txt.indexOf('calling isn\'t supported') !== -1 ||
+                                    txt.indexOf('calling is not supported') !== -1 ||
+                                    txt.indexOf('calls aren\'t supported') !== -1 ||
+                                    txt.indexOf('calls are not supported') !== -1 ||
+                                    (txt.indexOf('not supported on this browser') !== -1 && txt.indexOf('call') !== -1) ||
+                                    (txt.indexOf('make calls') !== -1 && (txt.indexOf('get the app') !== -1 || txt.indexOf('download') !== -1 || txt.indexOf('windows') !== -1));
+
+                                if (isUnsupportedCallMsg) {
+                                    // Hide the modal backdrop and click its dismiss button immediately
+                                    var backdrop = dlg.closest('.overlay, [data-animate-modal-backdrop="true"]') || dlg.parentElement;
+                                    dlg.style.display = 'none';
+                                    if (backdrop && backdrop !== document.body && backdrop.id !== 'app') {
+                                        backdrop.style.display = 'none';
+                                    }
+                                    var okBtns = dlg.querySelectorAll('button, [role="button"]');
+                                    for (var b = 0; b < okBtns.length; b++) {
+                                        try { okBtns[b].click(); } catch(e) {}
+                                    }
+                                    // Launch the live WhatsApp Web Call session for the active contact
+                                    var contact = window.__xenoExtractActiveChatContact();
+                                    window.__xenoStartWhatsAppCallOverlay(contact.name, contact.avatar, Boolean(contact.isVideo));
+                                    return true;
+                                }
+                            }
+                        } catch(e) {}
+                        return false;
+                    };
                 }
 
                 // Ensure inline playback & unmuted audio for any WebRTC call <video> / <audio> elements
@@ -739,6 +1283,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                 }
 
                 ensureDesktopViewport();
+                if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
+                    window.__xenoInterceptUnsupportedCallDialog();
+                }
 
                 if (!window.__xenoWaHeadObserver && window.MutationObserver && document.head) {
                     window.__xenoWaHeadObserver = new MutationObserver(function() {
@@ -750,9 +1297,12 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     window.__xenoWaHeadObserver.observe(document.head, { childList: true });
                 }
 
-                // Observe body for dynamically mounted WebRTC call <video>/<audio> elements so they play inline immediately
+                // Observe body for dynamically mounted WebRTC call <video>/<audio> elements and unsupported-browser call modals
                 if (!window.__xenoWaCallDomObserver && window.MutationObserver && document.body) {
                     window.__xenoWaCallDomObserver = new MutationObserver(function(mutations) {
+                        if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
+                            window.__xenoInterceptUnsupportedCallDialog();
+                        }
                         for (var i = 0; i < mutations.length; i++) {
                             var added = mutations[i].addedNodes;
                             if (!added) continue;
@@ -1089,146 +1639,6 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                         }, 220);
                     });
                     window.__xenoFbMutationObserver.observe(document.body, {
-                        childList: true,
-                        subtree: true
-                    });
-                }
-            } catch(e) {}
-        })();
-    """.trimIndent()
-    view?.evaluateJavascript(js, null)
-}
-
-/**
- * Non-intrusive TikTok Vertical Video Feed & Smooth Swipe Helper Engine:
- * - Preserves TikTok's native non-passive touchmove Swiper gesture engine and inline CSS `transform: translate3d(...)`
- *   so vertical video swiping works smoothly.
- * - Spoofs standard Chrome Mobile environment (`navigator.webdriver = false`, `window.chrome`, Page Visibility)
- *   so TikTok's `xgplayer` MSE video streams load and play without WebView restrictions.
- * - Automatically dismisses "Open TikTok App" / "Not now" modal prompts via their close action rather than
- *   hiding layout containers or leaving invisible modal backdrops.
- */
-private fun injectTikTokVideoAndScrollHelper(view: WebView?) {
-    val js = """
-        (function() {
-            try {
-                // 1. Browser Environment & Page Visibility Stabilization for TikTok xgplayer
-                if (!window.__xenoTtEnvPatched) {
-                    window.__xenoTtEnvPatched = true;
-                    try {
-                        Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
-                        Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
-                        Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
-                        if (!window.chrome) {
-                            window.chrome = { runtime: {} };
-                        }
-                    } catch(e) {}
-
-                    // Unlock TikTok video audio on first user touch/tap interaction
-                    window.__xenoTtAudioUnlocked = false;
-                    var unlockTikTokAudio = function() {
-                        window.__xenoTtAudioUnlocked = true;
-                        var vids = document.querySelectorAll('video');
-                        for (var i = 0; i < vids.length; i++) {
-                            var v = vids[i];
-                            if (v.muted) {
-                                v.muted = false;
-                                v.volume = 1.0;
-                            }
-                            if (v.paused && v.readyState >= 2 && !v.__xenoUserPaused) {
-                                v.play().catch(function(){});
-                            }
-                        }
-                        // Also click TikTok's unmute overlay button if visible
-                        try {
-                            var unmuteBtn = document.querySelector('[data-e2e*="video-sound"], [class*="DivVoiceControl"] button, [aria-label*="Unmute"]');
-                            if (unmuteBtn && (unmuteBtn.innerText || '').toLowerCase().indexOf('unmute') !== -1) {
-                                unmuteBtn.click();
-                            }
-                        } catch(e) {}
-                    };
-                    document.addEventListener('touchend', unlockTikTokAudio, { passive: true, once: true });
-                    document.addEventListener('click', unlockTikTokAudio, { passive: true, once: true });
-                }
-
-                // 2. Non-destructive CSS: Never override `transform` on `video` or Swiper slides, and never hide broad `*OpenApp*` wrapper divs
-                var styleId = 'xeno-tt-video-smooth-style';
-                if (!document.getElementById(styleId) && document.head) {
-                    var st = document.createElement('style');
-                    st.id = styleId;
-                    st.textContent =
-                        'html, body { background-color: #000 !important; -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: none !important; -webkit-tap-highlight-color: transparent !important; } ' +
-                        'video { backface-visibility: hidden; -webkit-backface-visibility: hidden; } ' +
-                        '[data-e2e="abb-banner"], [data-e2e="FloatingBar"], a[href^="intent://"], a[href^="snssdk"], a[href^="tiktok://"] { display: none !important; } ' +
-                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
-                    document.head.appendChild(st);
-                }
-
-                // 3. Configure inline playback & gently dismiss "Open TikTok" / "Not now" prompts without fighting xgplayer's internal play/pause lifecycle
-                function optimizeTikTokExperience() {
-                    var videos = document.querySelectorAll('video');
-                    for (var i = 0; i < videos.length; i++) {
-                        var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', '');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', '');
-                        if (!v.hasAttribute('x5-playsinline')) v.setAttribute('x5-playsinline', 'true');
-                        v.playsInline = true;
-                        v.loop = true;
-
-                        if (!v.__xenoTtObserved) {
-                            v.__xenoTtObserved = true;
-                            v.addEventListener('click', function() {
-                                var self = this;
-                                if (self.muted) {
-                                    self.muted = false;
-                                    self.volume = 1.0;
-                                }
-                                setTimeout(function() {
-                                    self.__xenoUserPaused = self.paused;
-                                }, 120);
-                            }, { passive: true });
-
-                            v.addEventListener('loadeddata', function() {
-                                var self = this;
-                                if (window.__xenoTtAudioUnlocked && self.muted) {
-                                    self.muted = false;
-                                }
-                                if (self.paused && !self.__xenoUserPaused) {
-                                    self.play().catch(function() {
-                                        self.muted = true;
-                                        self.play().catch(function(){});
-                                    });
-                                }
-                            }, { passive: true });
-                        }
-                    }
-
-                    // Safely click "Not now" / "Continue on web" buttons on TikTok's app-promotion bottom sheet so its backdrop closes cleanly
-                    var buttons = document.querySelectorAll('button, div[role="button"], p, span');
-                    for (var b = 0; b < buttons.length; b++) {
-                        var el = buttons[b];
-                        if (el.children && el.children.length > 1) continue;
-                        var txt = (el.textContent || '').trim().toLowerCase();
-                        if (txt === 'not now' || txt === 'continue on browser' || txt === 'continue on web' || txt === 'stay on web') {
-                            try {
-                                el.click();
-                            } catch(e) {}
-                        }
-                    }
-                }
-
-                optimizeTikTokExperience();
-
-                if (!window.__xenoTtMutationObserver && window.MutationObserver && document.body) {
-                    var throttleTimer = null;
-                    window.__xenoTtMutationObserver = new MutationObserver(function() {
-                        if (throttleTimer) return;
-                        throttleTimer = setTimeout(function() {
-                            throttleTimer = null;
-                            optimizeTikTokExperience();
-                        }, 250);
-                    });
-                    window.__xenoTtMutationObserver.observe(document.body, {
                         childList: true,
                         subtree: true
                     });
@@ -1928,14 +2338,6 @@ fun CloneWorkspaceScreen(
                 instance.targetUrl.contains("facebook.com", ignoreCase = true)
     }
 
-    val isTiktok = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
-        instance.packageName.contains("tiktok", ignoreCase = true) ||
-                instance.packageName.contains("musically", ignoreCase = true) ||
-                instance.originalName.contains("tiktok", ignoreCase = true) ||
-                instance.displayName.contains("tiktok", ignoreCase = true) ||
-                instance.targetUrl.contains("tiktok.com", ignoreCase = true)
-    }
-
     val isYoutube = remember(instance.instanceId, instance.packageName, instance.targetUrl) {
         instance.packageName.contains("youtube", ignoreCase = true) ||
                 instance.originalName.contains("youtube", ignoreCase = true) ||
@@ -1952,7 +2354,7 @@ fun CloneWorkspaceScreen(
                 instance.targetUrl.contains("discord.gg", ignoreCase = true)
     }
 
-    val isShortVideoSocialApp = isInstagram || isFacebook || isTiktok || isYoutube
+    val isShortVideoSocialApp = isInstagram || isFacebook || isYoutube
 
     val buildRequiredCallPermissions: (Boolean, Boolean) -> Array<String> = remember {
         { needAudio, needVideo ->
@@ -2334,7 +2736,7 @@ fun CloneWorkspaceScreen(
                     when {
                         isWhatsapp -> Color(0xFF111B21)
                         isDiscord -> Color(0xFF313338)
-                        isInstagram || isTiktok || isYoutube -> Color.Black
+                        isInstagram || isYoutube -> Color.Black
                         else -> Color.White
                     }
                 )
@@ -2413,15 +2815,15 @@ fun CloneWorkspaceScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use software layer if emulator GPU crashed (except YouTube which requires hardware layer for HTML5 MSE video rendering)
-                                if ((useSoftwareLayer && !isYoutube) || (isWhatsapp && !isVideoCallActive)) {
+                                // Use hardware layer for WhatsApp Web and YouTube so WebRTC video/audio codecs and HTML5 MSE work at full capability
+                                if (useSoftwareLayer && !isYoutube && !isWhatsapp) {
                                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                 } else {
                                     setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 }
                                 isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
                                 isHorizontalScrollBarEnabled = !isShortVideoSocialApp
-                                if (isInstagram || isTiktok) {
+                                if (isInstagram) {
                                     overScrollMode = View.OVER_SCROLL_NEVER
                                 } else {
                                     overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
@@ -2429,7 +2831,7 @@ fun CloneWorkspaceScreen(
                                 isNestedScrollingEnabled = true
                                 isFocusable = true
                                 isFocusableInTouchMode = true
-                                if (isYoutube || isTiktok || isFacebook || isDiscord) {
+                                if (isYoutube || isFacebook || isDiscord) {
                                     setOnTouchListener { v, event ->
                                         if (event.action == android.view.MotionEvent.ACTION_DOWN ||
                                             event.action == android.view.MotionEvent.ACTION_MOVE
@@ -2443,7 +2845,7 @@ fun CloneWorkspaceScreen(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
                                         isDiscord -> android.graphics.Color.parseColor("#313338")
-                                        isInstagram || isTiktok || isYoutube -> android.graphics.Color.BLACK
+                                        isInstagram || isYoutube -> android.graphics.Color.BLACK
                                         else -> android.graphics.Color.WHITE
                                     }
                                 )
@@ -2560,8 +2962,6 @@ fun CloneWorkspaceScreen(
                                                 injectInstagramReelsAndScrollHelper(view)
                                             isFacebook || url?.contains("facebook.com", ignoreCase = true) == true ->
                                                 injectFacebookVideoAndScrollHelper(view)
-                                            isTiktok || url?.contains("tiktok.com", ignoreCase = true) == true ->
-                                                injectTikTokVideoAndScrollHelper(view)
                                             isYoutube || url?.contains("youtube.com", ignoreCase = true) == true || url?.contains("youtu.be", ignoreCase = true) == true ->
                                                 injectYouTubeAndShortsSmoothHelper(view)
                                         }
@@ -2577,6 +2977,13 @@ fun CloneWorkspaceScreen(
                                             }
                                         }
                                         canGoBack = view?.canGoBack() == true
+                                    }
+
+                                    override fun onLoadResource(view: WebView?, url: String?) {
+                                        super.onLoadResource(view, url)
+                                        if (isWhatsapp) {
+                                            injectWhatsAppWebSupportEngine(view)
+                                        }
                                     }
 
                                     override fun onPageCommitVisible(view: WebView?, url: String?) {
@@ -2656,15 +3063,12 @@ fun CloneWorkspaceScreen(
                                             }
                                             return true
                                         }
-                                        // Prevent Facebook, TikTok, Instagram, YouTube & Discord from kicking the user out to Play Store or external app prompts
-                                        if (isFacebook || isTiktok || isInstagram || isYoutube || isDiscord) {
+                                        // Prevent Facebook, Instagram, YouTube & Discord from kicking the user out to Play Store or external app prompts
+                                        if (isFacebook || isInstagram || isYoutube || isDiscord) {
                                             if (lowerUrl.contains("play.google.com/store/apps") ||
                                                 lowerUrl.startsWith("market://") ||
                                                 lowerUrl.startsWith("fb://") ||
                                                 lowerUrl.startsWith("fbmessenger://") ||
-                                                lowerUrl.startsWith("tiktok://") ||
-                                                lowerUrl.startsWith("snssdk") ||
-                                                lowerUrl.startsWith("musical://") ||
                                                 lowerUrl.startsWith("discord://")
                                             ) {
                                                 return true
@@ -2822,11 +3226,6 @@ fun CloneWorkspaceScreen(
                                         instance.lastUrl
                                     } else {
                                         "https://m.youtube.com/"
-                                    }
-                                    isTiktok -> if (instance.lastUrl.startsWith("http") && instance.lastUrl.contains("tiktok.com", ignoreCase = true) && !instance.lastUrl.contains("/download", ignoreCase = true)) {
-                                        instance.lastUrl
-                                    } else {
-                                        "https://www.tiktok.com/"
                                     }
                                     isFacebook -> if (instance.lastUrl.startsWith("http") && instance.lastUrl.contains("facebook.com", ignoreCase = true)) {
                                         instance.lastUrl

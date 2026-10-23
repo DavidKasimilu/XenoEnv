@@ -21,7 +21,8 @@ object InstalledAppsManager {
 
         for (ri in resolveList) {
             val pkg = ri.activityInfo?.packageName ?: continue
-            if (pkg == myPackage || seen.contains(pkg)) continue
+            val lowerPkg = pkg.lowercase()
+            if (pkg == myPackage || seen.contains(pkg) || lowerPkg.contains("termux") || lowerPkg.contains("tiktok") || lowerPkg.contains("musically")) continue
             seen.add(pkg)
 
             val label = try {
@@ -29,6 +30,8 @@ object InstalledAppsManager {
             } catch (_: Exception) {
                 pkg
             }
+
+            if (label.contains("termux", ignoreCase = true) || label.contains("tiktok", ignoreCase = true)) continue
 
             val icon = try {
                 ri.loadIcon(pm)

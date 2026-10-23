@@ -320,14 +320,6 @@ private fun CloneAppIconItem(
                 instance.targetUrl.contains("facebook.com", ignoreCase = true)
     }
 
-    val isTiktok = remember(instance) {
-        instance.packageName.contains("tiktok", ignoreCase = true) ||
-                instance.packageName.contains("musically", ignoreCase = true) ||
-                instance.originalName.contains("tiktok", ignoreCase = true) ||
-                instance.displayName.contains("tiktok", ignoreCase = true) ||
-                instance.targetUrl.contains("tiktok.com", ignoreCase = true)
-    }
-
     val isYoutube = remember(instance) {
         instance.packageName.contains("youtube", ignoreCase = true) ||
                 instance.originalName.contains("youtube", ignoreCase = true) ||
@@ -361,7 +353,6 @@ private fun CloneAppIconItem(
         isWhatsapp,
         isGmail,
         isFacebook,
-        isTiktok,
         isYoutube,
         isDiscord
     ) {
@@ -370,7 +361,6 @@ private fun CloneAppIconItem(
             isWhatsapp && instance.displayName == "WhatsApp (Personal)" -> "WhatsApp"
             isGmail && instance.displayName.startsWith("Gmail", ignoreCase = true) -> "Gmail"
             isFacebook && instance.displayName.startsWith("Facebook", ignoreCase = true) -> "Facebook"
-            isTiktok && instance.displayName.startsWith("TikTok", ignoreCase = true) -> "TikTok"
             isYoutube && instance.displayName.startsWith("YouTube", ignoreCase = true) -> "YouTube"
             isDiscord && instance.displayName.startsWith("Discord", ignoreCase = true) -> "Discord"
             else -> instance.displayName.ifBlank { instance.originalName }
@@ -497,48 +487,6 @@ private fun CloneAppIconItem(
                             fontSize = 42.sp,
                             fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.offset(y = 2.dp)
-                        )
-                    }
-                } else if (isTiktok) {
-                    // Authentic TikTok Dark Neon Cyan/Magenta Note Icon
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(64.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color(0xFF0B0B0E))
-                            .border(
-                                width = 1.5.dp,
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF25F4EE),
-                                        Color(0xFFFE2C55)
-                                    )
-                                ),
-                                shape = RoundedCornerShape(18.dp)
-                            )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Color(0xFF25F4EE),
-                            modifier = Modifier
-                                .size(34.dp)
-                                .offset(x = (-2).dp, y = (-1.5).dp)
-                        )
-                        Icon(
-                            imageVector = Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Color(0xFFFE2C55),
-                            modifier = Modifier
-                                .size(34.dp)
-                                .offset(x = 2.dp, y = 1.5.dp)
-                        )
-                        Icon(
-                            imageVector = Icons.Filled.MusicNote,
-                            contentDescription = "TikTok",
-                            tint = Color.White,
-                            modifier = Modifier.size(34.dp)
                         )
                     }
                 } else if (isYoutube) {
