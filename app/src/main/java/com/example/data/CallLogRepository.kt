@@ -10,10 +10,69 @@ import com.example.data.models.CallLogEntry
 import com.example.data.models.CallType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class CallLogRepository(private val context: Context) {
 
     private val contentResolver: ContentResolver = context.contentResolver
+    private val fastCachePrefs = context.getSharedPreferences("xeno_fast_call_cache", Context.MODE_PRIVATE)
+
+    @Volatile
+    private var cachedCallLogs: List<CallLogEntry> = emptyList()
+
+    /**
+     * Returns an instant snapshot of Call History from memory or lightweight startup cache
+     * so the Calls screen displays records immediately on the very first frame.
+     */
+    fun getCachedCallLogsSnapshot(): List<CallLogEntry> {
+        if (cachedCallLogs.isNotEmpty()) return cachedCallLogs
+        return try {
+            val raw = fastCachePrefs.getString("call_logs_snapshot", null) ?: return emptyList()
+            val arr = JSONArray(raw)
+            val list = ArrayList<CallLogEntry>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    CallLogEntry(
+                        id = obj.optLong("id", 0L),
+                        number = obj.optString("number", ""),
+                        cachedName = obj.optString("cachedName", "").takeIf { it.isNotBlank() },
+                        type = runCatching { CallType.valueOf(obj.optString("type", "OUTGOING")) }.getOrDefault(CallType.OUTGOING),
+                        date = obj.optLong("date", 0L),
+                        durationSeconds = obj.optLong("durationSeconds", 0L),
+                        photoUri = obj.optString("photoUri", "").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+            cachedCallLogs = list
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveCallLogsSnapshot(entries: List<CallLogEntry>) {
+        cachedCallLogs = entries
+        try {
+            val arr = JSONArray()
+            val limit = entries.size.coerceAtMost(80)
+            for (i in 0 until limit) {
+                val e = entries[i]
+                val obj = JSONObject().apply {
+                    put("id", e.id)
+                    put("number", e.number)
+                    put("cachedName", e.cachedName ?: "")
+                    put("type", e.type.name)
+                    put("date", e.date)
+                    put("durationSeconds", e.durationSeconds)
+                    put("photoUri", e.photoUri ?: "")
+                }
+                arr.put(obj)
+            }
+            fastCachePrefs.edit().putString("call_logs_snapshot", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
 
     suspend fun getCallLogs(): List<CallLogEntry> = withContext(Dispatchers.IO) {
         val hasPermission = ContextCompat.checkSelfPermission(
@@ -22,10 +81,10 @@ class CallLogRepository(private val context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
-            return@withContext emptyList()
+            return@withContext cachedCallLogs
         }
 
-        val entries = mutableListOf<CallLogEntry>()
+        val entries = ArrayList<CallLogEntry>(150)
         val projection = arrayOf(
             CallLog.Calls._ID,
             CallLog.Calls.NUMBER,
@@ -91,9 +150,10 @@ class CallLogRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("CallLogRepository", "Failed to query call logs", e)
-            return@withContext emptyList()
+            return@withContext cachedCallLogs
         }
 
+        cachedCallLogs = entries
         return@withContext entries
     }
 
@@ -127,6 +187,8 @@ class CallLogRepository(private val context: Context) {
     }
 
     suspend fun deleteCallLog(id: Long): Boolean = withContext(Dispatchers.IO) {
+        cachedCallLogs = cachedCallLogs.filter { it.id != id }
+        saveCallLogsSnapshot(cachedCallLogs)
         try {
             val rows = contentResolver.delete(
                 CallLog.Calls.CONTENT_URI,
@@ -141,6 +203,10 @@ class CallLogRepository(private val context: Context) {
     }
 
     suspend fun clearMissedCallLogs(): Boolean = withContext(Dispatchers.IO) {
+        cachedCallLogs = cachedCallLogs.filter {
+            it.type != CallType.MISSED && it.type != CallType.REJECTED
+        }
+        saveCallLogsSnapshot(cachedCallLogs)
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.WRITE_CALL_LOG
@@ -189,6 +255,8 @@ class CallLogRepository(private val context: Context) {
     }
 
     suspend fun clearCallLogs(): Boolean = withContext(Dispatchers.IO) {
+        cachedCallLogs = emptyList()
+        saveCallLogsSnapshot(emptyList())
         try {
             val rows = contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
             rows >= 0
@@ -198,3 +266,4 @@ class CallLogRepository(private val context: Context) {
         }
     }
 }
+

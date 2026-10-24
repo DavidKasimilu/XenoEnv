@@ -1,82 +1,116 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notif_call_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_notif_sms_card"
     android:orientation="vertical"
-    android:background="#121318"
-    android:padding="12dp">
+    android:padding="14dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
-        <ImageView
-            android:id="@+id/notif_call_icon"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@android:drawable/ic_menu_call"
-            android:background="#10B981"
-            android:padding="8dp" />
+        <TextView
+            android:id="@+id/notif_call_avatar_text"
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            android:background="@drawable/bg_notif_call_avatar"
+            android:gravity="center"
+            android:text="C"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
             android:layout_weight="1"
-            android:orientation="vertical"
-            android:layout_marginStart="10dp">
+            android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/notif_caller_name"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Incoming Call"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:singleLine="true" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/notif_caller_name"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Caller Name"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/notif_call_badge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_notif_call_badge_pill"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="INCOMING CALL"
+                    android:textColor="#6EE7B7"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/notif_caller_number"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Incoming Call..."
-                android:textColor="#10B981"
-                android:textSize="13sp"
-                android:singleLine="true" />
+                android:layout_marginTop="3dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Incoming Voice Call"
+                android:textColor="#94A3B8"
+                android:textSize="13sp" />
         </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
         android:layout_marginTop="12dp"
-        android:gravity="center">
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
         <Button
             android:id="@+id/btn_call_decline"
             android:layout_width="0dp"
             android:layout_height="40dp"
-            android:layout_weight="1"
             android:layout_marginEnd="6dp"
-            android:text="DECLINE"
+            android:layout_weight="1"
+            android:background="@drawable/bg_notif_call_decline"
+            android:stateListAnimator="@null"
+            android:text="✕  Decline"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
-            android:textStyle="bold"
             android:textSize="13sp"
-            android:background="#EF4444" />
+            android:textStyle="bold" />
 
         <Button
             android:id="@+id/btn_call_answer"
             android:layout_width="0dp"
             android:layout_height="40dp"
-            android:layout_weight="1"
             android:layout_marginStart="6dp"
-            android:text="ANSWER"
+            android:layout_weight="1"
+            android:background="@drawable/bg_notif_call_accept"
+            android:stateListAnimator="@null"
+            android:text="✆  Accept"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
-            android:textStyle="bold"
             android:textSize="13sp"
-            android:background="#10B981" />
+            android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>

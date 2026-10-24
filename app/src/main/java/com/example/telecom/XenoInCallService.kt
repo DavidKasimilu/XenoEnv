@@ -135,7 +135,7 @@ class XenoInCallService : InCallService() {
         if (state == Call.STATE_RINGING) {
             if (handle.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(handle)) {
                 val resolvedName = XenoNotificationHelper.resolveContactNameQuick(applicationContext, handle)
-                val shouldWakeFullScreen = OngoingCallHelper.isScreenOffOrAppInBackground(applicationContext)
+                val shouldWakeFullScreen = OngoingCallHelper.isScreenOffOrLocked(applicationContext)
                 OngoingCallHelper.handleIncomingCallEvent(
                     context = applicationContext,
                     phoneNumber = handle,
@@ -143,21 +143,7 @@ class XenoInCallService : InCallService() {
                     showPopup = !shouldWakeFullScreen
                 )
 
-                if (onIncomingCallListener != null) {
-                    onIncomingCallListener?.invoke(handle)
-                } else if (!shouldWakeFullScreen) {
-                    try {
-                        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            putExtra("open_tab", "CALLS")
-                            putExtra("incoming_number", handle)
-                            putExtra("caller_name", resolvedName)
-                        }
-                        applicationContext.startActivity(launchIntent)
-                    } catch (e: Exception) {
-                        Log.w("XenoInCallService", "Could not launch MainActivity for incoming call: ${e.message}")
-                    }
-                }
+                onIncomingCallListener?.invoke(handle)
             }
         }
     }

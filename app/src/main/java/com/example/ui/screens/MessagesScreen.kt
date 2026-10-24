@@ -292,7 +292,11 @@ fun MessagesScreen(
                             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            itemsIndexed(filteredThreads, key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" }) { _, thread ->
+                            itemsIndexed(
+                                items = filteredThreads,
+                                key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
+                                contentType = { _, _ -> "sms_thread_row" }
+                            ) { _, thread ->
                                 SmsThreadItem(
                                     thread = thread,
                                     onClick = { onOpenThread(thread) },

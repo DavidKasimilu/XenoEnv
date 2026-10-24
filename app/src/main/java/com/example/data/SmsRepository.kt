@@ -30,17 +30,111 @@ class SmsRepository(
         private const val ACTION_SMS_SENT = "com.example.SMS_SENT_STATUS"
         private const val ACTION_SMS_DELIVERED = "com.example.SMS_DELIVERED_STATUS"
         private const val EXTRA_MESSAGE_ID = "extra_message_id"
+
+        private val MULTIPART_PAREN_SUFFIX_REGEX = Regex("""\(\d+/\d+\)$""")
+        private val MULTIPART_PAREN_PREFIX_REGEX = Regex("""^\(\d+/\d+\)""")
+        private val MULTIPART_PLAIN_SUFFIX_REGEX = Regex("""\d+/\d+$""")
+        private val MULTIPART_PLAIN_PREFIX_REGEX = Regex("""^\d+/\d+""")
+        private val CLEAN_PAREN_SUFFIX_REGEX = Regex("""\s*\(\d+/\d+\)$""")
+        private val CLEAN_PLAIN_SUFFIX_REGEX = Regex("""\s*\d+/\d+$""")
+        private val CLEAN_PAREN_PREFIX_REGEX = Regex("""^\(\d+/\d+\)\s*""")
+        private val CLEAN_PLAIN_PREFIX_REGEX = Regex("""^\d+/\d+\s*""")
     }
 
     private val contentResolver: ContentResolver = context.contentResolver
+    private val fastSmsPrefs = context.getSharedPreferences("xeno_fast_sms_cache", Context.MODE_PRIVATE)
 
-    // Memory cache for user interactions
+    // Memory cache for user interactions & instant 0ms thread/chat opening
     private val inMemoryMessages = mutableListOf<SmsMessage>()
     private val deliveryStatusMap = ConcurrentHashMap<Long, SmsDeliveryStatus>()
     private val deliveryStatusListeners = ConcurrentHashMap<Long, (SmsDeliveryStatus) -> Unit>()
+    private val threadMessagesCache = ConcurrentHashMap<Long, List<SmsMessage>>()
+
+    @Volatile
+    private var cachedThreads: List<SmsThread> = emptyList()
 
     init {
         registerDeliveryReceivers()
+    }
+
+    /**
+     * Returns an instant snapshot of SMS conversation threads from memory or startup cache
+     * so the Messages tab displays conversations on the very first frame.
+     */
+    fun getCachedThreadsSnapshot(): List<SmsThread> {
+        if (cachedThreads.isNotEmpty()) return cachedThreads
+        return try {
+            val raw = fastSmsPrefs.getString("sms_threads_snapshot", null) ?: return emptyList()
+            val arr = org.json.JSONArray(raw)
+            val list = ArrayList<SmsThread>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    SmsThread(
+                        threadId = obj.optLong("threadId", 0L),
+                        address = obj.optString("address", ""),
+                        contactName = obj.optString("contactName", "").takeIf { it.isNotBlank() },
+                        snippet = obj.optString("snippet", ""),
+                        date = obj.optLong("date", 0L),
+                        read = obj.optBoolean("read", true),
+                        messageCount = obj.optInt("messageCount", 1),
+                        unreadCount = obj.optInt("unreadCount", 0)
+                    )
+                )
+            }
+            cachedThreads = list
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveThreadsSnapshot(threads: List<SmsThread>) {
+        cachedThreads = threads
+        try {
+            val arr = org.json.JSONArray()
+            val limit = threads.size.coerceAtMost(80)
+            for (i in 0 until limit) {
+                val t = threads[i]
+                val obj = org.json.JSONObject().apply {
+                    put("threadId", t.threadId)
+                    put("address", t.address)
+                    put("contactName", t.contactName ?: "")
+                    put("snippet", t.snippet)
+                    put("date", t.date)
+                    put("read", t.read)
+                    put("messageCount", t.messageCount)
+                    put("unreadCount", t.unreadCount)
+                }
+                arr.put(obj)
+            }
+            fastSmsPrefs.edit().putString("sms_threads_snapshot", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Returns pre-cached messages for a thread immediately (0ms latency) when opening a chat.
+     */
+    fun getCachedMessagesForThread(threadId: Long, address: String): List<SmsMessage> {
+        threadMessagesCache[threadId]?.let { if (it.isNotEmpty()) return it }
+        if (address.isNotBlank()) {
+            val cleanAddr = address.filter { it.isDigit() }.takeLast(7)
+            for ((_, msgs) in threadMessagesCache) {
+                val first = msgs.firstOrNull() ?: continue
+                if (first.address.equals(address, ignoreCase = true) ||
+                    (cleanAddr.length >= 5 && first.address.filter { it.isDigit() }.endsWith(cleanAddr))
+                ) {
+                    return msgs
+                }
+            }
+        }
+        synchronized(inMemoryMessages) {
+            val mem = inMemoryMessages.filter {
+                it.threadId == threadId || it.address.equals(address, ignoreCase = true)
+            }
+            if (mem.isNotEmpty()) return stitchMultipartMessages(mem)
+        }
+        return emptyList()
     }
 
     private fun registerDeliveryReceivers() {
@@ -85,7 +179,14 @@ class SmsRepository(
         synchronized(inMemoryMessages) {
             val idx = inMemoryMessages.indexOfFirst { it.id == messageId }
             if (idx != -1) {
-                inMemoryMessages[idx] = inMemoryMessages[idx].copy(deliveryStatus = status)
+                val updated = inMemoryMessages[idx].copy(deliveryStatus = status)
+                inMemoryMessages[idx] = updated
+                val cachedList = threadMessagesCache[updated.threadId]
+                if (cachedList != null) {
+                    threadMessagesCache[updated.threadId] = cachedList.map {
+                        if (it.id == messageId) it.copy(deliveryStatus = status) else it
+                    }
+                }
             }
         }
         deliveryStatusListeners[messageId]?.invoke(status)
@@ -100,7 +201,7 @@ class SmsRepository(
             android.Manifest.permission.READ_SMS
         ) == PackageManager.PERMISSION_GRANTED
 
-        val threadsMap = mutableMapOf<Long, MutableList<SmsMessage>>()
+        val threadsMap = LinkedHashMap<Long, MutableList<SmsMessage>>()
         val projection = arrayOf(
             Telephony.Sms._ID,
             Telephony.Sms.THREAD_ID,
@@ -162,7 +263,7 @@ class SmsRepository(
                             read = read,
                             deliveryStatus = resolvedStatus
                         )
-                        threadsMap.getOrPut(effectiveThreadId) { mutableListOf() }.add(msg)
+                        threadsMap.getOrPut(effectiveThreadId) { ArrayList() }.add(msg)
                     }
                 }
             } catch (e: Exception) {
@@ -171,24 +272,30 @@ class SmsRepository(
         }
 
         // Merge inMemoryMessages so all simulated/received SMS are visible
-        for (memMsg in inMemoryMessages) {
-            val list = threadsMap.getOrPut(memMsg.threadId) { mutableListOf() }
-            if (list.none { it.id == memMsg.id || (it.address == memMsg.address && Math.abs(it.date - memMsg.date) < 2000) }) {
-                list.add(memMsg)
+        synchronized(inMemoryMessages) {
+            for (memMsg in inMemoryMessages) {
+                val list = threadsMap.getOrPut(memMsg.threadId) { ArrayList() }
+                if (list.none { it.id == memMsg.id || (it.address == memMsg.address && Math.abs(it.date - memMsg.date) < 2000) }) {
+                    list.add(memMsg)
+                }
             }
         }
 
         if (threadsMap.isEmpty()) {
+            cachedThreads = emptyList()
             return@withContext emptyList()
         }
 
-        // Convert grouped messages into SmsThread summary
-        val result = mutableListOf<SmsThread>()
+        // Convert grouped messages into SmsThread summary and pre-cache per-thread messages
+        val result = ArrayList<SmsThread>(threadsMap.size)
         for ((threadId, msgs) in threadsMap) {
             val stitched = stitchMultipartMessages(msgs)
-            val latest = stitched.maxByOrNull { it.date } ?: continue
+            threadMessagesCache[threadId] = stitched
+            val latest = stitched.lastOrNull() ?: stitched.maxByOrNull { it.date } ?: continue
             val address = latest.address
-            val contactName = contactsRepository.resolveContactName(address)
+            // O(1) in-memory contact resolution first, falling back to cached lookup
+            val contactName = contactsRepository.resolveContactNameFast(address)
+                ?: contactsRepository.resolveContactName(address)
             val unreadCount = stitched.count { !it.read && !it.isSent }
 
             result.add(
@@ -205,7 +312,9 @@ class SmsRepository(
             )
         }
 
-        result.sortedByDescending { it.date }
+        val sortedResult = result.sortedByDescending { it.date }
+        saveThreadsSnapshot(sortedResult)
+        sortedResult
     }
 
     /**
@@ -216,7 +325,7 @@ class SmsRepository(
         if (rawList.size <= 1) return rawList
 
         val sorted = rawList.sortedBy { it.date }
-        val result = mutableListOf<SmsMessage>()
+        val result = ArrayList<SmsMessage>(sorted.size)
         var currentMsg: SmsMessage? = null
 
         for (next in sorted) {
@@ -262,21 +371,24 @@ class SmsRepository(
     }
 
     private fun looksLikeMultipartPart(body1: String, body2: String): Boolean {
+        if (!body1.contains('/') && !body2.contains('/')) return false
         val b1 = body1.trim()
         val b2 = body2.trim()
-        if (b1.contains(Regex("""\(\d+/\d+\)$""")) || b2.contains(Regex("""^\(\d+/\d+\)"""))) return true
-        if (b1.contains(Regex("""\d+/\d+$""")) || b2.contains(Regex("""^\d+/\d+"""))) return true
+        if (b1.contains(MULTIPART_PAREN_SUFFIX_REGEX) || b2.contains(MULTIPART_PAREN_PREFIX_REGEX)) return true
+        if (b1.contains(MULTIPART_PLAIN_SUFFIX_REGEX) || b2.contains(MULTIPART_PLAIN_PREFIX_REGEX)) return true
         return false
     }
 
     private fun cleanMultipartSuffix(text: String): String {
-        return text.replace(Regex("""\s*\(\d+/\d+\)$"""), "")
-            .replace(Regex("""\s*\d+/\d+$"""), "")
+        if (!text.contains('/')) return text
+        return text.replace(CLEAN_PAREN_SUFFIX_REGEX, "")
+            .replace(CLEAN_PLAIN_SUFFIX_REGEX, "")
     }
 
     private fun cleanMultipartPrefix(text: String): String {
-        return text.replace(Regex("""^\(\d+/\d+\)\s*"""), "")
-            .replace(Regex("""^\d+/\d+\s*"""), "")
+        if (!text.contains('/')) return text
+        return text.replace(CLEAN_PAREN_PREFIX_REGEX, "")
+            .replace(CLEAN_PLAIN_PREFIX_REGEX, "")
     }
 
     suspend fun getMessagesForThread(threadId: Long, address: String): List<SmsMessage> = withContext(Dispatchers.IO) {
@@ -286,10 +398,14 @@ class SmsRepository(
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
-            return@withContext inMemoryMessages.filter { it.threadId == threadId }.sortedBy { it.date }
+            val fallback = synchronized(inMemoryMessages) {
+                inMemoryMessages.filter { it.threadId == threadId }.sortedBy { it.date }
+            }
+            threadMessagesCache[threadId] = fallback
+            return@withContext fallback
         }
 
-        val messages = mutableListOf<SmsMessage>()
+        val messages = ArrayList<SmsMessage>()
         val projection = arrayOf(
             Telephony.Sms._ID,
             Telephony.Sms.THREAD_ID,
@@ -358,13 +474,19 @@ class SmsRepository(
             Log.e("SmsRepository", "Failed to query thread messages", e)
         }
 
-        val allMessages = if (messages.isEmpty()) {
+        val memMatches = synchronized(inMemoryMessages) {
             inMemoryMessages.filter { it.threadId == threadId || it.address.equals(address, ignoreCase = true) }
+        }
+        val allMessages = if (messages.isEmpty()) {
+            memMatches
+        } else if (memMatches.isEmpty()) {
+            messages
         } else {
-            val memMatches = inMemoryMessages.filter { it.threadId == threadId || it.address.equals(address, ignoreCase = true) }
             (messages + memMatches).distinctBy { it.id }
         }
-        stitchMultipartMessages(allMessages)
+        val stitched = stitchMultipartMessages(allMessages)
+        threadMessagesCache[threadId] = stitched
+        stitched
     }
 
     suspend fun sendSms(
@@ -463,11 +585,20 @@ class SmsRepository(
         synchronized(inMemoryMessages) {
             inMemoryMessages.add(newMessage)
         }
+        val currentCached = threadMessagesCache[effectiveThreadId] ?: emptyList()
+        threadMessagesCache[effectiveThreadId] = currentCached + newMessage
         Result.success(newMessage)
     }
 
     suspend fun deleteMessage(messageId: Long): Boolean = withContext(Dispatchers.IO) {
-        inMemoryMessages.removeAll { it.id == messageId }
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.removeAll { it.id == messageId }
+        }
+        for ((tId, list) in threadMessagesCache) {
+            if (list.any { it.id == messageId }) {
+                threadMessagesCache[tId] = list.filter { it.id != messageId }
+            }
+        }
 
         try {
             val rows = contentResolver.delete(
@@ -483,7 +614,12 @@ class SmsRepository(
     }
 
     suspend fun deleteThread(threadId: Long, address: String): Boolean = withContext(Dispatchers.IO) {
-        inMemoryMessages.removeAll { it.threadId == threadId || it.address == address }
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.removeAll { it.threadId == threadId || it.address == address }
+        }
+        threadMessagesCache.remove(threadId)
+        cachedThreads = cachedThreads.filter { it.threadId != threadId && it.address != address }
+        saveThreadsSnapshot(cachedThreads)
         try {
             val rows = contentResolver.delete(
                 Telephony.Sms.CONTENT_URI,
@@ -517,11 +653,24 @@ class SmsRepository(
 
     suspend fun markThreadAsRead(threadId: Long, address: String): Boolean = withContext(Dispatchers.IO) {
         // Update in-memory message states
-        inMemoryMessages.forEachIndexed { idx, msg ->
-            if (msg.threadId == threadId || msg.address == address) {
-                inMemoryMessages[idx] = msg.copy(read = true)
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.forEachIndexed { idx, msg ->
+                if (msg.threadId == threadId || msg.address == address) {
+                    inMemoryMessages[idx] = msg.copy(read = true)
+                }
             }
         }
+        threadMessagesCache[threadId]?.let { cached ->
+            threadMessagesCache[threadId] = cached.map { if (!it.read) it.copy(read = true) else it }
+        }
+        cachedThreads = cachedThreads.map {
+            if (it.threadId == threadId || it.address == address) {
+                it.copy(read = true, unreadCount = 0)
+            } else {
+                it
+            }
+        }
+        saveThreadsSnapshot(cachedThreads)
 
         val values = ContentValues().apply {
             put(Telephony.Sms.READ, 1)
@@ -551,18 +700,22 @@ class SmsRepository(
         var insertedId = System.currentTimeMillis()
 
         // Check if a recent incoming SMS fragment from this address exists within 45s to stitch seamlessly
-        val recentPart = inMemoryMessages.lastOrNull {
-            it.address.equals(address, ignoreCase = true) && !it.isSent && Math.abs(date - it.date) < 45000L
+        val recentPart = synchronized(inMemoryMessages) {
+            inMemoryMessages.lastOrNull {
+                it.address.equals(address, ignoreCase = true) && !it.isSent && Math.abs(date - it.date) < 45000L
+            }
         }
         if (recentPart != null) {
             val cleanedPrev = cleanMultipartSuffix(recentPart.body)
             val cleanedNext = cleanMultipartPrefix(body)
             val combinedBody = cleanedPrev + cleanedNext
             val updatedMsg = recentPart.copy(body = combinedBody, date = date)
-            val idx = inMemoryMessages.indexOf(recentPart)
-            if (idx != -1) {
-                inMemoryMessages[idx] = updatedMsg
-                return@withContext updatedMsg.id
+            synchronized(inMemoryMessages) {
+                val idx = inMemoryMessages.indexOf(recentPart)
+                if (idx != -1) {
+                    inMemoryMessages[idx] = updatedMsg
+                    return@withContext updatedMsg.id
+                }
             }
         }
 
@@ -580,23 +733,26 @@ class SmsRepository(
             Log.e("SmsRepository", "Error inserting incoming SMS: ${e.message}")
         }
 
-        inMemoryMessages.add(
-            SmsMessage(
-                id = insertedId,
-                threadId = effectiveThreadId,
-                address = address,
-                body = body,
-                date = date,
-                isSent = false,
-                read = false
-            )
+        val incomingMsg = SmsMessage(
+            id = insertedId,
+            threadId = effectiveThreadId,
+            address = address,
+            body = body,
+            date = date,
+            isSent = false,
+            read = false
         )
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.add(incomingMsg)
+        }
+        val existingCached = threadMessagesCache[effectiveThreadId] ?: emptyList()
+        threadMessagesCache[effectiveThreadId] = existingCached + incomingMsg
         return@withContext insertedId
     }
 
     suspend fun getThreadIdForAddress(address: String): Long? = withContext(Dispatchers.IO) {
         val clean = address.filter { it.isDigit() }
-        val threads = getConversations()
+        val threads = cachedThreads.ifEmpty { getConversations() }
         val match = threads.find {
             it.address.filter { c -> c.isDigit() } == clean
         }

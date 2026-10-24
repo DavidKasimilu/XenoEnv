@@ -132,6 +132,21 @@ fun CallsScreen(
         }
     }
 
+    val (missedCount, incomingCount, outgoingCount) = remember(callLogs) {
+        var missed = 0
+        var incoming = 0
+        var outgoing = 0
+        for (entry in callLogs) {
+            when (entry.type) {
+                CallType.MISSED, CallType.REJECTED -> missed++
+                CallType.INCOMING -> incoming++
+                CallType.OUTGOING -> outgoing++
+                else -> {}
+            }
+        }
+        Triple(missed, incoming, outgoing)
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -194,7 +209,7 @@ fun CallsScreen(
                 .padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
+            item(key = "filter_all") {
                 FilterChip(
                     selected = filter == CallFilter.ALL,
                     onClick = { onFilterChange(CallFilter.ALL) },
@@ -202,8 +217,7 @@ fun CallsScreen(
                     colors = FilterChipDefaults.filterChipColors()
                 )
             }
-            item {
-                val missedCount = callLogs.count { it.type == CallType.MISSED || it.type == CallType.REJECTED }
+            item(key = "filter_missed") {
                 FilterChip(
                     selected = filter == CallFilter.MISSED,
                     onClick = { onFilterChange(CallFilter.MISSED) },
@@ -211,8 +225,7 @@ fun CallsScreen(
                     colors = FilterChipDefaults.filterChipColors()
                 )
             }
-            item {
-                val incomingCount = callLogs.count { it.type == CallType.INCOMING }
+            item(key = "filter_incoming") {
                 FilterChip(
                     selected = filter == CallFilter.INCOMING,
                     onClick = { onFilterChange(CallFilter.INCOMING) },
@@ -220,8 +233,7 @@ fun CallsScreen(
                     colors = FilterChipDefaults.filterChipColors()
                 )
             }
-            item {
-                val outgoingCount = callLogs.count { it.type == CallType.OUTGOING }
+            item(key = "filter_outgoing") {
                 FilterChip(
                     selected = filter == CallFilter.OUTGOING,
                     onClick = { onFilterChange(CallFilter.OUTGOING) },
@@ -266,7 +278,11 @@ fun CallsScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                itemsIndexed(filteredLogs, key = { index, entry -> "call_log_${entry.id}_${entry.number}_$index" }) { _, entry ->
+                itemsIndexed(
+                    items = filteredLogs,
+                    key = { index, entry -> "call_log_${entry.id}_${entry.number}_$index" },
+                    contentType = { _, _ -> "call_log_row" }
+                ) { _, entry ->
                     CallLogItem(
                         entry = entry,
                         onClick = { selectedEntry = entry },

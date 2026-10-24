@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
     private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
     private val intentTriggerCounter = androidx.compose.runtime.mutableIntStateOf(0)
 
-    private fun applyLockScreenAndWakeFlags() {
+    private fun applyLockScreenAndWakeFlags(dismissKeyguardNow: Boolean = false) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true)
@@ -89,12 +89,22 @@ class MainActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
+            if (dismissKeyguardNow && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val km = getSystemService( android.app.KeyguardManager::class.java )
+                km?.requestDismissKeyguard(this, null)
+            }
         } catch (_: Exception) {}
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        applyLockScreenAndWakeFlags()
+        val hasIncomingCallIntent = !intent?.getStringExtra("incoming_number").isNullOrBlank() ||
+            intent?.getBooleanExtra("wake_full_screen_call", false) == true ||
+            intent?.getBooleanExtra("open_full_screen_call", false) == true
+        if (hasIncomingCallIntent) {
+            com.example.telecom.OngoingCallHelper.wakeDeviceScreenForIncomingCall(this)
+        }
+        applyLockScreenAndWakeFlags(dismissKeyguardNow = hasIncomingCallIntent)
         enableEdgeToEdge()
         currentIntentState.value = intent
         intentTriggerCounter.intValue++
@@ -130,10 +140,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (!intent.getStringExtra("incoming_number").isNullOrBlank() ||
-            intent.getBooleanExtra("wake_full_screen_call", false)
-        ) {
-            applyLockScreenAndWakeFlags()
+        val hasIncomingCallIntent = !intent.getStringExtra("incoming_number").isNullOrBlank() ||
+            intent.getBooleanExtra("wake_full_screen_call", false) ||
+            intent.getBooleanExtra("open_full_screen_call", false)
+        if (hasIncomingCallIntent) {
+            com.example.telecom.OngoingCallHelper.wakeDeviceScreenForIncomingCall(this)
+            applyLockScreenAndWakeFlags(dismissKeyguardNow = true)
         }
         setIntent(intent)
         currentIntentState.value = intent
@@ -213,7 +225,7 @@ fun XenoApp(
         }
     }
 
-    // Request permissions on first launch
+    // Request permissions on first launch only for permissions not yet granted
     LaunchedEffect(Unit) {
         val perms = mutableListOf(
             android.Manifest.permission.CALL_PHONE,
@@ -246,7 +258,13 @@ fun XenoApp(
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             perms.add(android.Manifest.permission.BLUETOOTH_CONNECT)
         }
-        permissionsLauncher.launch(perms.toTypedArray())
+        val missingPerms = perms.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(context, it) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPerms.isNotEmpty()) {
+            permissionsLauncher.launch(missingPerms.toTypedArray())
+        }
     }
 
     // Handle intents (e.g. incoming call notification, SMS reply notification, tel: or smsto:)

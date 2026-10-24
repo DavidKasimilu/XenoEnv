@@ -91,21 +91,40 @@ object OngoingCallHelper {
     @Volatile
     private var lastIncomingTriggerTimestamp: Long = 0L
 
+    var onCallDeclinedListener: ((phoneNumber: String, contactName: String?) -> Unit)? = null
+    var onCallAnsweredListener: ((phoneNumber: String, contactName: String?) -> Unit)? = null
+
     /**
-     * Checks whether the device screen is turned off, locked on the keyguard, or the user is
-     * currently at the home screen / outside the app rather than actively inside MainActivity.
+     * Checks whether the device display is currently turned off or locked on the keyguard.
+     * When true, incoming calls wake the display and launch directly into the full-screen
+     * incoming call screen (`ActiveCallScreen`).
      */
-    fun isScreenOffOrAppInBackground(context: Context): Boolean {
+    fun isScreenOffOrLocked(context: Context): Boolean {
         return try {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
             val isScreenOff = powerManager?.isInteractive == false
             val isDeviceLocked = keyguardManager?.isKeyguardLocked == true
-            val isNotInApp = !MainActivity.isAppInForeground
-            isScreenOff || isDeviceLocked || isNotInApp
+            isScreenOff || isDeviceLocked
         } catch (_: Exception) {
-            !MainActivity.isAppInForeground
+            false
         }
+    }
+
+    /**
+     * Checks whether the device screen is on and unlocked, and the user is currently in another app
+     * (or on the home screen outside Xeno).
+     */
+    fun isUserInAnotherAppWithScreenOn(context: Context): Boolean {
+        return !isScreenOffOrLocked(context) && !MainActivity.isAppInForeground
+    }
+
+    /**
+     * Legacy compatibility helper: returns true when the screen is off or locked so full-screen
+     * incoming call wake is triggered, while allowing interactive popups when the screen is on.
+     */
+    fun isScreenOffOrAppInBackground(context: Context): Boolean {
+        return isScreenOffOrLocked(context)
     }
 
     /**
@@ -145,7 +164,7 @@ object OngoingCallHelper {
     /**
      * Wakes the screen and launches MainActivity directly into the full-screen incoming call screen
      * (`ActiveCallScreen`) so the user can pickup (Answer) or hangup (Decline) when the phone screen
-     * was off, locked, or at the home screen.
+     * was off or locked.
      */
     fun launchFullScreenIncomingCallActivity(
         context: Context,
@@ -162,6 +181,7 @@ object OngoingCallHelper {
                 putExtra("open_tab", "CALLS")
                 putExtra("incoming_number", phoneNumber)
                 putExtra("caller_name", contactName)
+                putExtra("open_full_screen_call", true)
                 putExtra("wake_full_screen_call", true)
                 putExtra("incoming_call_ts", System.currentTimeMillis())
             }
@@ -216,9 +236,13 @@ object OngoingCallHelper {
     }
 
     /**
-     * Helper function to handle an incoming call, initialize the ringing session,
-     * trigger the in-app Incoming Call Popup (when actively inside the app) OR wake the screen
-     * and open the full-screen Incoming Call Screen (when the screen is off, locked, or on the home screen).
+     * Helper function to handle an incoming call across all 3 device states:
+     * 1. Screen is OFF or device is locked -> Wakes the display (`wakeDeviceScreenForIncomingCall`)
+     *    and immediately opens the full-screen Incoming Call Screen (`ActiveCallScreen`).
+     * 2. User is in the app (Screen ON) -> Shows the interactive in-app Incoming Call Popup banner
+     *    at the top of the app + system notification with Accept and Decline buttons.
+     * 3. User is in another app (Screen ON) -> Shows the system heads-up Incoming Call Notification
+     *    AND floating overlay call popup (`XenoOverlayService.showCallOverlay`) with Accept and Decline buttons.
      */
     fun handleIncomingCallEvent(
         context: Context,
@@ -230,7 +254,8 @@ object OngoingCallHelper {
         val resolvedName = contactName?.takeIf { it.isNotBlank() }
             ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
 
-        val wakeForFullScreen = !showPopup || isScreenOffOrAppInBackground(context)
+        val wakeForFullScreen = !showPopup || isScreenOffOrLocked(context)
+        val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground
 
         startIncomingSession(
             phoneNumber = cleanNumber,
@@ -260,6 +285,12 @@ object OngoingCallHelper {
                 context = context,
                 phoneNumber = cleanNumber,
                 contactName = resolvedName
+            )
+        } else if (inAnotherAppWithScreenOn) {
+            XenoOverlayService.showCallOverlay(
+                context = context,
+                callerName = resolvedName,
+                callerNumber = cleanNumber
             )
         }
 
@@ -549,6 +580,7 @@ object OngoingCallHelper {
         if (current.isSpeakerOn) {
             setSpeakerphone(context, true)
         }
+        onCallAnsweredListener?.invoke(effectiveNumber, effectiveName)
         return connectedSession
     }
 
@@ -557,6 +589,10 @@ object OngoingCallHelper {
     }
 
     fun declineIncomingCall(context: Context) {
+        val declinedNumber = _sessionFlow.value.phoneNumber.ifBlank {
+            _incomingPopupFlow.value?.callerNumber.orEmpty()
+        }
+        val declinedName = _sessionFlow.value.contactName ?: _incomingPopupFlow.value?.callerName
         releaseIncomingWakeLock()
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
@@ -565,6 +601,9 @@ object OngoingCallHelper {
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()
+        if (declinedNumber.isNotBlank()) {
+            onCallDeclinedListener?.invoke(declinedNumber, declinedName)
+        }
     }
 
     fun endCall(context: Context): Long {

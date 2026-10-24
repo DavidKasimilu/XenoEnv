@@ -7,6 +7,7 @@ import android.provider.ContactsContract
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.data.models.ContactItem
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -14,14 +15,77 @@ class ContactsRepository(private val context: Context) {
 
     private val contentResolver: ContentResolver = context.contentResolver
 
-    suspend fun getContacts(): List<ContactItem> = withContext(Dispatchers.IO) {
+    @Volatile
+    private var cachedContacts: List<ContactItem> = emptyList()
+
+    @Volatile
+    private var lastContactsLoadTimeMs: Long = 0L
+
+    private val phoneToNameCache = ConcurrentHashMap<String, String>()
+    private val unresolvedPhonesCache = ConcurrentHashMap<String, Long>()
+
+    fun getCachedContactsSnapshot(): List<ContactItem> = cachedContacts
+
+    private fun normalizeDigits(number: String): String {
+        val sb = StringBuilder(number.length)
+        for (i in 0 until number.length) {
+            val c = number[i]
+            if (c in '0'..'9') sb.append(c)
+        }
+        return sb.toString()
+    }
+
+    private fun indexContactNumber(rawNumber: String, displayName: String) {
+        if (rawNumber.isBlank() || displayName.isBlank()) return
+        val trimmed = rawNumber.trim()
+        phoneToNameCache[trimmed] = displayName
+        val digits = normalizeDigits(trimmed)
+        if (digits.isNotEmpty()) {
+            phoneToNameCache[digits] = displayName
+            if (digits.length >= 7) {
+                phoneToNameCache[digits.takeLast(7)] = displayName
+            }
+            if (digits.length >= 10) {
+                phoneToNameCache[digits.takeLast(10)] = displayName
+            }
+        }
+    }
+
+    /**
+     * Synchronous O(1) in-memory contact name lookup.
+     * Avoids ContentResolver Binder IPC overhead when enriching Call History and SMS Threads.
+     */
+    fun resolveContactNameFast(phoneNumber: String): String? {
+        if (phoneNumber.isBlank()) return null
+        val trimmed = phoneNumber.trim()
+        phoneToNameCache[trimmed]?.let { return it }
+
+        val digits = normalizeDigits(trimmed)
+        if (digits.isNotEmpty()) {
+            phoneToNameCache[digits]?.let { return it }
+            if (digits.length >= 10) {
+                phoneToNameCache[digits.takeLast(10)]?.let { return it }
+            }
+            if (digits.length >= 7) {
+                phoneToNameCache[digits.takeLast(7)]?.let { return it }
+            }
+        }
+        return null
+    }
+
+    suspend fun getContacts(forceRefresh: Boolean = false): List<ContactItem> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedContacts.isNotEmpty() && (now - lastContactsLoadTimeMs) < 15_000L) {
+            return@withContext cachedContacts
+        }
+
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.READ_CONTACTS
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
-            return@withContext emptyList()
+            return@withContext cachedContacts
         }
 
         val contactsMap = mutableMapOf<Long, ContactItem>()
@@ -54,6 +118,10 @@ class ContactsRepository(private val context: Context) {
                     val number = if (numberIdx != -1) cursor.getString(numberIdx) ?: "" else ""
                     val photoUri = if (photoIdx != -1) cursor.getString(photoIdx) else null
 
+                    if (number.isNotBlank() && name.isNotBlank()) {
+                        indexContactNumber(number, name)
+                    }
+
                     val existing = contactsMap[id]
                     if (existing == null) {
                         contactsMap[id] = ContactItem(
@@ -75,29 +143,59 @@ class ContactsRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("ContactsRepository", "Failed to query contacts", e)
-            return@withContext emptyList()
+            return@withContext cachedContacts
         }
 
         val result = contactsMap.values.sortedBy { it.displayName.lowercase() }
+        cachedContacts = result
+        lastContactsLoadTimeMs = System.currentTimeMillis()
         return@withContext result
     }
 
-    suspend fun resolveContactName(phoneNumber: String): String? = withContext(Dispatchers.IO) {
-        if (phoneNumber.isBlank()) return@withContext null
-        try {
-            val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
-                .appendPath(phoneNumber)
-                .build()
-            val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
-            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (idx != -1) return@withContext cursor.getString(idx)
-                }
-            }
-        } catch (e: Exception) {
-            Log.d("ContactsRepository", "Could not lookup name for $phoneNumber", e)
+    suspend fun resolveContactName(phoneNumber: String): String? {
+        if (phoneNumber.isBlank()) return null
+        // 1. Check O(1) in-memory index first
+        resolveContactNameFast(phoneNumber)?.let { return it }
+
+        val trimmed = phoneNumber.trim()
+        val now = System.currentTimeMillis()
+        val lastMiss = unresolvedPhonesCache[trimmed]
+        if (lastMiss != null && (now - lastMiss) < 60_000L) {
+            return null
         }
-        null
+
+        return withContext(Dispatchers.IO) {
+            resolveContactNameFast(trimmed)?.let { return@withContext it }
+
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_CONTACTS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) return@withContext null
+
+            try {
+                val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
+                    .appendPath(trimmed)
+                    .build()
+                val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                        if (idx != -1) {
+                            val resolved = cursor.getString(idx)
+                            if (!resolved.isNullOrBlank()) {
+                                indexContactNumber(trimmed, resolved)
+                                return@withContext resolved
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d("ContactsRepository", "Could not lookup name for $phoneNumber", e)
+            }
+            unresolvedPhonesCache[trimmed] = System.currentTimeMillis()
+            null
+        }
     }
 }
+

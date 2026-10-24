@@ -5,6 +5,30 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private object FastDateFormatter {
+    private val timeFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("h:mm a", Locale.getDefault())
+    }
+    private val dayTimeFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("EEE, h:mm a", Locale.getDefault())
+    }
+    private val fullDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+    }
+    private val shortDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("MMM d", Locale.getDefault())
+    }
+    private val dayShortDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
+    }
+
+    fun formatTime(timestamp: Long): String = timeFormat.get()!!.format(Date(timestamp))
+    fun formatDayTime(timestamp: Long): String = dayTimeFormat.get()!!.format(Date(timestamp))
+    fun formatFullDate(timestamp: Long): String = fullDateFormat.get()!!.format(Date(timestamp))
+    fun formatShortDate(timestamp: Long): String = shortDateFormat.get()!!.format(Date(timestamp))
+    fun formatDayShortDate(timestamp: Long): String = dayShortDateFormat.get()!!.format(Date(timestamp))
+}
+
 enum class CallType {
     INCOMING,
     OUTGOING,
@@ -67,19 +91,10 @@ data class CallLogEntry(
             val diff = now - date
             val oneDay = 24 * 60 * 60 * 1000L
             return when {
-                diff < oneDay -> {
-                    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-                    timeFormat.format(Date(date))
-                }
+                diff < oneDay -> FastDateFormatter.formatTime(date)
                 diff < 2 * oneDay -> "Yesterday"
-                diff < 7 * oneDay -> {
-                    val dayFormat = SimpleDateFormat("EEE, h:mm a", Locale.getDefault())
-                    dayFormat.format(Date(date))
-                }
-                else -> {
-                    val fullFormat = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-                    fullFormat.format(Date(date))
-                }
+                diff < 7 * oneDay -> FastDateFormatter.formatDayTime(date)
+                else -> FastDateFormatter.formatFullDate(date)
             }
         }
 }
@@ -124,15 +139,9 @@ data class SmsThread(
             val diff = now - date
             val oneDay = 24 * 60 * 60 * 1000L
             return when {
-                diff < oneDay -> {
-                    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-                    timeFormat.format(Date(date))
-                }
+                diff < oneDay -> FastDateFormatter.formatTime(date)
                 diff < 2 * oneDay -> "Yesterday"
-                else -> {
-                    val fullFormat = SimpleDateFormat("MMM d", Locale.getDefault())
-                    fullFormat.format(Date(date))
-                }
+                else -> FastDateFormatter.formatShortDate(date)
             }
         }
 }
@@ -155,16 +164,10 @@ data class SmsMessage(
     val deliveryStatus: SmsDeliveryStatus = SmsDeliveryStatus.DELIVERED
 ) {
     val formattedTime: String
-        get() {
-            val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-            return timeFormat.format(Date(date))
-        }
+        get() = FastDateFormatter.formatTime(date)
 
     val formattedDate: String
-        get() {
-            val dateFormat = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
-            return dateFormat.format(Date(date))
-        }
+        get() = FastDateFormatter.formatDayShortDate(date)
 }
 
 data class IncomingSmsPopupData(

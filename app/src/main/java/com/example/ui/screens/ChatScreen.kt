@@ -423,7 +423,11 @@ fun ChatScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                itemsIndexed(messages, key = { index, msg -> "chat_msg_${msg.id}_${msg.date}_$index" }) { index, msg ->
+                itemsIndexed(
+                    items = messages,
+                    key = { index, msg -> "chat_msg_${msg.id}_${msg.date}_$index" },
+                    contentType = { index, _ -> if (index == recentDividerIndex && recentDividerIndex != -1) "divider_bubble" else "message_bubble" }
+                ) { index, msg ->
                     val isRecentlyCopied = lastCopiedMessageId == msg.id
                     if (index == recentDividerIndex && recentDividerIndex != -1) {
                         Column {

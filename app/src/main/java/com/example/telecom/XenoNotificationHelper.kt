@@ -6,6 +6,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
@@ -15,10 +17,13 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object XenoNotificationHelper {
-    const val CHANNEL_SMS_ID = "xeno_sms_channel"
-    const val CHANNEL_CALL_ID = "xeno_call_channel"
+    const val CHANNEL_SMS_ID = "xeno_sms_channel_v2"
+    const val CHANNEL_CALL_ID = "xeno_call_channel_v2"
 
     @Volatile
     private var lastSmsSignature: String = ""
@@ -41,6 +46,28 @@ object XenoNotificationHelper {
         val key = normalizePhoneKey(senderNumber)
         val hash = if (key.isNotEmpty()) key.hashCode() else fallbackThreadId.toInt()
         return (hash and 0x7FFFFFFF).coerceAtLeast(1001)
+    }
+
+    fun extractInitials(displayName: String?, fallbackNumber: String): String {
+        val clean = displayName?.trim().orEmpty()
+        if (clean.isNotEmpty() && clean.any { it.isLetter() }) {
+            val parts = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
+            return if (parts.size >= 2) {
+                "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
+            } else {
+                parts[0].take(2).uppercase(Locale.getDefault())
+            }
+        }
+        val digits = fallbackNumber.filter { it.isDigit() }
+        return if (digits.isNotEmpty()) digits.takeLast(2) else "#"
+    }
+
+    fun formatNotificationTime(timestampMs: Long = System.currentTimeMillis()): String {
+        return try {
+            SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(timestampMs))
+        } catch (_: Exception) {
+            "Just now"
+        }
     }
 
     /**
@@ -104,21 +131,38 @@ object XenoNotificationHelper {
                 "SMS Messages",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Custom notifications for incoming SMS messages"
+                description = "Redesigned notifications for incoming SMS messages"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 220, 120, 220)
                 enableLights(true)
                 setShowBadge(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
             }
+
+            val ringtoneUri = try {
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            } catch (_: Exception) {
+                null
+            }
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
 
             val callChannel = NotificationChannel(
                 CHANNEL_CALL_ID,
                 "Incoming Calls",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Custom heads-up notifications for incoming phone calls"
+                description = "Heads-up popup and lockscreen notifications for incoming phone calls"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 250, 500, 250, 500)
                 enableLights(true)
                 setShowBadge(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                if (ringtoneUri != null) {
+                    setSound(ringtoneUri, audioAttributes)
+                }
             }
 
             notificationManager.createNotificationChannel(smsChannel)
@@ -144,6 +188,14 @@ object XenoNotificationHelper {
             resolveContactNameQuick(context, senderNumber) ?: senderName.ifBlank { senderNumber }
         } else {
             senderName
+        }
+
+        val initials = extractInitials(resolvedName, senderNumber)
+        val formattedTime = formatNotificationTime()
+        val displaySubtitle = if (resolvedName != senderNumber && senderNumber.isNotBlank()) {
+            senderNumber
+        } else {
+            "Direct SMS Message"
         }
 
         val notificationId = getSmsNotificationId(senderNumber, threadId)
@@ -186,9 +238,18 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val smsRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
+        val smsCollapsedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms_collapsed).apply {
+            setTextViewText(R.id.notif_sms_avatar_text, initials)
             setTextViewText(R.id.notif_sms_sender, resolvedName)
-            setTextViewText(R.id.notif_sms_number, senderNumber)
+            setTextViewText(R.id.notif_sms_time, formattedTime)
+            setTextViewText(R.id.notif_sms_body, body)
+        }
+
+        val smsExpandedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
+            setTextViewText(R.id.notif_sms_avatar_text, initials)
+            setTextViewText(R.id.notif_sms_sender, resolvedName)
+            setTextViewText(R.id.notif_sms_number, displaySubtitle)
+            setTextViewText(R.id.notif_sms_time, formattedTime)
             setTextViewText(R.id.notif_sms_body, body)
 
             setOnClickPendingIntent(R.id.btn_sms_mark_read, markReadPendingIntent)
@@ -196,22 +257,21 @@ object XenoNotificationHelper {
         }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_SMS_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(resolvedName)
             .setContentText(body)
-            .setCustomContentView(smsRemoteViews)
-            .setCustomBigContentView(smsRemoteViews)
-            .setCustomHeadsUpContentView(smsRemoteViews)
+            .setSubText("SMS • $formattedTime")
+            .setCustomContentView(smsCollapsedRemoteViews)
+            .setCustomBigContentView(smsExpandedRemoteViews)
+            .setCustomHeadsUpContentView(smsExpandedRemoteViews)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
-            .addAction(android.R.drawable.checkbox_on_background, "Mark Read", markReadPendingIntent)
-            .addAction(android.R.drawable.ic_menu_send, "Reply", replyPendingIntent)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVibrate(longArrayOf(0, 250, 150, 250))
+            .setVibrate(longArrayOf(0, 220, 120, 220))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
@@ -239,7 +299,7 @@ object XenoNotificationHelper {
     ) {
         val normCaller = normalizePhoneKey(callerNumber)
         val now = System.currentTimeMillis()
-        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 5_000L) {
+        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 3_000L) {
             return
         }
         lastCallNotificationNumber = normCaller
@@ -252,25 +312,35 @@ object XenoNotificationHelper {
         } else {
             resolveContactNameQuick(context, callerNumber) ?: callerNumber
         }
+        val initials = extractInitials(resolvedName, callerNumber)
+        val subtitleText = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
+            "Incoming Voice Call • $callerNumber"
+        } else {
+            "Incoming Voice Call"
+        }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("open_tab", "CALLS")
             putExtra("incoming_number", callerNumber)
             putExtra("caller_name", resolvedName)
             putExtra("open_full_screen_call", true)
+            putExtra("wake_full_screen_call", true)
         }
 
-        val pendingIntent = PendingIntent.getActivity(
+        val fullScreenPendingIntent = PendingIntent.getActivity(
             context,
             8888,
-            intent,
+            fullScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val declineIntent = Intent(context, XenoNotificationActionReceiver::class.java).apply {
             action = XenoNotificationActionReceiver.ACTION_DECLINE_CALL
             putExtra(XenoNotificationActionReceiver.EXTRA_NUMBER, callerNumber)
+            putExtra(XenoNotificationActionReceiver.EXTRA_NAME, resolvedName)
         }
         val declinePendingIntent = PendingIntent.getBroadcast(
             context,
@@ -291,33 +361,41 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val callRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
+        val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
+            setTextViewText(R.id.notif_call_avatar_text, initials)
             setTextViewText(R.id.notif_caller_name, resolvedName)
-            setTextViewText(R.id.notif_caller_number, "Incoming Call ($callerNumber)")
+            setTextViewText(R.id.notif_caller_number, subtitleText)
+
+            setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
+            setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)
+        }
+
+        val callExpandedViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
+            setTextViewText(R.id.notif_call_avatar_text, initials)
+            setTextViewText(R.id.notif_caller_name, resolvedName)
+            setTextViewText(R.id.notif_caller_number, subtitleText)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
             setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)
         }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_CALL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(resolvedName)
-            .setContentText("Incoming Call ($callerNumber)")
-            .setCustomContentView(callRemoteViews)
-            .setCustomBigContentView(callRemoteViews)
-            .setCustomHeadsUpContentView(callRemoteViews)
+            .setContentText(subtitleText)
+            .setCustomContentView(callCollapsedViews)
+            .setCustomBigContentView(callExpandedViews)
+            .setCustomHeadsUpContentView(callExpandedViews)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true)
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(pendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
-            .addAction(android.R.drawable.ic_menu_call, "Answer", answerPendingIntent)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(false)
+            .setContentIntent(fullScreenPendingIntent)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOngoing(true)
-            .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
+            .setVibrate(longArrayOf(0, 500, 250, 500, 250, 500))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 

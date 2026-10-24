@@ -33,13 +33,19 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
             }
 
             ACTION_DECLINE_CALL -> {
+                val callerNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
+                val callerName = intent.getStringExtra(EXTRA_NAME)
                 OngoingCallHelper.declineIncomingCall(context)
+                if (callerNumber.isNotBlank()) {
+                    OngoingCallHelper.onCallDeclinedListener?.invoke(callerNumber, callerName)
+                }
             }
 
             ACTION_MARK_SMS_READ -> {
                 val threadId = intent.getLongExtra(EXTRA_THREAD_ID, -1L)
                 val senderNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
                 XenoNotificationHelper.cancelSmsNotification(context, threadId, senderNumber)
+                onMarkSmsReadFromNotificationListener?.invoke(threadId, senderNumber)
             }
 
             ACTION_REPLY_SMS -> {
@@ -68,5 +74,7 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_THREAD_ID = "extra_thread_id"
         const val EXTRA_NUMBER = "extra_number"
         const val EXTRA_NAME = "extra_name"
+
+        var onMarkSmsReadFromNotificationListener: ((threadId: Long, senderNumber: String) -> Unit)? = null
     }
 }
