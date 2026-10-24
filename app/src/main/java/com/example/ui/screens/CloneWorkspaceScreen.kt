@@ -1253,6 +1253,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     window.__xenoOpenMobileChat = function() {
                         try {
+                            window.__xenoWaExplicitChatOpen = true;
                             window.__xenoDismissedChatSignature = null;
                             document.documentElement.classList.add('xeno-wa-chat-open');
                             window.__xenoNotifyMobileNavBridge();
@@ -1261,6 +1262,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     window.__xenoCloseMobileChat = function() {
                         try {
+                            window.__xenoWaExplicitChatOpen = false;
                             var sig = window.__xenoGetMainChatSignature();
                             window.__xenoDismissedChatSignature = sig || 'dismissed';
                             document.documentElement.classList.remove('xeno-wa-chat-open');
@@ -1333,6 +1335,11 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             var navRailHit = target.closest('[data-xeno-wa-role="nav-rail"]');
                             if (navRailHit && window.__xenoWaPhoneMode) {
                                 window.__xenoCloseMobileChat();
+                                if (typeof window.__xenoStabilizeWaMobileLayout === 'function') {
+                                    setTimeout(window.__xenoStabilizeWaMobileLayout, 40);
+                                    setTimeout(window.__xenoStabilizeWaMobileLayout, 180);
+                                }
+                                return;
                             }
 
                             // C. Handle clicks on a chat item or contact item in #pane-side or left drawers to open the conversation on phone screen
@@ -1344,19 +1351,25 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                     var isArchiveBtn = Boolean(chatItem.querySelector('[data-icon*="archive"]')) ||
                                         (String(chatItem.textContent || '').trim().toLowerCase().indexOf('archived') === 0 && String(chatItem.textContent || '').trim().length < 24);
                                     var isFilterOrHeader = Boolean(target.closest('header, [role="tablist"], button[aria-pressed], input'));
-                                    if (!isArchiveBtn && !isFilterOrHeader) {
+                                    // Ignore clicks on settings/profile menu rows that don't open a conversation
+                                    var inSettingsOrProfileDrawer = Boolean(
+                                        !paneSideItem &&
+                                        chatItem.querySelector('[data-icon*="settings"], [data-icon*="lock"], [data-icon*="bell"], [data-icon*="theme"], [data-icon*="help"], [data-icon*="key"], [data-icon*="Exit"]')
+                                    );
+                                    if (!isArchiveBtn && !isFilterOrHeader && !inSettingsOrProfileDrawer) {
+                                        window.__xenoWaExplicitChatOpen = true;
                                         window.__xenoDismissedChatSignature = null;
                                         window.__xenoLastChatRowTapTime = Date.now();
                                         setTimeout(function() {
-                                            if (document.getElementById('main')) {
+                                            if (document.getElementById('main') && window.__xenoWaExplicitChatOpen) {
                                                 window.__xenoOpenMobileChat();
                                             }
-                                        }, 50);
+                                        }, 45);
                                         setTimeout(function() {
-                                            if (document.getElementById('main') && !window.__xenoDismissedChatSignature) {
+                                            if (document.getElementById('main') && window.__xenoWaExplicitChatOpen) {
                                                 window.__xenoOpenMobileChat();
                                             }
-                                        }, 220);
+                                        }, 200);
                                     }
                                 }
                             }
@@ -1453,17 +1466,19 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                     }
 
                     document.documentElement.classList.add('xeno-wa-phone-ui');
-                    if (!existingStyle) {
-                        var st = document.createElement('style');
+                    if (!existingStyle || !existingStyle.__xenoStableV2) {
+                        var st = existingStyle || document.createElement('style');
                         st.id = styleId;
+                        st.__xenoStableV2 = true;
                         st.textContent =
-                            /* Root & App Container Unlocking */
-                            'html.xeno-wa-phone-ui, html.xeno-wa-phone-ui body { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; -webkit-text-size-adjust: 100% !important; touch-action: manipulation !important; } ' +
-                            'html.xeno-wa-phone-ui #app, html.xeno-wa-phone-ui .app-wrapper-web, html.xeno-wa-phone-ui [data-xeno-wa-anc="1"] { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; top: 0 !important; left: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            /* Root & App Container Unlocking (Stable Viewport Height) */
+                            'html.xeno-wa-phone-ui, html.xeno-wa-phone-ui body { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100dvh) !important; max-height: var(--xeno-wa-vh, 100dvh) !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; position: fixed !important; inset: 0 !important; -webkit-text-size-adjust: 100% !important; touch-action: manipulation !important; overscroll-behavior: none !important; } ' +
+                            'html.xeno-wa-phone-ui #app, html.xeno-wa-phone-ui .app-wrapper-web, html.xeno-wa-phone-ui [data-xeno-wa-anc="1"] { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; max-height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; top: 0 !important; left: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-grid"] { display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: stretch !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; position: relative !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui .app-wrapper-web::after, html.xeno-wa-phone-ui .app-wrapper-web::before { display: none !important; } ' +
 
                             /* Landing / QR Code / Link with Phone Number Screen Adaptation */
-                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode body, html.xeno-wa-phone-ui.xeno-wa-landing-mode #app { overflow-y: auto !important; overflow-x: hidden !important; height: 100% !important; -webkit-overflow-scrolling: touch !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode, html.xeno-wa-phone-ui.xeno-wa-landing-mode body, html.xeno-wa-phone-ui.xeno-wa-landing-mode #app { position: static !important; overflow-y: auto !important; overflow-x: hidden !important; height: 100% !important; max-height: none !important; -webkit-overflow-scrolling: touch !important; } ' +
                             'html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-wrapper, html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-window, html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-main, html.xeno-wa-phone-ui.xeno-wa-landing-mode [data-xeno-wa-landing-anc="1"] { min-width: 0 !important; width: 100% !important; max-width: 100vw !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 10px !important; box-sizing: border-box !important; overflow-x: hidden !important; } ' +
                             'html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-header { min-width: 0 !important; width: 100% !important; max-width: 100vw !important; padding: 10px 14px !important; margin: 0 !important; height: auto !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui.xeno-wa-landing-mode [data-xeno-wa-landing-split="1"] { display: flex !important; flex-direction: column-reverse !important; align-items: center !important; justify-content: flex-start !important; gap: 16px !important; width: 100% !important; max-width: 100% !important; min-width: 0 !important; padding: 8px 4px !important; box-sizing: border-box !important; } ' +
@@ -1471,21 +1486,22 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             'html.xeno-wa-phone-ui.xeno-wa-landing-mode canvas { display: block !important; margin: 6px auto !important; max-width: min(240px, 75vw) !important; max-height: min(240px, 75vw) !important; } ' +
 
                             /* Left Navigation Rail (Chats, Status, Channels, Communities, Settings, Profile) */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] { flex: 0 0 48px !important; width: 48px !important; max-width: 48px !important; min-width: 48px !important; height: 100% !important; z-index: 25 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] { flex: 0 0 52px !important; width: 52px !important; max-width: 52px !important; min-width: 52px !important; height: 100% !important; z-index: 25 !important; padding: 8px 0 !important; margin: 0 !important; box-sizing: border-box !important; overflow-y: auto !important; overflow-x: hidden !important; scrollbar-width: none !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"]::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; } ' +
 
                             /* Chat List & Left Drawers Column (#side + Profile/Settings/Status/Channels/New Chat drawers) */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] { flex: 1 1 auto !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; position: relative !important; z-index: 20 !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
-                            'html.xeno-wa-phone-ui.xeno-wa-has-nav-rail [data-xeno-wa-role="side-col"] { width: calc(100vw - 48px) !important; max-width: calc(100vw - 48px) !important; } ' +
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] > *, html.xeno-wa-phone-ui #side { width: 100% !important; max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] { flex: 1 1 auto !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; position: relative !important; z-index: 20 !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-has-nav-rail [data-xeno-wa-role="side-col"] { flex: 1 1 calc(100vw - 52px) !important; width: calc(100vw - 52px) !important; max-width: calc(100vw - 52px) !important; min-width: 0 !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] > *, html.xeno-wa-phone-ui #side, html.xeno-wa-phone-ui #pane-side { width: 100% !important; max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
 
                             /* Active Chat Conversation Column (#main) - Full-Screen Phone Slide Over */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease !important; transform: translateX(104vw) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; } ' +
-                            'html.xeno-wa-phone-ui.xeno-wa-chat-open [data-xeno-wa-role="main-col"] { transform: translateX(0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 45 !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100dvh) !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.14s ease !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; will-change: transform, opacity !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-chat-open [data-xeno-wa-role="main-col"] { transform: translate3d(0, 0, 0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 45 !important; } ' +
                             'html.xeno-wa-phone-ui #main { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; box-sizing: border-box !important; } ' +
 
                             /* Right Drawer Column (Contact Info, Group Info, Search Messages) */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; transform: translateX(104vw) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; transition: transform 0.2s ease, opacity 0.16s ease !important; box-sizing: border-box !important; } ' +
-                            'html.xeno-wa-phone-ui.xeno-wa-right-drawer-open [data-xeno-wa-role="right-drawer"] { transform: translateX(0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 60 !important; background: #111b21 !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100dvh) !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; transition: transform 0.18s ease, opacity 0.14s ease !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-right-drawer-open [data-xeno-wa-role="right-drawer"] { transform: translate3d(0, 0, 0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 60 !important; background: #111b21 !important; } ' +
                             'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] > * { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
 
                             /* Mobile Chat Header, Bubbles & Compose Footer Refinements */
@@ -1496,7 +1512,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             'html.xeno-wa-phone-ui #main .message-in, html.xeno-wa-phone-ui #main .message-out { max-width: 86% !important; } ' +
                             'html.xeno-wa-phone-ui #main footer { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; padding-left: 4px !important; padding-right: 4px !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui [role="dialog"] { max-width: calc(100vw - 16px) !important; min-width: 0 !important; box-sizing: border-box !important; }';
-                        document.head.appendChild(st);
+                        if (!existingStyle) {
+                            document.head.appendChild(st);
+                        }
                     }
                 }
 
@@ -1515,7 +1533,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             }
                         }
                         var mvp = document.getElementById('xeno-wa-mobile-viewport');
-                        var targetContent = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=3.0, user-scalable=yes, viewport-fit=cover';
+                        var targetContent = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
                         if (!mvp) {
                             mvp = document.createElement('meta');
                             mvp.id = 'xeno-wa-mobile-viewport';
@@ -1609,14 +1627,19 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             mainGrid = mainEl.parentElement.parentElement;
                         }
 
-                        if (sideCol) {
+                        if (sideCol && sideCol.getAttribute('data-xeno-wa-role') !== 'side-col') {
                             sideCol.setAttribute('data-xeno-wa-role', 'side-col');
+                        }
+                        if (mainGrid && mainGrid.getAttribute('data-xeno-wa-role') !== 'main-grid') {
+                            mainGrid.setAttribute('data-xeno-wa-role', 'main-grid');
                         }
 
                         // Walk ancestors from mainGrid up to #app and tag with data-xeno-wa-anc="1"
                         var anc = mainGrid;
                         while (anc && anc !== appEl && anc !== document.body) {
-                            anc.setAttribute('data-xeno-wa-anc', '1');
+                            if (anc.getAttribute('data-xeno-wa-anc') !== '1') {
+                                anc.setAttribute('data-xeno-wa-anc', '1');
+                            }
                             anc = anc.parentElement;
                         }
 
@@ -1634,13 +1657,19 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                     continue;
                                 }
                                 if (!seenSide) {
-                                    child.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                    if (child.getAttribute('data-xeno-wa-role') !== 'nav-rail') {
+                                        child.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                    }
                                     hasNavRail = true;
                                 } else if (!mainColFound && (child.contains(mainEl) || !mainEl)) {
-                                    child.setAttribute('data-xeno-wa-role', 'main-col');
+                                    if (child.getAttribute('data-xeno-wa-role') !== 'main-col') {
+                                        child.setAttribute('data-xeno-wa-role', 'main-col');
+                                    }
                                     mainColFound = child;
                                 } else {
-                                    child.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                    if (child.getAttribute('data-xeno-wa-role') !== 'right-drawer') {
+                                        child.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                    }
                                 }
                             }
 
@@ -1651,7 +1680,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                     var oChild = outerChildren[oc];
                                     if (oChild === mainGrid) break;
                                     if (oChild && oChild.nodeType === 1 && !oChild.contains(sideCol)) {
-                                        oChild.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                        if (oChild.getAttribute('data-xeno-wa-role') !== 'nav-rail') {
+                                            oChild.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                        }
                                         hasNavRail = true;
                                     }
                                 }
@@ -1662,7 +1693,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                 for (var mc = 0; mc < mainColFound.children.length; mc++) {
                                     var mChild = mainColFound.children[mc];
                                     if (mChild && mChild !== mainEl && !mChild.contains(mainEl) && mChild.querySelector('header, section, [role="button"]')) {
-                                        mChild.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                        if (mChild.getAttribute('data-xeno-wa-role') !== 'right-drawer') {
+                                            mChild.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                        }
                                     }
                                 }
                             }
@@ -1687,16 +1720,13 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             document.documentElement.classList.remove('xeno-wa-right-drawer-open');
                         }
 
-                        // Sync Active Chat (#main) Open/Close state & inject Mobile Back Button in #main header
+                        // Deterministic Active Chat (#main) Open/Close state:
+                        // Only show #main slide-over when the user explicitly opened a chat (preventing background typing/status updates from popping open the chat)
                         if (mainEl) {
-                            var currentSig = window.__xenoGetMainChatSignature();
-                            if (currentSig && currentSig !== window.__xenoLastKnownChatSignature) {
-                                window.__xenoLastKnownChatSignature = currentSig;
-                                if (currentSig !== window.__xenoDismissedChatSignature) {
-                                    document.documentElement.classList.add('xeno-wa-chat-open');
-                                }
-                            } else if (!document.documentElement.classList.contains('xeno-wa-chat-open') && !window.__xenoDismissedChatSignature) {
+                            if (window.__xenoWaExplicitChatOpen) {
                                 document.documentElement.classList.add('xeno-wa-chat-open');
+                            } else {
+                                document.documentElement.classList.remove('xeno-wa-chat-open');
                             }
 
                             // Inject Mobile Back Arrow Button into #main > header
@@ -1722,9 +1752,14 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                 }
                             }
                         } else {
+                            window.__xenoWaExplicitChatOpen = false;
                             window.__xenoLastKnownChatSignature = '';
                             window.__xenoDismissedChatSignature = null;
                             document.documentElement.classList.remove('xeno-wa-chat-open', 'xeno-wa-right-drawer-open');
+                        }
+
+                        if (typeof window.__xenoStabilizeWaMobileLayout === 'function') {
+                            window.__xenoStabilizeWaMobileLayout();
                         }
 
                         window.__xenoNotifyMobileNavBridge();
@@ -1783,6 +1818,196 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                     });
                     window.__xenoWaCallDomObserver.observe(document.body, { childList: true, subtree: true });
                 }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+    injectWhatsAppMobileStabilityAndNavHelper(view, phoneUiMode)
+}
+
+/**
+ * Dedicated WhatsApp Web Mobile Layout Stability & Left Navigation Rail Icon Fitting Helper:
+ * 1. Stabilizes the mobile viewport height (`--xeno-wa-vh`) via `window.visualViewport` so opening/closing
+ *    the soft keyboard in search or chat never pushes the header off-screen or causes layout jumps.
+ * 2. Strips desktop `min-width` / `min-height` constraints from dynamic left-side drawers (Status, Channels,
+ *    Communities, Archived, Settings, Profile, New Chat) so every drawer fits smoothly inside `side-col`.
+ * 3. Properly fits, centers, and spaces all icons and the profile avatar inside the Left Navigation Rail
+ *    (`[data-xeno-wa-role="nav-rail"]`) with uniform 40x40px touch targets, 22x22px crisp SVGs, and clean
+ *    vertical spacing between top and bottom icon groups.
+ */
+private fun injectWhatsAppMobileStabilityAndNavHelper(view: WebView?, isPhoneUiMode: Boolean = true) {
+    val js = """
+        (function() {
+            try {
+                window.__xenoWaPhoneMode = ${if (isPhoneUiMode) "true" else "false"};
+                var navStyleId = 'xeno-wa-nav-stability-style';
+                var existingNavStyle = document.getElementById(navStyleId);
+
+                if (!window.__xenoWaPhoneMode) {
+                    if (existingNavStyle && existingNavStyle.parentNode) {
+                        existingNavStyle.parentNode.removeChild(existingNavStyle);
+                    }
+                    return;
+                }
+
+                // 1. Inject Left Nav Rail Icon Fitting, Spacing & Drawer Stability CSS
+                if (document.head && (!existingNavStyle || !existingNavStyle.__xenoNavV2)) {
+                    var nst = existingNavStyle || document.createElement('style');
+                    nst.id = navStyleId;
+                    nst.__xenoNavV2 = true;
+                    nst.textContent =
+                        /* Left Navigation Rail Container & Inner Flex Groups */
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] { ' +
+                        '  flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important; max-width: 52px !important; ' +
+                        '  height: 100% !important; display: flex !important; flex-direction: column !important; ' +
+                        '  align-items: center !important; justify-content: space-between !important; ' +
+                        '  padding: 10px 0 !important; margin: 0 !important; box-sizing: border-box !important; ' +
+                        '  border-right: 1px solid rgba(134, 150, 160, 0.14) !important; z-index: 30 !important; ' +
+                        '  overflow-y: auto !important; overflow-x: hidden !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] > header, ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] > div, ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-nav-inner="1"] { ' +
+                        '  width: 100% !important; max-width: 52px !important; min-width: 0 !important; ' +
+                        '  height: 100% !important; display: flex !important; flex-direction: column !important; ' +
+                        '  align-items: center !important; justify-content: space-between !important; ' +
+                        '  padding: 2px 0 !important; margin: 0 !important; box-sizing: border-box !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-nav-group="1"] { ' +
+                        '  display: flex !important; flex-direction: column !important; align-items: center !important; ' +
+                        '  justify-content: flex-start !important; gap: 10px !important; width: 100% !important; ' +
+                        '  padding: 2px 0 !important; margin: 0 !important; box-sizing: border-box !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-nav-item="1"] { ' +
+                        '  display: flex !important; align-items: center !important; justify-content: center !important; ' +
+                        '  width: 40px !important; height: 40px !important; min-width: 40px !important; min-height: 40px !important; ' +
+                        '  max-width: 40px !important; max-height: 40px !important; margin: 0 auto !important; padding: 0 !important; ' +
+                        '  position: relative !important; box-sizing: border-box !important; flex-shrink: 0 !important; ' +
+                        '} ' +
+                        /* Nav Rail Buttons & Touch Targets (40x40px centered circles) */
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] button, ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] [role="button"], ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-nav-btn="1"] { ' +
+                        '  width: 40px !important; height: 40px !important; min-width: 40px !important; min-height: 40px !important; ' +
+                        '  max-width: 40px !important; max-height: 40px !important; padding: 0 !important; margin: 0 auto !important; ' +
+                        '  border-radius: 50% !important; display: inline-flex !important; align-items: center !important; ' +
+                        '  justify-content: center !important; position: relative !important; box-sizing: border-box !important; ' +
+                        '  flex-shrink: 0 !important; ' +
+                        '} ' +
+                        /* Crisp 22x22px SVG Icons & 28x28px Profile Avatar inside Left Nav Rail */
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] [data-icon] { ' +
+                        '  display: inline-flex !important; align-items: center !important; justify-content: center !important; ' +
+                        '  width: 22px !important; height: 22px !important; max-width: 22px !important; max-height: 22px !important; ' +
+                        '  margin: auto !important; padding: 0 !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] svg { ' +
+                        '  width: 22px !important; height: 22px !important; max-width: 22px !important; max-height: 22px !important; ' +
+                        '  display: block !important; margin: auto !important; flex-shrink: 0 !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] img { ' +
+                        '  width: 28px !important; height: 28px !important; min-width: 28px !important; min-height: 28px !important; ' +
+                        '  max-width: 28px !important; max-height: 28px !important; border-radius: 50% !important; ' +
+                        '  object-fit: cover !important; display: block !important; margin: auto !important; ' +
+                        '} ' +
+                        /* Side Column Drawers (Status, Channels, Communities, Settings, Profile, New Chat) Stability */
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] [data-xeno-wa-drawer="1"], ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] header, ' +
+                        'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] [role="tablist"] { ' +
+                        '  max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; ' +
+                        '} ' +
+                        'html.xeno-wa-phone-ui #pane-side [role="listitem"], ' +
+                        'html.xeno-wa-phone-ui #pane-side [role="row"], ' +
+                        'html.xeno-wa-phone-ui #pane-side [data-testid="cell-frame-container"] { ' +
+                        '  max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; ' +
+                        '}';
+                    if (!existingNavStyle) {
+                        document.head.appendChild(nst);
+                    }
+                }
+
+                // 2. VisualViewport & Window Scroll Pinning (Prevents header jump when keyboard opens)
+                if (!window.__xenoWaViewportPinPatched) {
+                    window.__xenoWaViewportPinPatched = true;
+                    var updateVisualViewportHeight = function() {
+                        try {
+                            if (!window.__xenoWaPhoneMode) return;
+                            var vh = (window.visualViewport && window.visualViewport.height) ? Math.round(window.visualViewport.height) : window.innerHeight;
+                            if (vh && vh > 120) {
+                                document.documentElement.style.setProperty('--xeno-wa-vh', vh + 'px');
+                            }
+                            if (window.scrollX !== 0 || window.scrollY !== 0) {
+                                window.scrollTo(0, 0);
+                            }
+                        } catch(e) {}
+                    };
+                    updateVisualViewportHeight();
+                    if (window.visualViewport) {
+                        window.visualViewport.addEventListener('resize', updateVisualViewportHeight, { passive: true });
+                        window.visualViewport.addEventListener('scroll', updateVisualViewportHeight, { passive: true });
+                    }
+                    window.addEventListener('resize', updateVisualViewportHeight, { passive: true });
+                }
+
+                // 3. Normalize Left Nav Rail DOM Hierarchy & Side Column Drawers
+                window.__xenoStabilizeWaMobileLayout = function() {
+                    try {
+                        if (!window.__xenoWaPhoneMode) return;
+
+                        var navRail = document.querySelector('[data-xeno-wa-role="nav-rail"]');
+                        if (navRail) {
+                            var innerContainer = navRail.querySelector('header') || navRail.firstElementChild;
+                            if (innerContainer && innerContainer.nodeType === 1) {
+                                if (innerContainer.getAttribute('data-xeno-wa-nav-inner') !== '1') {
+                                    innerContainer.setAttribute('data-xeno-wa-nav-inner', '1');
+                                }
+                                var groups = innerContainer.children;
+                                for (var g = 0; g < groups.length; g++) {
+                                    var grp = groups[g];
+                                    if (grp && grp.nodeType === 1 && grp.querySelector('button, [role="button"], [data-icon], img')) {
+                                        if (grp.getAttribute('data-xeno-wa-nav-group') !== '1') {
+                                            grp.setAttribute('data-xeno-wa-nav-group', '1');
+                                        }
+                                        var items = grp.children;
+                                        for (var it = 0; it < items.length; it++) {
+                                            var itemEl = items[it];
+                                            if (itemEl && itemEl.nodeType === 1 && itemEl.getAttribute('data-xeno-wa-nav-item') !== '1') {
+                                                itemEl.setAttribute('data-xeno-wa-nav-item', '1');
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            var navBtns = navRail.querySelectorAll('button, [role="button"]');
+                            for (var b = 0; b < navBtns.length; b++) {
+                                var btnEl = navBtns[b];
+                                if (btnEl.getAttribute('data-xeno-wa-nav-btn') !== '1') {
+                                    btnEl.setAttribute('data-xeno-wa-nav-btn', '1');
+                                }
+                                var parentWrap = btnEl.parentElement;
+                                if (parentWrap && parentWrap !== navRail && parentWrap !== innerContainer &&
+                                    parentWrap.getAttribute('data-xeno-wa-nav-group') !== '1' &&
+                                    parentWrap.getAttribute('data-xeno-wa-nav-item') !== '1') {
+                                    parentWrap.setAttribute('data-xeno-wa-nav-item', '1');
+                                }
+                            }
+                        }
+
+                        // Ensure all child drawers inside side-col (Status, Channels, Communities, Settings, Profile) fit cleanly
+                        var sideCol = document.querySelector('[data-xeno-wa-role="side-col"]');
+                        if (sideCol) {
+                            var sideChildren = sideCol.children;
+                            for (var sc = 0; sc < sideChildren.length; sc++) {
+                                var sChild = sideChildren[sc];
+                                if (sChild && sChild.nodeType === 1 && sChild.getAttribute('data-xeno-wa-drawer') !== '1') {
+                                    sChild.setAttribute('data-xeno-wa-drawer', '1');
+                                }
+                            }
+                        }
+                    } catch(e) {}
+                };
+
+                window.__xenoStabilizeWaMobileLayout();
             } catch(e) {}
         })();
     """.trimIndent()
@@ -2107,60 +2332,50 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
 }
 
 /**
- * Non-intrusive YouTube Normal Video Watch, YouTube Shorts & Smooth Scroll Helper Engine:
- * - Preserves YouTube's native touch gesture listeners (`touchstart`/`touchmove`) so YouTube Shorts
- *   vertical swiping, video player seekbar scrubbing, and SPA video card navigation work natively.
- * - Dynamically adapts page layout & scroll state across 3 modes (`home`, `watch`, `shorts`) via
- *   `data-xeno-yt-mode` and SPA History API hooks (`pushState`/`replaceState`/`popstate`).
- * - In `watch` mode (`/watch?v=...`), guarantees `#player-container-id`, `#player`, `#movie_player`,
- *   `<video class="html5-main-video">`, and `<ytm-watch>` are visible, untransformed, properly sized
- *   at 16:9 at the top of the screen, and actively playing while keeping related videos/comments scrollable below.
- * - In `shorts` mode (`/shorts/...`), clears all document scroll-lock overrides so `<ytm-shorts>` and
- *   `#shorts-container` maintain their full-viewport vertical swipe carousel and auto-plays each Short on swipe.
+ * Layout-Safe YouTube Watch, Shorts & Offline Download Helper Engine:
+ * - Preserves 100% of YouTube's native mobile (`m.youtube.com`) and desktop (`www.youtube.com`) layout,
+ *   sticky player container (`#player-container-id`), watch metadata, comments drawers, and Shorts vertical pager
+ *   without injecting destructive CSS or inline `html`/`body` position/overflow overrides.
+ * - Unlocks inline HTML5 video playback (`playsinline`) and unmutes audio on user interaction.
+ * - Provides in-WebView stream extraction (via `ytInitialPlayerResponse`, `performance.getEntriesByType('resource')`
+ *   `googlevideo.com/videoplayback` capture, and same-origin InnerTube `/youtubei/v1/player` resolution)
+ *   for reliable offline video downloads.
  */
 private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Browser Environment, Audio Unlock & Instant SPA Route Detection
-                if (!window.__xenoYtEnvPatched) {
-                    window.__xenoYtEnvPatched = true;
+                // 1. Clean up any legacy layout-breaking CSS or inline style overrides if present
+                if (document.documentElement && document.body) {
+                    if (!window.__xenoYtLayoutCleanedV3) {
+                        window.__xenoYtLayoutCleanedV3 = true;
+                        document.documentElement.removeAttribute('data-xeno-yt-mode');
+                        document.documentElement.removeAttribute('data-xeno-shorts');
+                        document.body.removeAttribute('data-xeno-yt-mode');
+                        document.body.removeAttribute('data-xeno-shorts');
+                        var propsToRemove = ['overflow-y', 'overflow-x', 'overflow', 'position', 'height', 'min-height', 'top', 'touch-action'];
+                        for (var p = 0; p < propsToRemove.length; p++) {
+                            try {
+                                document.documentElement.style.removeProperty(propsToRemove[p]);
+                                document.body.style.removeProperty(propsToRemove[p]);
+                            } catch(e) {}
+                        }
+                    }
+                }
+
+                // 2. Browser Environment, Audio Unlock & SPA Route Detection
+                if (!window.__xenoYtEnvPatchedV3) {
+                    window.__xenoYtEnvPatchedV3 = true;
                     try {
                         Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
                         Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
-                        if (!window.chrome) {
-                            window.chrome = { runtime: {} };
-                        }
                     } catch(e) {}
-
-                    // Only make wheel/mousewheel passive — NEVER force touchstart/touchmove passive so Shorts swipe & player scrubbar work natively
-                    var origAddEventListener = EventTarget.prototype.addEventListener;
-                    EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'wheel' || type === 'mousewheel') {
-                            var newOpts = { passive: true, capture: false };
-                            if (typeof options === 'boolean') {
-                                newOpts = { capture: options, passive: true };
-                            } else if (typeof options === 'object' && options !== null) {
-                                newOpts = Object.assign({}, options, { passive: true });
-                            }
-                            return origAddEventListener.call(this, type, listener, newOpts);
-                        }
-                        return origAddEventListener.call(this, type, listener, options);
-                    };
 
                     // Unlock YouTube & Shorts audio on first user interaction
                     window.__xenoYtAudioUnlocked = false;
                     var unlockYtAudio = function() {
                         window.__xenoYtAudioUnlocked = true;
-                        var vids = document.querySelectorAll('video');
-                        for (var i = 0; i < vids.length; i++) {
-                            var v = vids[i];
-                            if (v.muted) {
-                                v.muted = false;
-                                v.volume = 1.0;
-                            }
-                        }
                         try {
                             var mp = document.getElementById('movie_player');
                             if (mp && typeof mp.unMute === 'function') {
@@ -2182,35 +2397,34 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     document.addEventListener('touchend', unlockYtAudio, { passive: true, once: true });
                     document.addEventListener('click', unlockYtAudio, { passive: true, once: true });
 
-                    // Hook SPA History navigation so transitions between Home, Watch, and Shorts update layout & start playback immediately
+                    // Hook SPA History navigation so the floating Download button updates immediately
                     var origPushState = history.pushState;
                     var origReplaceState = history.replaceState;
                     history.pushState = function() {
                         var ret = origPushState.apply(this, arguments);
                         if (window.__xenoRunYtOptimizer) {
-                            setTimeout(window.__xenoRunYtOptimizer, 20);
-                            setTimeout(window.__xenoRunYtOptimizer, 250);
-                            setTimeout(window.__xenoRunYtOptimizer, 700);
+                            setTimeout(window.__xenoRunYtOptimizer, 60);
+                            setTimeout(window.__xenoRunYtOptimizer, 350);
                         }
                         return ret;
                     };
                     history.replaceState = function() {
                         var ret = origReplaceState.apply(this, arguments);
                         if (window.__xenoRunYtOptimizer) {
-                            setTimeout(window.__xenoRunYtOptimizer, 20);
-                            setTimeout(window.__xenoRunYtOptimizer, 250);
+                            setTimeout(window.__xenoRunYtOptimizer, 60);
+                            setTimeout(window.__xenoRunYtOptimizer, 350);
                         }
                         return ret;
                     };
                     window.addEventListener('popstate', function() {
                         if (window.__xenoRunYtOptimizer) {
-                            setTimeout(window.__xenoRunYtOptimizer, 20);
-                            setTimeout(window.__xenoRunYtOptimizer, 250);
+                            setTimeout(window.__xenoRunYtOptimizer, 60);
+                            setTimeout(window.__xenoRunYtOptimizer, 350);
                         }
                     });
                 }
 
-                // 2. Mode-Aware CSS for Home Feed, Normal Video Watch Page (/watch), and YouTube Shorts (/shorts)
+                // 3. Minimal, Non-Intrusive CSS: Only suppress "Open in App" promo banners without touching YouTube layout
                 var styleId = 'xeno-yt-shorts-smooth-style';
                 var styleEl = document.getElementById(styleId);
                 if (!styleEl && (document.head || document.documentElement)) {
@@ -2218,96 +2432,15 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     styleEl.id = styleId;
                     (document.head || document.documentElement).appendChild(styleEl);
                 }
-                if (styleEl && !styleEl.__xenoUpdatedV2) {
-                    styleEl.__xenoUpdatedV2 = true;
+                if (styleEl && !styleEl.__xenoCleanLayoutV3) {
+                    styleEl.__xenoCleanLayoutV3 = true;
                     styleEl.textContent =
-                        /* Home & Watch: Smooth vertical page scrolling */
-                        'html:not([data-xeno-yt-mode="shorts"]), body:not([data-xeno-yt-mode="shorts"]) { ' +
-                        '  overflow-y: auto !important; overflow-x: hidden !important; ' +
-                        '  position: static !important; height: auto !important; min-height: 100% !important; ' +
-                        '  -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: auto !important; ' +
-                        '  -webkit-tap-highlight-color: transparent !important; ' +
-                        '} ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-app, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) #app, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) .page-container, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-browse, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-search, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-single-column-browse-results-renderer, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-single-column-watch-next-results-renderer, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-rich-grid-renderer, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-section-list-renderer, ' +
-                        'html:not([data-xeno-yt-mode="shorts"]) ytm-item-section-renderer { ' +
-                        '  overflow-y: visible !important; -webkit-overflow-scrolling: touch !important; ' +
-                        '} ' +
-                        /* Watch Mode (/watch?v=...): Guarantee 16:9 Top Video Player & Watch Page are visible and unobstructed */
-                        'html[data-xeno-yt-mode="watch"] ytm-browse, ' +
-                        'html[data-xeno-yt-mode="watch"] ytm-shorts { ' +
-                        '  display: none !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] ytm-watch { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '  pointer-events: auto !important; transform: none !important; -webkit-transform: none !important; ' +
-                        '  width: 100% !important; min-height: 56.25vw !important; z-index: 30 !important; ' +
-                        '  background-color: #000 !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id #player, ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id .player-size { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '  width: 100% !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id #movie_player, ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id .html5-video-player, ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id .html5-video-container { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '  width: 100% !important; height: 100% !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] #player-container-id video, ' +
-                        'html[data-xeno-yt-mode="watch"] #movie_player video { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '  width: 100% !important; height: 100% !important; left: 0 !important; top: 0 !important; ' +
-                        '  object-fit: contain !important; background-color: #000 !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="watch"] ytm-watch .player-placeholder { ' +
-                        '  display: block !important; width: 100% !important; min-height: 56.25vw !important; ' +
-                        '} ' +
-                        /* Shorts Mode (/shorts/...): Full-viewport vertical swipe layout & visible video player */
-                        'html[data-xeno-yt-mode="shorts"], body[data-xeno-yt-mode="shorts"] { ' +
-                        '  height: 100% !important; overflow: hidden !important; background-color: #000 !important; ' +
-                        '  overscroll-behavior-y: none !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="shorts"] ytm-browse, ' +
-                        'html[data-xeno-yt-mode="shorts"] ytm-watch { ' +
-                        '  display: none !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="shorts"] ytm-shorts, ' +
-                        'html[data-xeno-yt-mode="shorts"] #shorts-container, ' +
-                        'html[data-xeno-yt-mode="shorts"] .reel-video-in-sequence, ' +
-                        'html[data-xeno-yt-mode="shorts"] ytm-reel-video-renderer { ' +
-                        '  visibility: visible !important; opacity: 1 !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="shorts"] #player-container-id, ' +
-                        'html[data-xeno-yt-mode="shorts"] #shorts-player, ' +
-                        'html[data-xeno-yt-mode="shorts"] #movie_player, ' +
-                        'html[data-xeno-yt-mode="shorts"] .html5-video-player, ' +
-                        'html[data-xeno-yt-mode="shorts"] .html5-video-container { ' +
-                        '  visibility: visible !important; opacity: 1 !important; ' +
-                        '} ' +
-                        'html[data-xeno-yt-mode="shorts"] video { ' +
-                        '  display: block !important; visibility: visible !important; opacity: 1 !important; ' +
-                        '  width: 100% !important; height: 100% !important; object-fit: cover !important; ' +
-                        '} ' +
-                        /* Suppress only genuine app-upsell banners without touching player overlays */
-                        'ytm-mealbar-promo-renderer, ytm-app-banner, .upsell-dialog-renderer, .mealbar-promo-renderer, ' +
-                        'ytm-statement-banner-renderer, .upsell-dialog-backdrop { ' +
+                        'ytm-mealbar-promo-renderer, ytm-app-banner, .mealbar-promo-renderer, ' +
+                        'ytm-statement-banner-renderer { ' +
                         '  display: none !important; pointer-events: none !important; ' +
                         '}';
                 }
 
-                // 3. Mode Detection, Player Visibility Recovery & Playback Controller
                 function getYouTubePageMode() {
                     var path = (window.location.pathname || '').toLowerCase();
                     var search = (window.location.search || '').toLowerCase();
@@ -2320,354 +2453,324 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     return 'home';
                 }
 
-                function getActiveMediaId(mode) {
-                    try {
-                        if (mode === 'watch') {
-                            var params = new URLSearchParams(window.location.search);
-                            return params.get('v') || window.location.href;
-                        }
-                        if (mode === 'shorts') {
-                            var parts = (window.location.pathname || '').split('/shorts/');
-                            if (parts.length > 1 && parts[1]) {
-                                return 'short_' + parts[1].split('/')[0].split('?')[0];
+                function sanitizeVideoPlaybackUrl(rawUrl) {
+                    if (!rawUrl || rawUrl.indexOf('http') !== 0) return '';
+                    if (rawUrl.indexOf('googlevideo.com/videoplayback') === -1) return rawUrl;
+                    return rawUrl
+                        .replace(/([?&])range=[^&]+/g, '$1')
+                        .replace(/([?&])rn=[^&]+/g, '$1')
+                        .replace(/([?&])rbuf=[^&]+/g, '$1')
+                        .replace(/([?&])ump=[^&]+/g, '$1')
+                        .replace(/([?&])srfvp=[^&]+/g, '$1')
+                        .replace(/\?&/g, '?')
+                        .replace(/&+/g, '&')
+                        .replace(/[&?]$/, '');
+                }
+
+                function extractBestStreamFromStreamingData(sd) {
+                    if (!sd) return '';
+                    var fmts = sd.formats || [];
+                    var bestProg = '';
+                    for (var i = 0; i < fmts.length; i++) {
+                        var f = fmts[i];
+                        if (f && f.url && f.url.indexOf('http') === 0) {
+                            if (f.itag === 18 || f.itag === 22) {
+                                return f.url;
                             }
-                            return 'shorts_feed';
+                            if (!bestProg) bestProg = f.url;
                         }
+                    }
+                    if (bestProg) return bestProg;
+
+                    var adaptive = sd.adaptiveFormats || [];
+                    var bestVid = '';
+                    var bestAud = '';
+                    for (var j = 0; j < adaptive.length; j++) {
+                        var af = adaptive[j];
+                        if (!af || !af.url || af.url.indexOf('http') !== 0) continue;
+                        var mime = (af.mimeType || '').toLowerCase();
+                        if (mime.indexOf('video/mp4') === 0) {
+                            if (af.itag === 134 || af.itag === 135 || af.itag === 136 || !bestVid) {
+                                bestVid = af.url;
+                                if (af.itag === 134) break;
+                            }
+                        }
+                    }
+                    for (var k = 0; k < adaptive.length; k++) {
+                        var audF = adaptive[k];
+                        if (!audF || !audF.url || audF.url.indexOf('http') !== 0) continue;
+                        var aMime = (audF.mimeType || '').toLowerCase();
+                        if (aMime.indexOf('audio/mp4') === 0) {
+                            bestAud = audF.url;
+                            if (audF.itag === 140) break;
+                        }
+                    }
+                    if (bestVid && bestAud) return bestVid + '|||' + bestAud;
+                    if (bestVid) return bestVid;
+                    return '';
+                }
+
+                function extractStreamFromPerformanceEntries() {
+                    try {
+                        if (!window.performance || typeof window.performance.getEntriesByType !== 'function') return '';
+                        var entries = window.performance.getEntriesByType('resource') || [];
+                        var progUrl = '';
+                        var vidUrl = '';
+                        var audUrl = '';
+                        for (var i = entries.length - 1; i >= 0; i--) {
+                            var u = entries[i] && entries[i].name ? entries[i].name : '';
+                            if (u.indexOf('googlevideo.com/videoplayback') === -1) continue;
+                            var clean = sanitizeVideoPlaybackUrl(u);
+                            if (clean.indexOf('itag=18&') !== -1 || clean.indexOf('itag=22&') !== -1) {
+                                progUrl = clean;
+                                break;
+                            }
+                            if (!vidUrl && (clean.indexOf('mime=video%2Fmp4') !== -1 || clean.indexOf('mime=video/mp4') !== -1)) {
+                                vidUrl = clean;
+                            }
+                            if (!audUrl && (clean.indexOf('mime=audio%2Fmp4') !== -1 || clean.indexOf('mime=audio/mp4') !== -1 || clean.indexOf('itag=140&') !== -1)) {
+                                audUrl = clean;
+                            }
+                        }
+                        if (progUrl) return progUrl;
+                        if (vidUrl && audUrl) return vidUrl + '|||' + audUrl;
+                        if (vidUrl) return vidUrl;
                     } catch(e) {}
                     return '';
                 }
 
-                function optimizeYouTubeAndShorts() {
-                    var mode = getYouTubePageMode();
-                    var mediaId = getActiveMediaId(mode);
-
-                    if (document.documentElement && document.body) {
-                        if (document.documentElement.getAttribute('data-xeno-yt-mode') !== mode) {
-                            document.documentElement.setAttribute('data-xeno-yt-mode', mode);
-                        }
-                        if (document.body.getAttribute('data-xeno-yt-mode') !== mode) {
-                            document.body.setAttribute('data-xeno-yt-mode', mode);
-                        }
-                        document.documentElement.removeAttribute('data-xeno-shorts');
-                        document.body.removeAttribute('data-xeno-shorts');
-
-                        if (mode === 'shorts') {
-                            // Clear all inline scroll-unlock properties so Shorts vertical swipe pager works natively
-                            document.documentElement.style.removeProperty('overflow-y');
-                            document.documentElement.style.removeProperty('overflow');
-                            document.documentElement.style.removeProperty('position');
-                            document.documentElement.style.removeProperty('height');
-                            document.documentElement.style.removeProperty('min-height');
-                            document.documentElement.style.removeProperty('touch-action');
-
-                            document.body.style.removeProperty('overflow-y');
-                            document.body.style.removeProperty('overflow');
-                            document.body.style.removeProperty('position');
-                            document.body.style.removeProperty('height');
-                            document.body.style.removeProperty('min-height');
-                            document.body.style.removeProperty('top');
-                            document.body.style.removeProperty('touch-action');
-                        } else {
-                            // Unlock scroll on Home, Search & Watch pages
-                            document.documentElement.style.setProperty('overflow-y', 'auto', 'important');
-                            document.documentElement.style.setProperty('position', 'static', 'important');
-                            document.documentElement.style.setProperty('height', 'auto', 'important');
-                            document.documentElement.style.removeProperty('touch-action');
-
-                            document.body.style.setProperty('overflow-y', 'auto', 'important');
-                            document.body.style.setProperty('position', 'static', 'important');
-                            document.body.style.setProperty('height', 'auto', 'important');
-                            document.body.style.setProperty('top', 'auto', 'important');
-                            document.body.style.removeProperty('touch-action');
-                            document.body.classList.remove('no-scroll', 'modal-open', 'lock-scroll');
-                            document.body.removeAttribute('scroll-locked');
-                        }
-                    }
-
-                    // Track media ID transitions (new normal video or newly swiped Short)
-                    var isNewMedia = false;
-                    if (mediaId && window.__xenoYtCurrentMediaId !== mediaId) {
-                        window.__xenoYtCurrentMediaId = mediaId;
-                        window.__xenoYtMediaEnteredAt = Date.now();
-                        window.__xenoYtUserPausedId = null;
-                        isNewMedia = true;
-                    }
-
-                    // Dismiss ONLY genuine app-install promo banners (never click player Close or c3-overlay buttons!)
-                    var promoBtns = document.querySelectorAll(
-                        'ytm-mealbar-promo-renderer button[aria-label*="Dismiss"], ' +
-                        'ytm-mealbar-promo-renderer .mealbar-promo-renderer-dismiss-button button, ' +
-                        'ytm-mealbar-promo-renderer .mealbar-promo-renderer-dismiss-button, ' +
-                        '.upsell-dialog-dismiss-button button'
-                    );
-                    for (var d = 0; d < promoBtns.length; d++) {
-                        try { promoBtns[d].click(); } catch(e) {}
-                    }
-
-                    // Ensure Watch & Shorts containers and singleton player are never hidden
-                    if (mode === 'watch') {
-                        var ytmWatch = document.querySelector('ytm-watch');
-                        if (ytmWatch) {
-                            ytmWatch.removeAttribute('hidden');
-                        }
-                        var pc = document.getElementById('player-container-id');
-                        if (pc) {
-                            pc.removeAttribute('hidden');
-                            pc.setAttribute('aria-hidden', 'false');
-                        }
-                    } else if (mode === 'shorts') {
-                        var ytmShorts = document.querySelector('ytm-shorts');
-                        if (ytmShorts) {
-                            ytmShorts.removeAttribute('hidden');
-                        }
-                        var pcShorts = document.getElementById('player-container-id');
-                        if (pcShorts) {
-                            pcShorts.removeAttribute('hidden');
-                            pcShorts.setAttribute('aria-hidden', 'false');
-                        }
-                    }
-
-                    // Drive YouTube HTML5 Player API (#movie_player / #shorts-player) & <video> elements
-                    if (mode === 'watch' || mode === 'shorts') {
-                        var elapsedSinceEnter = Date.now() - (window.__xenoYtMediaEnteredAt || 0);
-                        var shouldAutoStart = isNewMedia || (elapsedSinceEnter < 3000 && window.__xenoYtUserPausedId !== mediaId);
-
+                function extractActiveYouTubeMetadata() {
+                    var m = getYouTubePageMode();
+                    var rawId = '';
+                    if (m === 'watch') {
                         try {
-                            var playerEl = (mode === 'shorts' ? document.getElementById('shorts-player') : null) ||
-                                           document.getElementById('movie_player') ||
-                                           document.querySelector('.html5-video-player');
-                            if (playerEl) {
-                                // On Watch page, if movie_player has loadVideoById and hasn't loaded the requested video ID after SPA nav, load it
-                                if (mode === 'watch' && mediaId && mediaId.length === 11 && typeof playerEl.getVideoData === 'function') {
-                                    var vData = playerEl.getVideoData();
-                                    var loadedId = vData && vData.video_id ? vData.video_id : '';
-                                    var pState = typeof playerEl.getPlayerState === 'function' ? playerEl.getPlayerState() : 1;
-                                    if (loadedId && loadedId !== mediaId && elapsedSinceEnter > 400 && typeof playerEl.loadVideoById === 'function') {
-                                        playerEl.loadVideoById(mediaId);
-                                    } else if ((pState === -1 || pState === 5) && shouldAutoStart && typeof playerEl.playVideo === 'function') {
-                                        playerEl.playVideo();
-                                    }
-                                } else if (shouldAutoStart && typeof playerEl.playVideo === 'function') {
-                                    var st = typeof playerEl.getPlayerState === 'function' ? playerEl.getPlayerState() : -1;
-                                    if (st === -1 || st === 2 || st === 5) {
-                                        playerEl.playVideo();
-                                    }
-                                }
-                                if (window.__xenoYtAudioUnlocked && typeof playerEl.isMuted === 'function' && playerEl.isMuted()) {
-                                    if (typeof playerEl.unMute === 'function') playerEl.unMute();
-                                    if (typeof playerEl.setVolume === 'function') playerEl.setVolume(100);
-                                }
+                            rawId = (new URLSearchParams(window.location.search)).get('v') || '';
+                        } catch(e) {}
+                    } else if (m === 'shorts') {
+                        var sp = (window.location.pathname || '').split('/shorts/');
+                        if (sp.length > 1 && sp[1]) {
+                            rawId = sp[1].split('/')[0].split('?')[0];
+                        }
+                    }
+
+                    var pEl = (m === 'shorts' ? document.getElementById('shorts-player') : null) ||
+                              document.getElementById('movie_player') ||
+                              document.querySelector('.html5-video-player');
+                    var pr = null;
+                    try {
+                        if (pEl && typeof pEl.getPlayerResponse === 'function') {
+                            pr = pEl.getPlayerResponse();
+                        }
+                    } catch(e) {}
+                    if (!pr && window.ytInitialPlayerResponse) {
+                        pr = window.ytInitialPlayerResponse;
+                    }
+
+                    var vDetails = (pr && pr.videoDetails) ? pr.videoDetails : null;
+                    if (vDetails && vDetails.videoId && (!rawId || vDetails.videoId === rawId)) {
+                        rawId = vDetails.videoId;
+                    }
+                    if (!rawId && pEl && typeof pEl.getVideoData === 'function') {
+                        try {
+                            var vd = pEl.getVideoData();
+                            if (vd && vd.video_id) rawId = vd.video_id;
+                        } catch(e) {}
+                    }
+
+                    var title = '';
+                    var author = '';
+                    var durationSec = 0;
+
+                    if (vDetails && vDetails.videoId === rawId) {
+                        title = vDetails.title || '';
+                        author = vDetails.author || '';
+                        durationSec = parseInt(vDetails.lengthSeconds || '0', 10) || 0;
+                    }
+                    if (pEl && typeof pEl.getVideoData === 'function') {
+                        try {
+                            var vd2 = pEl.getVideoData();
+                            if (vd2 && (!rawId || vd2.video_id === rawId)) {
+                                if (!title && vd2.title) title = vd2.title;
+                                if (!author && vd2.author) author = vd2.author;
                             }
                         } catch(e) {}
-
-                        var videos = document.querySelectorAll('video');
-                        for (var i = 0; i < videos.length; i++) {
-                            var v = videos[i];
-                            if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
-                            if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
-                            v.playsInline = true;
-                            if (!v.preload || v.preload === 'none') {
-                                v.preload = 'auto';
+                    }
+                    if (!title) {
+                        var domTitleEl = document.querySelector(
+                            '.slim-video-metadata-header .slim-video-information-title, ' +
+                            'ytm-slim-video-metadata-section-renderer h2, ' +
+                            '.reel-player-header-renderer .reel-player-header-title, ' +
+                            'h1.title'
+                        );
+                        if (domTitleEl && domTitleEl.textContent) {
+                            title = domTitleEl.textContent.trim();
+                        } else if (document.title) {
+                            title = document.title.replace(/\s*-\s*YouTube$/i, '').trim();
+                        }
+                    }
+                    if (!author) {
+                        var domAuthorEl = document.querySelector(
+                            'ytm-slim-owner-renderer .slim-owner-icon-and-title a, ' +
+                            '.slim-owner-channel-name, ' +
+                            '.reel-player-header-channel-title'
+                        );
+                        if (domAuthorEl && domAuthorEl.textContent) {
+                            author = domAuthorEl.textContent.trim();
+                        }
+                    }
+                    if (!durationSec) {
+                        try {
+                            if (pEl && typeof pEl.getDuration === 'function') {
+                                durationSec = Math.round(pEl.getDuration() || 0);
                             }
-
-                            if (!v.__xenoYtObservedV2) {
-                                v.__xenoYtObservedV2 = true;
-                                v.addEventListener('loadedmetadata', function() {
-                                    var self = this;
-                                    self.playsInline = true;
-                                    if (window.__xenoYtAudioUnlocked && self.muted) {
-                                        self.muted = false;
-                                        self.volume = 1.0;
-                                    }
-                                    var curMode = getYouTubePageMode();
-                                    var curId = getActiveMediaId(curMode);
-                                    if ((curMode === 'watch' || curMode === 'shorts') && self.paused && window.__xenoYtUserPausedId !== curId) {
-                                        self.play().catch(function() {
-                                            self.muted = true;
-                                            self.play().catch(function(){});
-                                        });
-                                    }
-                                }, { passive: true });
-
-                                v.addEventListener('playing', function() {
-                                    var self = this;
-                                    if (window.__xenoYtAudioUnlocked && self.muted) {
-                                        self.muted = false;
-                                        self.volume = 1.0;
-                                    }
-                                }, { passive: true });
-
-                                // Loop Shorts seamlessly if ended
-                                v.addEventListener('ended', function() {
-                                    var self = this;
-                                    if (getYouTubePageMode() === 'shorts') {
-                                        self.currentTime = 0;
-                                        self.play().catch(function(){});
-                                    }
-                                }, { passive: true });
-                            }
-
-                            if (shouldAutoStart && v.paused && (v.readyState >= 1 || v.currentSrc || v.src)) {
-                                var playPromise = v.play();
-                                if (playPromise && typeof playPromise.catch === 'function') {
-                                    playPromise.catch(function() {
-                                        if (!v.muted) {
-                                            v.muted = true;
-                                            v.play().catch(function(){});
-                                        }
-                                    });
-                                }
-                            }
+                        } catch(e) {}
+                    }
+                    if (!durationSec) {
+                        var activeVid = document.querySelector('video');
+                        if (activeVid && activeVid.duration && isFinite(activeVid.duration)) {
+                            durationSec = Math.round(activeVid.duration);
                         }
                     }
 
-                    // 4. Desktop-Style Offline Download Extractor & In-Page Download Pill
+                    var directStream = '';
+                    try {
+                        if (pr && pr.streamingData && (!vDetails || vDetails.videoId === rawId)) {
+                            directStream = extractBestStreamFromStreamingData(pr.streamingData);
+                        }
+                    } catch(e) {}
+                    if (!directStream) {
+                        var domVid = document.querySelector('video');
+                        if (domVid) {
+                            var src = domVid.currentSrc || domVid.src || '';
+                            if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
+                                directStream = sanitizeVideoPlaybackUrl(src);
+                            }
+                        }
+                    }
+                    if (!directStream) {
+                        directStream = extractStreamFromPerformanceEntries();
+                    }
+
+                    return {
+                        videoId: rawId || '',
+                        title: title || 'YouTube Video',
+                        author: author || 'YouTube',
+                        durationSec: String(durationSec || 0),
+                        directStreamUrl: directStream || ''
+                    };
+                }
+
+                window.__xenoTriggerYtDownload = function() {
+                    var meta = extractActiveYouTubeMetadata();
+                    if (!meta.videoId) {
+                        return false;
+                    }
+                    if (!window.XenoYtBridge || typeof window.XenoYtBridge.downloadVideo !== 'function') {
+                        return false;
+                    }
+
+                    // If we already have a direct progressive stream URL, start immediately
+                    if (meta.directStreamUrl && meta.directStreamUrl.indexOf('http') === 0 && meta.directStreamUrl.indexOf('|||') === -1) {
+                        window.XenoYtBridge.downloadVideo(
+                            meta.videoId,
+                            meta.title,
+                            meta.author,
+                            meta.durationSec,
+                            meta.directStreamUrl
+                        );
+                        return true;
+                    }
+
+                    // Otherwise perform a fast same-origin InnerTube player fetch inside the WebView (1.5s timeout)
+                    // before handing off to XenoYtBridge so the stream URL uses the WebView's exact TLS session & IP
+                    var dispatched = false;
+                    var finishDispatch = function(resolvedStream, resolvedTitle, resolvedAuthor, resolvedDur) {
+                        if (dispatched) return;
+                        dispatched = true;
+                        window.XenoYtBridge.downloadVideo(
+                            meta.videoId,
+                            resolvedTitle || meta.title,
+                            resolvedAuthor || meta.author,
+                            resolvedDur || meta.durationSec,
+                            resolvedStream || meta.directStreamUrl || ''
+                        );
+                    };
+
+                    var safetyTimer = setTimeout(function() {
+                        finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
+                    }, 1600);
+
+                    try {
+                        fetch('/youtubei/v1/player?prettyPrint=false', {
+                            method: 'POST',
+                            credentials: 'omit',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-YouTube-Client-Name': '28',
+                                'X-YouTube-Client-Version': '1.62.27'
+                            },
+                            body: JSON.stringify({
+                                videoId: meta.videoId,
+                                context: {
+                                    client: {
+                                        clientName: 'ANDROID_VR',
+                                        clientVersion: '1.62.27',
+                                        osName: 'Android',
+                                        osVersion: '12L',
+                                        androidSdkVersion: 32,
+                                        deviceMake: 'Oculus',
+                                        deviceModel: 'Quest 3',
+                                        hl: 'en',
+                                        gl: 'US'
+                                    }
+                                },
+                                playbackContext: {
+                                    contentPlaybackContext: {
+                                        html5Preference: 'HTML5_PREF_WANTS',
+                                        signatureTimestamp: 20073
+                                    }
+                                },
+                                contentCheckOk: true,
+                                racyCheckOk: true
+                            })
+                        }).then(function(resp) {
+                            return resp.json();
+                        }).then(function(data) {
+                            clearTimeout(safetyTimer);
+                            var sUrl = (data && data.streamingData) ? extractBestStreamFromStreamingData(data.streamingData) : '';
+                            var vd = (data && data.videoDetails) ? data.videoDetails : null;
+                            var rTitle = (vd && vd.title) ? vd.title : meta.title;
+                            var rAuthor = (vd && vd.author) ? vd.author : meta.author;
+                            var rDur = (vd && vd.lengthSeconds) ? String(vd.lengthSeconds) : meta.durationSec;
+                            finishDispatch(sUrl || meta.directStreamUrl, rTitle, rAuthor, rDur);
+                        }).catch(function() {
+                            clearTimeout(safetyTimer);
+                            finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
+                        });
+                    } catch(e) {
+                        clearTimeout(safetyTimer);
+                        finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
+                    }
+                    return true;
+                };
+
+                function optimizeYouTubeAndShorts() {
+                    var mode = getYouTubePageMode();
+
+                    // Ensure inline video playback without altering YouTube layout or forcing play/pause loops
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                    }
+
+                    // Intercept /feed/downloads navigation to open the Clone Space Offline Library
                     var pathLower = (window.location.pathname || '').toLowerCase();
                     if (pathLower.indexOf('/feed/downloads') === 0 && window.XenoYtBridge && typeof window.XenoYtBridge.openOfflineDownloads === 'function') {
                         window.XenoYtBridge.openOfflineDownloads();
                     }
-
-                    function extractActiveYouTubeMetadata() {
-                        var m = getYouTubePageMode();
-                        var rawId = '';
-                        if (m === 'watch') {
-                            try {
-                                rawId = (new URLSearchParams(window.location.search)).get('v') || '';
-                            } catch(e) {}
-                        } else if (m === 'shorts') {
-                            var sp = (window.location.pathname || '').split('/shorts/');
-                            if (sp.length > 1 && sp[1]) {
-                                rawId = sp[1].split('/')[0].split('?')[0];
-                            }
-                        }
-
-                        var pEl = (m === 'shorts' ? document.getElementById('shorts-player') : null) ||
-                                  document.getElementById('movie_player') ||
-                                  document.querySelector('.html5-video-player');
-                        var pr = null;
-                        try {
-                            if (pEl && typeof pEl.getPlayerResponse === 'function') {
-                                pr = pEl.getPlayerResponse();
-                            }
-                        } catch(e) {}
-                        if (!pr && window.ytInitialPlayerResponse) {
-                            pr = window.ytInitialPlayerResponse;
-                        }
-
-                        var vDetails = (pr && pr.videoDetails) ? pr.videoDetails : null;
-                        if (vDetails && vDetails.videoId && (!rawId || vDetails.videoId === rawId)) {
-                            rawId = vDetails.videoId;
-                        }
-                        if (!rawId && pEl && typeof pEl.getVideoData === 'function') {
-                            try {
-                                var vd = pEl.getVideoData();
-                                if (vd && vd.video_id) rawId = vd.video_id;
-                            } catch(e) {}
-                        }
-
-                        var title = '';
-                        var author = '';
-                        var durationSec = 0;
-
-                        if (vDetails && vDetails.videoId === rawId) {
-                            title = vDetails.title || '';
-                            author = vDetails.author || '';
-                            durationSec = parseInt(vDetails.lengthSeconds || '0', 10) || 0;
-                        }
-                        if (pEl && typeof pEl.getVideoData === 'function') {
-                            try {
-                                var vd2 = pEl.getVideoData();
-                                if (vd2 && (!rawId || vd2.video_id === rawId)) {
-                                    if (!title && vd2.title) title = vd2.title;
-                                    if (!author && vd2.author) author = vd2.author;
-                                }
-                            } catch(e) {}
-                        }
-                        if (!title) {
-                            var domTitleEl = document.querySelector(
-                                '.slim-video-metadata-header .slim-video-information-title, ' +
-                                'ytm-slim-video-metadata-section-renderer h2, ' +
-                                '.reel-player-header-renderer .reel-player-header-title, ' +
-                                'h1.title'
-                            );
-                            if (domTitleEl && domTitleEl.textContent) {
-                                title = domTitleEl.textContent.trim();
-                            } else if (document.title) {
-                                title = document.title.replace(/\s*-\s*YouTube$/i, '').trim();
-                            }
-                        }
-                        if (!author) {
-                            var domAuthorEl = document.querySelector(
-                                'ytm-slim-owner-renderer .slim-owner-icon-and-title a, ' +
-                                '.slim-owner-channel-name, ' +
-                                '.reel-player-header-channel-title'
-                            );
-                            if (domAuthorEl && domAuthorEl.textContent) {
-                                author = domAuthorEl.textContent.trim();
-                            }
-                        }
-                        if (!durationSec) {
-                            try {
-                                if (pEl && typeof pEl.getDuration === 'function') {
-                                    durationSec = Math.round(pEl.getDuration() || 0);
-                                }
-                            } catch(e) {}
-                        }
-                        if (!durationSec) {
-                            var activeVid = document.querySelector('video');
-                            if (activeVid && activeVid.duration && isFinite(activeVid.duration)) {
-                                durationSec = Math.round(activeVid.duration);
-                            }
-                        }
-
-                        var directStream = '';
-                        try {
-                            if (pr && pr.streamingData && (!vDetails || vDetails.videoId === rawId)) {
-                                var fmts = pr.streamingData.formats || [];
-                                for (var f = 0; f < fmts.length; f++) {
-                                    if (fmts[f] && fmts[f].url && fmts[f].url.indexOf('http') === 0) {
-                                        directStream = fmts[f].url;
-                                        if (fmts[f].itag === 22 || fmts[f].itag === 18) break;
-                                    }
-                                }
-                            }
-                        } catch(e) {}
-                        if (!directStream) {
-                            var domVid = document.querySelector('video');
-                            if (domVid) {
-                                var src = domVid.currentSrc || domVid.src || '';
-                                if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
-                                    directStream = src;
-                                }
-                            }
-                        }
-
-                        return {
-                            videoId: rawId || '',
-                            title: title || 'YouTube Video',
-                            author: author || 'YouTube',
-                            durationSec: String(durationSec || 0),
-                            directStreamUrl: directStream || ''
-                        };
-                    }
-
-                    window.__xenoTriggerYtDownload = function() {
-                        var meta = extractActiveYouTubeMetadata();
-                        if (!meta.videoId) {
-                            return false;
-                        }
-                        if (window.XenoYtBridge && typeof window.XenoYtBridge.downloadVideo === 'function') {
-                            window.XenoYtBridge.downloadVideo(
-                                meta.videoId,
-                                meta.title,
-                                meta.author,
-                                meta.durationSec,
-                                meta.directStreamUrl
-                            );
-                            return true;
-                        }
-                        return false;
-                    };
 
                     // Inject or update the sleek in-page Download Pill on Watch & Shorts pages
                     var pillId = 'xeno-yt-download-pill';
@@ -2678,11 +2781,11 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             existingPill.id = pillId;
                             existingPill.type = 'button';
                             existingPill.style.cssText =
-                                'position:fixed; right:14px; bottom:' + (mode === 'shorts' ? '150px' : '22px') + '; ' +
+                                'position:fixed; right:12px; bottom:' + (mode === 'shorts' ? '136px' : '62px') + '; ' +
                                 'z-index:2147483640; display:flex; align-items:center; gap:6px; ' +
-                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.22); ' +
-                                'border-radius:20px; padding:8px 14px; font-family:Roboto,sans-serif; font-size:12.5px; ' +
-                                'font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,0.55); cursor:pointer; ' +
+                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.24); ' +
+                                'border-radius:20px; padding:7px 13px; font-family:Roboto,sans-serif; font-size:12px; ' +
+                                'font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
                                 '-webkit-tap-highlight-color:transparent;';
                             existingPill.addEventListener('click', function(ev) {
                                 ev.stopPropagation();
@@ -2697,7 +2800,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             document.body.appendChild(existingPill);
                         }
                         if (existingPill) {
-                            existingPill.style.bottom = (mode === 'shorts' ? '150px' : '22px');
+                            existingPill.style.bottom = (mode === 'shorts' ? '136px' : '62px');
                             existingPill.style.display = 'flex';
                             var curIdCheck = extractActiveYouTubeMetadata().videoId;
                             var prog = -1;
@@ -2716,7 +2819,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                                 existingPill.style.borderColor = '#2BA640';
                             } else {
                                 existingPill.textContent = '⬇ Download Offline';
-                                existingPill.style.borderColor = 'rgba(255,255,255,0.22)';
+                                existingPill.style.borderColor = 'rgba(255,255,255,0.24)';
                             }
                         }
                     } else if (existingPill) {
@@ -2734,7 +2837,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
                             optimizeYouTubeAndShorts();
-                        }, 200);
+                        }, 300);
                     });
                     window.__xenoYtMutationObserver.observe(document.body, {
                         childList: true,
@@ -3752,6 +3855,8 @@ fun CloneWorkspaceScreen(
                                 canGoBack = existing.canGoBack()
                                 if (isWhatsapp) {
                                     injectWhatsAppWebSupportEngine(existing, isWhatsAppPhoneUi)
+                                } else if (isYoutube) {
+                                    injectYouTubeAndShortsSmoothHelper(existing)
                                 }
                                 webViewInstance = existing
                                 existing
@@ -3800,7 +3905,7 @@ fun CloneWorkspaceScreen(
                                     javaScriptEnabled = true
                                     domStorageEnabled = true
                                     databaseEnabled = true
-                                    loadWithOverviewMode = true
+                                    loadWithOverviewMode = !(isYoutube && !instance.isDesktopMode) && !(isWhatsapp && isWhatsAppPhoneUi)
                                     useWideViewPort = true
                                     // Disable pinch-zoom on Instagram, Facebook, TikTok & YouTube so double-tap-to-like and fast vertical video swipes stay crisp
                                     builtInZoomControls = !isShortVideoSocialApp
@@ -3986,7 +4091,21 @@ fun CloneWorkspaceScreen(
                                     override fun onLoadResource(view: WebView?, url: String?) {
                                         super.onLoadResource(view, url)
                                         if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
+                                            val isMediaAsset = url != null && (
+                                                url.contains("pps.whatsapp.net") ||
+                                                url.contains("mmg.whatsapp.net") ||
+                                                url.startsWith("blob:") ||
+                                                url.startsWith("data:")
+                                            )
+                                            if (!isMediaAsset) {
+                                                injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
+                                            }
+                                        } else if (isYoutube && url != null && url.contains("googlevideo.com/videoplayback")) {
+                                            YouTubeOfflineRepository.onCapturedGoogleVideoUrl(
+                                                pageUrl = view?.url ?: currentUrl,
+                                                resourceUrl = url,
+                                                userAgent = view?.settings?.userAgentString ?: MOBILE_USER_AGENT
+                                            )
                                         }
                                     }
 

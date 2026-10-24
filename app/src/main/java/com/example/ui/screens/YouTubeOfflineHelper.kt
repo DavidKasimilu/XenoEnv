@@ -85,6 +85,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -101,9 +105,11 @@ import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 data class YouTubeOfflineVideo(
     val videoId: String,
@@ -128,6 +134,86 @@ object YouTubeOfflineRepository {
     // Maps videoId -> download progress (0..100)
     private val _activeDownloadsFlow = MutableStateFlow<Map<String, Int>>(emptyMap())
     val activeDownloadsFlow: StateFlow<Map<String, Int>> = _activeDownloadsFlow.asStateFlow()
+
+    // Live stream URLs captured from WebView playback (videoId -> CapturedMediaStreams)
+    private data class CapturedMediaStreams(
+        var progressiveMp4Url: String? = null,
+        var adaptiveVideoMp4Url: String? = null,
+        var adaptiveAudioMp4Url: String? = null,
+        var userAgent: String = ""
+    )
+
+    private val capturedStreamsByVideoId = ConcurrentHashMap<String, CapturedMediaStreams>()
+    @Volatile
+    private var latestCapturedStreams = CapturedMediaStreams()
+
+    /**
+     * Called from WebViewClient.onLoadResource whenever YouTube's HTML5 player requests a
+     * `googlevideo.com/videoplayback` segment. Stripping `&range=`, `&rn=`, `&rbuf=`, and `&ump=`
+     * yields a signed stream URL bound to the user's exact IP and session.
+     */
+    fun onCapturedGoogleVideoUrl(pageUrl: String?, resourceUrl: String, userAgent: String) {
+        if (!resourceUrl.contains("googlevideo.com/videoplayback")) return
+        try {
+            val cleanedUrl = sanitizeGoogleVideoUrl(resourceUrl)
+            if (!cleanedUrl.startsWith("http")) return
+
+            val videoId = extractVideoIdFromPageUrl(pageUrl ?: "")
+            val entry = if (videoId.isNotBlank()) {
+                capturedStreamsByVideoId.getOrPut(videoId) { CapturedMediaStreams(userAgent = userAgent) }
+            } else {
+                latestCapturedStreams
+            }
+            entry.userAgent = userAgent
+
+            val isItag18Or22 = cleanedUrl.contains("itag=18&") || cleanedUrl.contains("itag=22&") ||
+                cleanedUrl.endsWith("itag=18") || cleanedUrl.endsWith("itag=22")
+            val isVideoMp4 = cleanedUrl.contains("mime=video%2Fmp4", ignoreCase = true) ||
+                cleanedUrl.contains("mime=video/mp4", ignoreCase = true)
+            val isAudioMp4 = cleanedUrl.contains("mime=audio%2Fmp4", ignoreCase = true) ||
+                cleanedUrl.contains("mime=audio/mp4", ignoreCase = true) ||
+                cleanedUrl.contains("itag=140&")
+
+            when {
+                isItag18Or22 -> {
+                    entry.progressiveMp4Url = cleanedUrl
+                    latestCapturedStreams.progressiveMp4Url = cleanedUrl
+                    latestCapturedStreams.userAgent = userAgent
+                }
+                isVideoMp4 -> {
+                    entry.adaptiveVideoMp4Url = cleanedUrl
+                    latestCapturedStreams.adaptiveVideoMp4Url = cleanedUrl
+                    latestCapturedStreams.userAgent = userAgent
+                }
+                isAudioMp4 -> {
+                    entry.adaptiveAudioMp4Url = cleanedUrl
+                    latestCapturedStreams.adaptiveAudioMp4Url = cleanedUrl
+                    latestCapturedStreams.userAgent = userAgent
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun sanitizeGoogleVideoUrl(rawUrl: String): String {
+        if (!rawUrl.contains("googlevideo.com/videoplayback")) return rawUrl.trim()
+        return rawUrl.trim()
+            .replace(Regex("([?&])range=[^&]+"), "$1")
+            .replace(Regex("([?&])rn=[^&]+"), "$1")
+            .replace(Regex("([?&])rbuf=[^&]+"), "$1")
+            .replace(Regex("([?&])ump=[^&]+"), "$1")
+            .replace(Regex("([?&])srfvp=[^&]+"), "$1")
+            .replace("?&", "?")
+            .replace(Regex("&+"), "&")
+            .trimEnd('&', '?')
+    }
+
+    private fun extractVideoIdFromPageUrl(url: String): String {
+        return when {
+            url.contains("v=") -> url.substringAfter("v=").substringBefore("&").substringBefore("#").trim()
+            url.contains("/shorts/") -> url.substringAfter("/shorts/").substringBefore("?").substringBefore("/").trim()
+            else -> ""
+        }
+    }
 
     fun isDeviceOnline(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
@@ -239,7 +325,7 @@ object YouTubeOfflineRepository {
         userAgent: String,
         onCompleted: (Boolean, String) -> Unit = { _, _ -> }
     ) {
-        val cleanId = videoId.trim().takeIf { it.isNotBlank() } ?: return
+        val cleanId = videoId.trim().substringBefore("&").substringBefore("?").substringBefore("/").takeIf { it.isNotBlank() } ?: return
         if (_activeDownloadsFlow.value.containsKey(cleanId)) {
             mainHandler.post {
                 Toast.makeText(context, "Already downloading this video...", Toast.LENGTH_SHORT).show()
@@ -265,6 +351,8 @@ object YouTubeOfflineRepository {
             val offlineDir = getOfflineDir(appCtx)
             val videoFile = File(offlineDir, "yt_${cleanId}.mp4")
             val tempFile = File(offlineDir, "yt_${cleanId}.part")
+            val tempVideoOnlyFile = File(offlineDir, "yt_${cleanId}_v.part")
+            val tempAudioOnlyFile = File(offlineDir, "yt_${cleanId}_a.part")
             val thumbFile = File(offlineDir, "yt_${cleanId}.jpg")
 
             try {
@@ -276,22 +364,51 @@ object YouTubeOfflineRepository {
                     ""
                 }
 
-                // 1. Resolve playable MP4 stream URL + metadata (via page directStreamUrl or InnerTube Player API)
-                _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 8)
+                _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 6)
 
-                var streamUrl = directStreamUrl.trim().takeIf {
-                    it.startsWith("http://") || it.startsWith("https://")
+                // Parse directStreamUrl if WebView provided a single URL or "videoUrl|||audioUrl" pair
+                var pageProgressiveUrl: String? = null
+                var pageAdaptiveVideoUrl: String? = null
+                var pageAdaptiveAudioUrl: String? = null
+
+                if (directStreamUrl.isNotBlank()) {
+                    if (directStreamUrl.contains("|||")) {
+                        val parts = directStreamUrl.split("|||")
+                        val vPart = sanitizeGoogleVideoUrl(parts.getOrNull(0) ?: "")
+                        val aPart = sanitizeGoogleVideoUrl(parts.getOrNull(1) ?: "")
+                        if (vPart.startsWith("http") && aPart.startsWith("http")) {
+                            pageAdaptiveVideoUrl = vPart
+                            pageAdaptiveAudioUrl = aPart
+                        } else if (vPart.startsWith("http")) {
+                            pageProgressiveUrl = vPart
+                        }
+                    } else {
+                        val cleaned = sanitizeGoogleVideoUrl(directStreamUrl)
+                        if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
+                            pageProgressiveUrl = cleaned
+                        }
+                    }
                 }
 
-                val innertubeResult = resolveInnerTubeStream(cleanId, cookies)
+                // Also check WebView network sniffer cache for this videoId
+                val captured = capturedStreamsByVideoId[cleanId] ?: latestCapturedStreams
+                if (pageProgressiveUrl.isNullOrBlank() && !captured.progressiveMp4Url.isNullOrBlank()) {
+                    pageProgressiveUrl = captured.progressiveMp4Url
+                }
+                if (pageAdaptiveVideoUrl.isNullOrBlank() && !captured.adaptiveVideoMp4Url.isNullOrBlank()) {
+                    pageAdaptiveVideoUrl = captured.adaptiveVideoMp4Url
+                    pageAdaptiveAudioUrl = captured.adaptiveAudioMp4Url
+                }
+
+                // Resolve via InnerTube multi-client engine + public API fallback
+                _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 10)
+                val innertubeResult = resolveInnerTubeStream(cleanId, cookies) ?: resolvePipedOrInvidiousStream(cleanId)
+
                 if (innertubeResult != null) {
-                    if (streamUrl.isNullOrBlank()) {
-                        streamUrl = innertubeResult.streamUrl
-                    }
                     if (innertubeResult.title.isNotBlank() && (finalTitle.startsWith("YouTube Video") || finalTitle.length < 4)) {
                         finalTitle = innertubeResult.title
                     }
-                    if (innertubeResult.author.isNotBlank() && finalAuthor == "YouTube Channel") {
+                    if (innertubeResult.author.isNotBlank() && (finalAuthor == "YouTube Channel" || finalAuthor == "YouTube")) {
                         finalAuthor = innertubeResult.author
                     }
                     if (innertubeResult.durationSec > 0L && finalDurationSec <= 0L) {
@@ -299,14 +416,14 @@ object YouTubeOfflineRepository {
                     }
                 }
 
-                // 2. Download thumbnail for offline display
+                // Download thumbnail for offline library card
                 try {
                     val thumbUrls = listOf(
                         "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg",
                         "https://i.ytimg.com/vi/$cleanId/mqdefault.jpg"
                     )
                     for (tUrl in thumbUrls) {
-                        if (downloadBinaryFile(tUrl, thumbFile, userAgent, cookies, null)) {
+                        if (downloadBinaryFile(tUrl, thumbFile, userAgent, "", null)) {
                             break
                         }
                     }
@@ -314,38 +431,95 @@ object YouTubeOfflineRepository {
 
                 _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 15)
 
-                // 3. Download the MP4 video stream to local disk
                 var downloadedOk = false
-                if (!streamUrl.isNullOrBlank()) {
-                    downloadedOk = downloadBinaryFile(
-                        urlStr = streamUrl,
-                        destFile = tempFile,
-                        userAgent = innertubeResult?.clientUserAgent ?: userAgent,
-                        cookies = cookies
-                    ) { progressPct ->
-                        val mapped = (15 + (progressPct * 0.82f).toInt()).coerceIn(15, 98)
-                        _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+
+                // Candidate list of progressive (single-file video+audio MP4) streams
+                val progressiveCandidates = mutableListOf<Pair<String, String>>()
+                if (!pageProgressiveUrl.isNullOrBlank()) {
+                    progressiveCandidates.add(pageProgressiveUrl to userAgent)
+                }
+                if (innertubeResult != null) {
+                    if (innertubeResult.progressiveUrls.isNotEmpty()) {
+                        for (pUrl in innertubeResult.progressiveUrls) {
+                            progressiveCandidates.add(pUrl to innertubeResult.clientUserAgent)
+                        }
                     }
                 }
 
-                // If primary stream URL failed, try alternate InnerTube client stream URLs
-                if (!downloadedOk && innertubeResult != null) {
-                    for (altUrl in innertubeResult.backupUrls) {
-                        if (downloadBinaryFile(
-                                urlStr = altUrl,
-                                destFile = tempFile,
-                                userAgent = innertubeResult.clientUserAgent,
-                                cookies = cookies
-                            ) { progressPct ->
-                                val mapped = (15 + (progressPct * 0.82f).toInt()).coerceIn(15, 98)
-                                _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                // Step A: Try all progressive MP4 streams first (single file with both video & audio)
+                for ((candUrl, candUa) in progressiveCandidates) {
+                    if (downloadStreamWithRangeFallback(
+                            urlStr = candUrl,
+                            destFile = tempFile,
+                            userAgent = candUa,
+                            cookies = cookies
+                        ) { progressPct ->
+                            val mapped = (15 + (progressPct * 0.82f).toInt()).coerceIn(15, 98)
+                            _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                        }
+                    ) {
+                        downloadedOk = true
+                        break
+                    }
+                }
+
+                // Step B: If no progressive stream succeeded, try Adaptive Video MP4 + Adaptive Audio M4A muxing
+                if (!downloadedOk) {
+                    val adaptiveVideoCandidates = mutableListOf<Pair<String, String>>()
+                    if (!pageAdaptiveVideoUrl.isNullOrBlank()) {
+                        adaptiveVideoCandidates.add(pageAdaptiveVideoUrl to userAgent)
+                    }
+                    if (innertubeResult != null) {
+                        for (vUrl in innertubeResult.adaptiveVideoUrls) {
+                            adaptiveVideoCandidates.add(vUrl to innertubeResult.clientUserAgent)
+                        }
+                    }
+
+                    val adaptiveAudioUrl = pageAdaptiveAudioUrl?.takeIf { it.isNotBlank() }
+                        ?: innertubeResult?.adaptiveAudioUrl
+                    val adaptiveAudioUa = if (!pageAdaptiveAudioUrl.isNullOrBlank()) userAgent else (innertubeResult?.clientUserAgent ?: userAgent)
+
+                    for ((vUrl, vUa) in adaptiveVideoCandidates) {
+                        val videoOk = downloadStreamWithRangeFallback(
+                            urlStr = vUrl,
+                            destFile = tempVideoOnlyFile,
+                            userAgent = vUa,
+                            cookies = cookies
+                        ) { progressPct ->
+                            val mapped = (15 + (progressPct * 0.60f).toInt()).coerceIn(15, 75)
+                            _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                        }
+
+                        if (videoOk && tempVideoOnlyFile.exists() && tempVideoOnlyFile.length() > 1024L) {
+                            var muxedOk = false
+                            if (!adaptiveAudioUrl.isNullOrBlank()) {
+                                val audioOk = downloadStreamWithRangeFallback(
+                                    urlStr = adaptiveAudioUrl,
+                                    destFile = tempAudioOnlyFile,
+                                    userAgent = adaptiveAudioUa,
+                                    cookies = cookies
+                                ) { progressPct ->
+                                    val mapped = (75 + (progressPct * 0.18f).toInt()).coerceIn(75, 93)
+                                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                                }
+                                if (audioOk && tempAudioOnlyFile.exists() && tempAudioOnlyFile.length() > 512L) {
+                                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 95)
+                                    muxedOk = muxVideoAndAudioMp4(tempVideoOnlyFile, tempAudioOnlyFile, tempFile)
+                                }
                             }
-                        ) {
-                            downloadedOk = true
+                            if (!muxedOk) {
+                                // Use the video MP4 directly if audio track muxing was not needed or skipped
+                                if (tempFile.exists()) tempFile.delete()
+                                tempVideoOnlyFile.renameTo(tempFile)
+                            }
+                            downloadedOk = tempFile.exists() && tempFile.length() > 1024L
                             break
                         }
                     }
                 }
+
+                try { if (tempVideoOnlyFile.exists()) tempVideoOnlyFile.delete() } catch (_: Exception) {}
+                try { if (tempAudioOnlyFile.exists()) tempAudioOnlyFile.delete() } catch (_: Exception) {}
 
                 if (downloadedOk && tempFile.exists() && tempFile.length() > 1024L) {
                     if (videoFile.exists()) videoFile.delete()
@@ -381,7 +555,7 @@ object YouTubeOfflineRepository {
                     mainHandler.post {
                         Toast.makeText(
                             appCtx,
-                            "Could not extract direct offline stream for this video. Try playing the video first and tap Download.",
+                            "Could not download this video right now. Please let the video play for 2 seconds and tap Download again.",
                             Toast.LENGTH_LONG
                         ).show()
                         onCompleted(false, finalTitle)
@@ -389,6 +563,8 @@ object YouTubeOfflineRepository {
                 }
             } catch (e: Exception) {
                 try { tempFile.delete() } catch (_: Exception) {}
+                try { tempVideoOnlyFile.delete() } catch (_: Exception) {}
+                try { tempAudioOnlyFile.delete() } catch (_: Exception) {}
                 _activeDownloadsFlow.value = _activeDownloadsFlow.value - cleanId
                 mainHandler.post {
                     Toast.makeText(
@@ -403,8 +579,9 @@ object YouTubeOfflineRepository {
     }
 
     private data class InnerTubeStreamInfo(
-        val streamUrl: String,
-        val backupUrls: List<String>,
+        val progressiveUrls: List<String>,
+        val adaptiveVideoUrls: List<String>,
+        val adaptiveAudioUrl: String?,
         val title: String,
         val author: String,
         val durationSec: Long,
@@ -415,62 +592,107 @@ object YouTubeOfflineRepository {
         data class ClientProfile(
             val clientName: String,
             val clientVersion: String,
+            val clientIdHeader: String,
             val userAgent: String,
             val osName: String,
             val osVersion: String,
             val androidSdkVersion: Int? = null,
             val deviceMake: String = "",
-            val deviceModel: String = ""
+            val deviceModel: String = "",
+            val useCookies: Boolean = false,
+            val thirdPartyEmbedUrl: String? = null
         )
 
         val profiles = listOf(
+            // 1. ANDROID_VR (Oculus Quest 3) WITHOUT cookies — returns direct progressive & adaptive streams reliably
             ClientProfile(
                 clientName = "ANDROID_VR",
-                clientVersion = "1.60.19",
-                userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                clientVersion = "1.62.27",
+                clientIdHeader = "28",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
                 osName = "Android",
                 osVersion = "12L",
                 androidSdkVersion = 32,
                 deviceMake = "Oculus",
-                deviceModel = "Quest 3"
+                deviceModel = "Quest 3",
+                useCookies = false
             ),
+            // 2. IOS WITHOUT cookies — returns progressive MP4 / adaptive MP4 without poToken requirement
             ClientProfile(
                 clientName = "IOS",
-                clientVersion = "19.45.4",
-                userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+                clientVersion = "20.03.02",
+                clientIdHeader = "5",
+                userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
                 osName = "iOS",
-                osVersion = "18.1.0.22B83",
+                osVersion = "18.2.1.22C161",
                 deviceMake = "Apple",
-                deviceModel = "iPhone16,2"
+                deviceModel = "iPhone16,2",
+                useCookies = false
             ),
+            // 3. ANDROID_TESTSUITE WITHOUT cookies — returns progressive itag 18 + adaptive streams
             ClientProfile(
-                clientName = "ANDROID",
-                clientVersion = "19.44.38",
-                userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip",
+                clientName = "ANDROID_TESTSUITE",
+                clientVersion = "1.9",
+                clientIdHeader = "30",
+                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14; en_US) gzip",
                 osName = "Android",
                 osVersion = "14",
-                androidSdkVersion = 34
+                androidSdkVersion = 34,
+                useCookies = false
+            ),
+            // 4. ANDROID WITHOUT cookies
+            ClientProfile(
+                clientName = "ANDROID",
+                clientVersion = "20.03.38",
+                clientIdHeader = "3",
+                userAgent = "com.google.android.youtube/20.03.38 (Linux; U; Android 14; en_US) gzip",
+                osName = "Android",
+                osVersion = "14",
+                androidSdkVersion = 34,
+                useCookies = false
+            ),
+            // 5. TVHTML5_SIMPLY_EMBEDDED_PLAYER
+            ClientProfile(
+                clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+                clientVersion = "2.0",
+                clientIdHeader = "85",
+                userAgent = "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15",
+                osName = "PlayStation",
+                osVersion = "2.26",
+                useCookies = false,
+                thirdPartyEmbedUrl = "https://www.youtube.com/embed/$videoId"
+            ),
+            // 6. ANDROID_VR WITH cookies (fallback for signed-in / age-gated videos)
+            ClientProfile(
+                clientName = "ANDROID_VR",
+                clientVersion = "1.62.27",
+                clientIdHeader = "28",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                osName = "Android",
+                osVersion = "12L",
+                androidSdkVersion = 32,
+                deviceMake = "Oculus",
+                deviceModel = "Quest 3",
+                useCookies = true
             )
         )
 
         for (profile in profiles) {
+            if (profile.useCookies && cookies.isBlank()) continue
             try {
                 val url = URL("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 12000
-                    readTimeout = 12000
+                    connectTimeout = 10000
+                    readTimeout = 10000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Accept", "application/json")
                     setRequestProperty("User-Agent", profile.userAgent)
-                    setRequestProperty("X-YouTube-Client-Name", when (profile.clientName) {
-                        "IOS" -> "5"
-                        "ANDROID" -> "3"
-                        else -> "28"
-                    })
+                    setRequestProperty("X-YouTube-Client-Name", profile.clientIdHeader)
                     setRequestProperty("X-YouTube-Client-Version", profile.clientVersion)
                     setRequestProperty("Origin", "https://www.youtube.com")
-                    if (cookies.isNotBlank()) {
+                    if (profile.useCookies && cookies.isNotBlank()) {
                         setRequestProperty("Cookie", cookies)
                     }
                 }
@@ -482,6 +704,7 @@ object YouTubeOfflineRepository {
                     put("osVersion", profile.osVersion)
                     put("hl", "en")
                     put("gl", "US")
+                    put("utcOffsetMinutes", 0)
                     if (profile.androidSdkVersion != null) {
                         put("androidSdkVersion", profile.androidSdkVersion)
                     }
@@ -493,10 +716,23 @@ object YouTubeOfflineRepository {
                     }
                 }
 
+                val contextObj = JSONObject().apply {
+                    put("client", clientObj)
+                    if (profile.thirdPartyEmbedUrl != null) {
+                        put("thirdParty", JSONObject().apply {
+                            put("embedUrl", profile.thirdPartyEmbedUrl)
+                        })
+                    }
+                }
+
                 val payload = JSONObject().apply {
                     put("videoId", videoId)
-                    put("context", JSONObject().apply {
-                        put("client", clientObj)
+                    put("context", contextObj)
+                    put("playbackContext", JSONObject().apply {
+                        put("contentPlaybackContext", JSONObject().apply {
+                            put("html5Preference", "HTML5_PREF_WANTS")
+                            put("signatureTimestamp", 20073)
+                        })
                     })
                     put("contentCheckOk", true)
                     put("racyCheckOk", true)
@@ -517,12 +753,13 @@ object YouTubeOfflineRepository {
                     val lengthSec = videoDetails?.optString("lengthSeconds", "0")?.toLongOrNull() ?: 0L
 
                     val streamingData = json.optJSONObject("streamingData")
-                    val candidateUrls = mutableListOf<String>()
+                    val progressiveUrls = mutableListOf<String>()
+                    val adaptiveVideoUrls = mutableListOf<String>()
+                    var bestAudioUrl: String? = null
 
-                    // 1. Check progressive formats (contains both video + audio in a single MP4 file)
+                    // 1. Progressive formats (single MP4 containing both video + audio, e.g. itag 18 or 22)
                     val formats = streamingData?.optJSONArray("formats")
                     if (formats != null) {
-                        // Prefer itag 18 (360p MP4) or 22 (720p MP4)
                         val sortedFormats = mutableListOf<JSONObject>()
                         for (i in 0 until formats.length()) {
                             formats.optJSONObject(i)?.let { sortedFormats.add(it) }
@@ -531,37 +768,67 @@ object YouTubeOfflineRepository {
                             val mime = fmt.optString("mimeType", "")
                             val itag = fmt.optInt("itag", 0)
                             when {
-                                itag == 22 -> 100
-                                itag == 18 -> 90
+                                itag == 18 -> 100 // 360p MP4 with audio (fastest & most reliable)
+                                itag == 22 -> 95  // 720p MP4 with audio
                                 mime.contains("video/mp4") -> 80
-                                else -> 50
+                                else -> 40
                             }
                         }
                         for (fmt in sortedFormats) {
                             val directUrl = fmt.optString("url", "")
                             if (directUrl.startsWith("http")) {
-                                candidateUrls.add(directUrl)
+                                progressiveUrls.add(directUrl)
                             }
                         }
                     }
 
-                    // 2. Also check adaptiveFormats for mp4 video streams if no progressive format was listed
+                    // 2. Adaptive formats (separate video/mp4 and audio/mp4 streams)
                     val adaptive = streamingData?.optJSONArray("adaptiveFormats")
                     if (adaptive != null) {
+                        val videoFmts = mutableListOf<JSONObject>()
+                        val audioFmts = mutableListOf<JSONObject>()
                         for (i in 0 until adaptive.length()) {
                             val fmt = adaptive.optJSONObject(i) ?: continue
-                            val mime = fmt.optString("mimeType", "")
                             val directUrl = fmt.optString("url", "")
-                            if (directUrl.startsWith("http") && mime.contains("mp4", ignoreCase = true)) {
-                                candidateUrls.add(directUrl)
+                            if (!directUrl.startsWith("http")) continue
+                            val mime = fmt.optString("mimeType", "")
+                            if (mime.startsWith("video/mp4", ignoreCase = true)) {
+                                videoFmts.add(fmt)
+                            } else if (mime.startsWith("audio/mp4", ignoreCase = true)) {
+                                audioFmts.add(fmt)
                             }
                         }
+
+                        // Prefer H.264 (avc1) 360p/480p/720p for fast download and universal hardware playback
+                        videoFmts.sortByDescending { fmt ->
+                            val itag = fmt.optInt("itag", 0)
+                            val mime = fmt.optString("mimeType", "")
+                            val isAvc = mime.contains("avc1", ignoreCase = true)
+                            when {
+                                itag == 134 -> 100 // 360p H.264 MP4
+                                itag == 135 -> 95  // 480p H.264 MP4
+                                itag == 136 -> 90  // 720p H.264 MP4
+                                itag == 160 -> 80  // 144p H.264 MP4
+                                isAvc -> 75
+                                else -> 50
+                            }
+                        }
+                        for (vFmt in videoFmts) {
+                            adaptiveVideoUrls.add(vFmt.optString("url", ""))
+                        }
+
+                        audioFmts.sortByDescending { fmt ->
+                            val itag = fmt.optInt("itag", 0)
+                            if (itag == 140) 100 else 80
+                        }
+                        bestAudioUrl = audioFmts.firstOrNull()?.optString("url", "")?.takeIf { it.startsWith("http") }
                     }
 
-                    if (candidateUrls.isNotEmpty()) {
+                    if (progressiveUrls.isNotEmpty() || adaptiveVideoUrls.isNotEmpty()) {
                         return InnerTubeStreamInfo(
-                            streamUrl = candidateUrls.first(),
-                            backupUrls = candidateUrls.drop(1),
+                            progressiveUrls = progressiveUrls,
+                            adaptiveVideoUrls = adaptiveVideoUrls,
+                            adaptiveAudioUrl = bestAudioUrl,
                             title = title,
                             author = author,
                             durationSec = lengthSec,
@@ -574,15 +841,145 @@ object YouTubeOfflineRepository {
         return null
     }
 
-    private fun downloadBinaryFile(
+    /**
+     * Secondary fallback using public Piped/Invidious JSON stream endpoints in case direct InnerTube
+     * is rate-limited on the current network.
+     */
+    private fun resolvePipedOrInvidiousStream(videoId: String): InnerTubeStreamInfo? {
+        val pipedApis = listOf(
+            "https://pipedapi.kavin.rocks/streams/$videoId",
+            "https://pipedapi.tokhmi.xyz/streams/$videoId",
+            "https://api.piped.private.coffee/streams/$videoId"
+        )
+        for (endpoint in pipedApis) {
+            try {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36")
+                }
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(body)
+                    val title = json.optString("title", "")
+                    val uploader = json.optString("uploader", "")
+                    val duration = json.optLong("duration", 0L)
+                    val progressive = mutableListOf<String>()
+                    val adaptiveVid = mutableListOf<String>()
+                    var adaptiveAud: String? = null
+
+                    val videoStreams = json.optJSONArray("videoStreams")
+                    if (videoStreams != null) {
+                        for (i in 0 until videoStreams.length()) {
+                            val vs = videoStreams.optJSONObject(i) ?: continue
+                            val u = vs.optString("url", "")
+                            val format = vs.optString("format", "")
+                            val videoOnly = vs.optBoolean("videoOnly", true)
+                            if (u.startsWith("http") && (format.contains("MPEG_4", true) || u.contains("video/mp4") || u.contains("mime=video%2Fmp4"))) {
+                                if (!videoOnly) {
+                                    progressive.add(u)
+                                } else {
+                                    adaptiveVid.add(u)
+                                }
+                            }
+                        }
+                    }
+                    val audioStreams = json.optJSONArray("audioStreams")
+                    if (audioStreams != null) {
+                        for (i in 0 until audioStreams.length()) {
+                            val asObj = audioStreams.optJSONObject(i) ?: continue
+                            val u = asObj.optString("url", "")
+                            val mime = asObj.optString("mimeType", "")
+                            if (u.startsWith("http") && (mime.contains("mp4", true) || mime.contains("m4a", true))) {
+                                adaptiveAud = u
+                                break
+                            }
+                        }
+                    }
+                    if (progressive.isNotEmpty() || adaptiveVid.isNotEmpty()) {
+                        return InnerTubeStreamInfo(
+                            progressiveUrls = progressive,
+                            adaptiveVideoUrls = adaptiveVid,
+                            adaptiveAudioUrl = adaptiveAud,
+                            title = title,
+                            author = uploader,
+                            durationSec = duration,
+                            clientUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36"
+                        )
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    /**
+     * Downloads a YouTube stream URL to disk.
+     * - Automatically matches headers to the stream's `c=` client type (preventing 403 Forbidden
+     *   caused by sending web Origin/Referer/Cookie headers on ANDROID_VR / IOS / ANDROID stream URLs).
+     * - Automatically falls back to chunked byte-range requests (`&range=start-end`) if a single GET
+     *   is rejected or throttled by `googlevideo.com`.
+     */
+    private fun downloadStreamWithRangeFallback(
         urlStr: String,
         destFile: File,
         userAgent: String,
         cookies: String,
         onProgress: ((Int) -> Unit)? = null
     ): Boolean {
+        val cleanedUrl = sanitizeGoogleVideoUrl(urlStr)
+        val isNativeMobileClientUrl = cleanedUrl.contains("c=ANDROID", ignoreCase = true) ||
+            cleanedUrl.contains("c=IOS", ignoreCase = true)
+
+        val effectiveUserAgent = when {
+            cleanedUrl.contains("c=ANDROID_VR", ignoreCase = true) ->
+                "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+            cleanedUrl.contains("c=IOS", ignoreCase = true) ->
+                "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)"
+            cleanedUrl.contains("c=ANDROID_TESTSUITE", ignoreCase = true) ->
+                "com.google.android.youtube/1.9 (Linux; U; Android 14; en_US) gzip"
+            cleanedUrl.contains("c=ANDROID", ignoreCase = true) ->
+                "com.google.android.youtube/20.03.38 (Linux; U; Android 14; en_US) gzip"
+            else -> userAgent
+        }
+
+        // 1. Try direct streaming download first
+        if (downloadBinaryFile(
+                urlStr = cleanedUrl,
+                destFile = destFile,
+                userAgent = effectiveUserAgent,
+                cookies = if (isNativeMobileClientUrl) "" else cookies,
+                sendWebOriginHeaders = !isNativeMobileClientUrl,
+                onProgress = onProgress
+            )
+        ) {
+            return true
+        }
+
+        // 2. Fallback: Chunked Range downloading (&range=start-end in 4MB chunks)
+        return downloadInRangeChunks(
+            baseUrl = cleanedUrl,
+            destFile = destFile,
+            userAgent = effectiveUserAgent,
+            cookies = if (isNativeMobileClientUrl) "" else cookies,
+            sendWebOriginHeaders = !isNativeMobileClientUrl,
+            onProgress = onProgress
+        )
+    }
+
+    private fun downloadBinaryFile(
+        urlStr: String,
+        destFile: File,
+        userAgent: String,
+        cookies: String,
+        onProgress: ((Int) -> Unit)? = null,
+        sendWebOriginHeaders: Boolean = true
+    ): Boolean {
         var conn: HttpURLConnection? = null
         return try {
+            if (destFile.exists()) destFile.delete()
             val url = URL(urlStr)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -591,8 +988,10 @@ object YouTubeOfflineRepository {
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept", "*/*")
-                setRequestProperty("Referer", "https://www.youtube.com/")
-                setRequestProperty("Origin", "https://www.youtube.com")
+                if (sendWebOriginHeaders) {
+                    setRequestProperty("Referer", "https://www.youtube.com/")
+                    setRequestProperty("Origin", "https://www.youtube.com")
+                }
                 if (cookies.isNotBlank()) {
                     setRequestProperty("Cookie", cookies)
                 }
@@ -601,10 +1000,12 @@ object YouTubeOfflineRepository {
             val code = conn.responseCode
             if (code !in 200..299) return false
 
-            val totalBytes = conn.contentLengthLong
+            val clenParam = Regex("[?&]clen=(\\d+)").find(urlStr)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: -1L
+            val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: clenParam
+
             BufferedInputStream(conn.inputStream).use { input ->
                 FileOutputStream(destFile).use { output ->
-                    val buffer = ByteArray(32 * 1024)
+                    val buffer = ByteArray(64 * 1024)
                     var bytesRead: Int
                     var downloaded = 0L
                     var lastReportedPct = -1
@@ -622,11 +1023,198 @@ object YouTubeOfflineRepository {
                     output.flush()
                 }
             }
-            destFile.exists() && destFile.length() > 512L
+            destFile.exists() && destFile.length() > 1024L
         } catch (_: Exception) {
             false
         } finally {
             try { conn?.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun downloadInRangeChunks(
+        baseUrl: String,
+        destFile: File,
+        userAgent: String,
+        cookies: String,
+        sendWebOriginHeaders: Boolean,
+        onProgress: ((Int) -> Unit)?
+    ): Boolean {
+        return try {
+            if (destFile.exists()) destFile.delete()
+            val clenTotal = Regex("[?&]clen=(\\d+)").find(baseUrl)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: -1L
+            val chunkSize = 4L * 1024L * 1024L // 4 MB chunks
+            var currentOffset = 0L
+            var knownTotal = clenTotal
+
+            FileOutputStream(destFile).use { fileOut ->
+                val buffer = ByteArray(64 * 1024)
+                var chunkIndex = 0
+                while (chunkIndex < 120) { // Up to 480 MB max safety bound
+                    chunkIndex++
+                    val endByte = if (knownTotal > 0L) {
+                        (currentOffset + chunkSize - 1L).coerceAtMost(knownTotal - 1L)
+                    } else {
+                        currentOffset + chunkSize - 1L
+                    }
+                    if (knownTotal > 0L && currentOffset >= knownTotal) break
+
+                    val sep = if (baseUrl.contains("?")) "&" else "?"
+                    val chunkUrl = "${baseUrl}${sep}range=${currentOffset}-${endByte}"
+                    var conn: HttpURLConnection? = null
+                    var chunkRead = 0L
+                    try {
+                        conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 12000
+                            readTimeout = 25000
+                            instanceFollowRedirects = true
+                            setRequestProperty("User-Agent", userAgent)
+                            setRequestProperty("Accept", "*/*")
+                            if (sendWebOriginHeaders) {
+                                setRequestProperty("Referer", "https://www.youtube.com/")
+                                setRequestProperty("Origin", "https://www.youtube.com")
+                            }
+                            if (cookies.isNotBlank()) {
+                                setRequestProperty("Cookie", cookies)
+                            }
+                        }
+                        conn.connect()
+                        val code = conn.responseCode
+                        if (code !in 200..299) {
+                            break
+                        }
+                        if (knownTotal <= 0L) {
+                            val cr = conn.getHeaderField("Content-Range")
+                            if (cr != null && cr.contains("/")) {
+                                val totalStr = cr.substringAfter("/").trim()
+                                knownTotal = totalStr.toLongOrNull() ?: -1L
+                            }
+                        }
+                        BufferedInputStream(conn.inputStream).use { input ->
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                fileOut.write(buffer, 0, read)
+                                chunkRead += read
+                                val totalNow = currentOffset + chunkRead
+                                if (onProgress != null && knownTotal > 0L) {
+                                    val pct = ((totalNow * 100L) / knownTotal).toInt().coerceIn(0, 100)
+                                    onProgress(pct)
+                                }
+                            }
+                        }
+                    } finally {
+                        try { conn?.disconnect() } catch (_: Exception) {}
+                    }
+
+                    if (chunkRead <= 0L) break
+                    currentOffset += chunkRead
+                    if (knownTotal > 0L && currentOffset >= knownTotal) break
+                    if (knownTotal <= 0L && chunkRead < chunkSize) break
+                }
+                fileOut.flush()
+            }
+            destFile.exists() && destFile.length() > 4096L
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Combines an adaptive H.264 MP4 video file and an AAC M4A audio file into a single
+     * playable MP4 file using Android's native MediaExtractor and MediaMuxer.
+     */
+    private fun muxVideoAndAudioMp4(videoFile: File, audioFile: File, outputFile: File): Boolean {
+        var videoExtractor: MediaExtractor? = null
+        var audioExtractor: MediaExtractor? = null
+        var muxer: MediaMuxer? = null
+        return try {
+            if (outputFile.exists()) outputFile.delete()
+            videoExtractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
+            audioExtractor = MediaExtractor().apply { setDataSource(audioFile.absolutePath) }
+
+            var videoTrackIndexExtractor = -1
+            var videoFormat: MediaFormat? = null
+            for (i in 0 until videoExtractor.trackCount) {
+                val fmt = videoExtractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoTrackIndexExtractor = i
+                    videoFormat = fmt
+                    break
+                }
+            }
+
+            var audioTrackIndexExtractor = -1
+            var audioFormat: MediaFormat? = null
+            for (i in 0 until audioExtractor.trackCount) {
+                val fmt = audioExtractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndexExtractor = i
+                    audioFormat = fmt
+                    break
+                }
+            }
+
+            if (videoTrackIndexExtractor < 0 || videoFormat == null) return false
+
+            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            videoExtractor.selectTrack(videoTrackIndexExtractor)
+            val muxVideoTrack = muxer.addTrack(videoFormat)
+
+            var muxAudioTrack = -1
+            if (audioTrackIndexExtractor >= 0 && audioFormat != null) {
+                audioExtractor.selectTrack(audioTrackIndexExtractor)
+                muxAudioTrack = muxer.addTrack(audioFormat)
+            }
+
+            muxer.start()
+
+            val buffer = ByteBuffer.allocate(512 * 1024)
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            // Write video samples
+            while (true) {
+                buffer.clear()
+                val sampleSize = videoExtractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) break
+                bufferInfo.offset = 0
+                bufferInfo.size = sampleSize
+                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                val sampleFlags = videoExtractor.sampleFlags
+                bufferInfo.flags = if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                    MediaCodec.BUFFER_FLAG_KEY_FRAME
+                } else 0
+                muxer.writeSampleData(muxVideoTrack, buffer, bufferInfo)
+                videoExtractor.advance()
+            }
+
+            // Write audio samples
+            if (muxAudioTrack >= 0) {
+                while (true) {
+                    buffer.clear()
+                    val sampleSize = audioExtractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) break
+                    bufferInfo.offset = 0
+                    bufferInfo.size = sampleSize
+                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
+                    val sampleFlags = audioExtractor.sampleFlags
+                    bufferInfo.flags = if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                        MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    } else 0
+                    muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
+                    audioExtractor.advance()
+                }
+            }
+
+            muxer.stop()
+            outputFile.exists() && outputFile.length() > 4096L
+        } catch (_: Exception) {
+            false
+        } finally {
+            try { videoExtractor?.release() } catch (_: Exception) {}
+            try { audioExtractor?.release() } catch (_: Exception) {}
+            try { muxer?.release() } catch (_: Exception) {}
         }
     }
 
