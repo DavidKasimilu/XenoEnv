@@ -22,6 +22,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebStorage
@@ -32,6 +33,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -51,11 +54,15 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopMac
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -79,6 +86,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -89,9 +97,35 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.models.ClonedAppInstance
 import com.example.ui.components.AppIconImage
 import com.example.ui.components.parseHexColor
+
+/**
+ * Retains minimized Clone Space WebViews in memory so that when a clone app is minimized
+ * to a floating icon and then tapped to restore, its exact session/scroll/video/chat state
+ * is restored instantaneously without reloading.
+ */
+object CloneWebViewPool {
+    private val retainedWebViews = mutableMapOf<String, WebView>()
+
+    fun get(instanceId: String): WebView? = retainedWebViews[instanceId]
+
+    fun retain(instanceId: String, webView: WebView) {
+        retainedWebViews[instanceId] = webView
+    }
+
+    fun destroy(instanceId: String) {
+        val wv = retainedWebViews.remove(instanceId) ?: return
+        try {
+            wv.keepScreenOn = false
+            (wv.parent as? ViewGroup)?.removeView(wv)
+            wv.stopLoading()
+            wv.destroy()
+        } catch (_: Exception) {}
+    }
+}
 
 private const val MOBILE_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -2063,6 +2097,208 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             }
                         }
                     }
+
+                    // 4. Desktop-Style Offline Download Extractor & In-Page Download Pill
+                    var pathLower = (window.location.pathname || '').toLowerCase();
+                    if (pathLower.indexOf('/feed/downloads') === 0 && window.XenoYtBridge && typeof window.XenoYtBridge.openOfflineDownloads === 'function') {
+                        window.XenoYtBridge.openOfflineDownloads();
+                    }
+
+                    function extractActiveYouTubeMetadata() {
+                        var m = getYouTubePageMode();
+                        var rawId = '';
+                        if (m === 'watch') {
+                            try {
+                                rawId = (new URLSearchParams(window.location.search)).get('v') || '';
+                            } catch(e) {}
+                        } else if (m === 'shorts') {
+                            var sp = (window.location.pathname || '').split('/shorts/');
+                            if (sp.length > 1 && sp[1]) {
+                                rawId = sp[1].split('/')[0].split('?')[0];
+                            }
+                        }
+
+                        var pEl = (m === 'shorts' ? document.getElementById('shorts-player') : null) ||
+                                  document.getElementById('movie_player') ||
+                                  document.querySelector('.html5-video-player');
+                        var pr = null;
+                        try {
+                            if (pEl && typeof pEl.getPlayerResponse === 'function') {
+                                pr = pEl.getPlayerResponse();
+                            }
+                        } catch(e) {}
+                        if (!pr && window.ytInitialPlayerResponse) {
+                            pr = window.ytInitialPlayerResponse;
+                        }
+
+                        var vDetails = (pr && pr.videoDetails) ? pr.videoDetails : null;
+                        if (vDetails && vDetails.videoId && (!rawId || vDetails.videoId === rawId)) {
+                            rawId = vDetails.videoId;
+                        }
+                        if (!rawId && pEl && typeof pEl.getVideoData === 'function') {
+                            try {
+                                var vd = pEl.getVideoData();
+                                if (vd && vd.video_id) rawId = vd.video_id;
+                            } catch(e) {}
+                        }
+
+                        var title = '';
+                        var author = '';
+                        var durationSec = 0;
+
+                        if (vDetails && vDetails.videoId === rawId) {
+                            title = vDetails.title || '';
+                            author = vDetails.author || '';
+                            durationSec = parseInt(vDetails.lengthSeconds || '0', 10) || 0;
+                        }
+                        if (pEl && typeof pEl.getVideoData === 'function') {
+                            try {
+                                var vd2 = pEl.getVideoData();
+                                if (vd2 && (!rawId || vd2.video_id === rawId)) {
+                                    if (!title && vd2.title) title = vd2.title;
+                                    if (!author && vd2.author) author = vd2.author;
+                                }
+                            } catch(e) {}
+                        }
+                        if (!title) {
+                            var domTitleEl = document.querySelector(
+                                '.slim-video-metadata-header .slim-video-information-title, ' +
+                                'ytm-slim-video-metadata-section-renderer h2, ' +
+                                '.reel-player-header-renderer .reel-player-header-title, ' +
+                                'h1.title'
+                            );
+                            if (domTitleEl && domTitleEl.textContent) {
+                                title = domTitleEl.textContent.trim();
+                            } else if (document.title) {
+                                title = document.title.replace(/\s*-\s*YouTube$/i, '').trim();
+                            }
+                        }
+                        if (!author) {
+                            var domAuthorEl = document.querySelector(
+                                'ytm-slim-owner-renderer .slim-owner-icon-and-title a, ' +
+                                '.slim-owner-channel-name, ' +
+                                '.reel-player-header-channel-title'
+                            );
+                            if (domAuthorEl && domAuthorEl.textContent) {
+                                author = domAuthorEl.textContent.trim();
+                            }
+                        }
+                        if (!durationSec) {
+                            try {
+                                if (pEl && typeof pEl.getDuration === 'function') {
+                                    durationSec = Math.round(pEl.getDuration() || 0);
+                                }
+                            } catch(e) {}
+                        }
+                        if (!durationSec) {
+                            var activeVid = document.querySelector('video');
+                            if (activeVid && activeVid.duration && isFinite(activeVid.duration)) {
+                                durationSec = Math.round(activeVid.duration);
+                            }
+                        }
+
+                        var directStream = '';
+                        try {
+                            if (pr && pr.streamingData && (!vDetails || vDetails.videoId === rawId)) {
+                                var fmts = pr.streamingData.formats || [];
+                                for (var f = 0; f < fmts.length; f++) {
+                                    if (fmts[f] && fmts[f].url && fmts[f].url.indexOf('http') === 0) {
+                                        directStream = fmts[f].url;
+                                        if (fmts[f].itag === 22 || fmts[f].itag === 18) break;
+                                    }
+                                }
+                            }
+                        } catch(e) {}
+                        if (!directStream) {
+                            var domVid = document.querySelector('video');
+                            if (domVid) {
+                                var src = domVid.currentSrc || domVid.src || '';
+                                if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
+                                    directStream = src;
+                                }
+                            }
+                        }
+
+                        return {
+                            videoId: rawId || '',
+                            title: title || 'YouTube Video',
+                            author: author || 'YouTube',
+                            durationSec: String(durationSec || 0),
+                            directStreamUrl: directStream || ''
+                        };
+                    }
+
+                    window.__xenoTriggerYtDownload = function() {
+                        var meta = extractActiveYouTubeMetadata();
+                        if (!meta.videoId) {
+                            return false;
+                        }
+                        if (window.XenoYtBridge && typeof window.XenoYtBridge.downloadVideo === 'function') {
+                            window.XenoYtBridge.downloadVideo(
+                                meta.videoId,
+                                meta.title,
+                                meta.author,
+                                meta.durationSec,
+                                meta.directStreamUrl
+                            );
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    // Inject or update the sleek in-page Download Pill on Watch & Shorts pages
+                    var pillId = 'xeno-yt-download-pill';
+                    var existingPill = document.getElementById(pillId);
+                    if (mode === 'watch' || mode === 'shorts') {
+                        if (!existingPill && document.body) {
+                            existingPill = document.createElement('button');
+                            existingPill.id = pillId;
+                            existingPill.type = 'button';
+                            existingPill.style.cssText =
+                                'position:fixed; right:14px; bottom:' + (mode === 'shorts' ? '150px' : '22px') + '; ' +
+                                'z-index:2147483640; display:flex; align-items:center; gap:6px; ' +
+                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.22); ' +
+                                'border-radius:20px; padding:8px 14px; font-family:Roboto,sans-serif; font-size:12.5px; ' +
+                                'font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,0.55); cursor:pointer; ' +
+                                '-webkit-tap-highlight-color:transparent;';
+                            existingPill.addEventListener('click', function(ev) {
+                                ev.stopPropagation();
+                                ev.preventDefault();
+                                var curMeta = extractActiveYouTubeMetadata();
+                                if (curMeta.videoId && window.XenoYtBridge && typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curMeta.videoId)) {
+                                    window.XenoYtBridge.openOfflineDownloads();
+                                } else {
+                                    window.__xenoTriggerYtDownload();
+                                }
+                            });
+                            document.body.appendChild(existingPill);
+                        }
+                        if (existingPill) {
+                            existingPill.style.bottom = (mode === 'shorts' ? '150px' : '22px');
+                            existingPill.style.display = 'flex';
+                            var curIdCheck = extractActiveYouTubeMetadata().videoId;
+                            var prog = -1;
+                            var isSaved = false;
+                            try {
+                                if (curIdCheck && window.XenoYtBridge) {
+                                    prog = window.XenoYtBridge.getProgress(curIdCheck);
+                                    isSaved = window.XenoYtBridge.isDownloaded(curIdCheck);
+                                }
+                            } catch(e) {}
+                            if (prog >= 0) {
+                                existingPill.textContent = '⬇ Downloading ' + prog + '%';
+                                existingPill.style.borderColor = '#FF0000';
+                            } else if (isSaved) {
+                                existingPill.textContent = '✓ Downloaded (Offline)';
+                                existingPill.style.borderColor = '#2BA640';
+                            } else {
+                                existingPill.textContent = '⬇ Download Offline';
+                                existingPill.style.borderColor = 'rgba(255,255,255,0.22)';
+                            }
+                        }
+                    } else if (existingPill) {
+                        existingPill.style.display = 'none';
+                    }
                 }
 
                 window.__xenoRunYtOptimizer = optimizeYouTubeAndShorts;
@@ -2280,6 +2516,7 @@ private fun injectDiscordStabilityAndLoginHelper(view: WebView?, isDesktopMode: 
 fun CloneWorkspaceScreen(
     instance: ClonedAppInstance,
     onCloseWorkspace: () -> Unit,
+    onMinimizeWorkspace: () -> Unit = {},
     onUrlChanged: (String) -> Unit,
     onToggleDesktopMode: () -> Unit,
     onOpenInBrowser: ((String) -> Unit)? = null,
@@ -2287,15 +2524,17 @@ fun CloneWorkspaceScreen(
 ) {
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
-    var webViewInstance by remember { mutableStateOf<WebView?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var loadProgress by remember { mutableIntStateOf(0) }
-    var currentTitle by remember { mutableStateOf(instance.displayName) }
-    var currentUrl by remember { mutableStateOf(instance.lastUrl) }
-    var canGoBack by remember { mutableStateOf(false) }
+    val cachedWebView = remember(instance.instanceId) { CloneWebViewPool.get(instance.instanceId) }
+    var webViewInstance by remember(instance.instanceId) { mutableStateOf<WebView?>(cachedWebView) }
+    var isLoading by remember(instance.instanceId) { mutableStateOf(cachedWebView == null) }
+    var loadProgress by remember(instance.instanceId) { mutableIntStateOf(if (cachedWebView != null) 100 else 0) }
+    var currentTitle by remember(instance.instanceId) { mutableStateOf(cachedWebView?.title ?: instance.displayName) }
+    var currentUrl by remember(instance.instanceId) { mutableStateOf(cachedWebView?.url ?: instance.lastUrl) }
+    var canGoBack by remember(instance.instanceId) { mutableStateOf(cachedWebView?.canGoBack() == true) }
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
     var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(false) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
+    var keepAliveInMinimizedPool by remember(instance.instanceId) { mutableStateOf(false) }
 
     // Voice & Video Call hardware states
     var hasMicPermission by remember {
@@ -2356,6 +2595,33 @@ fun CloneWorkspaceScreen(
 
     val isShortVideoSocialApp = isInstagram || isFacebook || isYoutube
 
+    // YouTube Offline Downloads & Desktop-Style Offline Mode state
+    val youtubeOfflineVideos by YouTubeOfflineRepository.downloadsFlow.collectAsStateWithLifecycle()
+    val youtubeActiveDownloads by YouTubeOfflineRepository.activeDownloadsFlow.collectAsStateWithLifecycle()
+    var isYoutubeNetworkOffline by remember(instance.instanceId) {
+        mutableStateOf(isYoutube && !YouTubeOfflineRepository.isDeviceOnline(context))
+    }
+    var showYoutubeOfflineLibrary by remember(instance.instanceId) {
+        mutableStateOf(isYoutube && !YouTubeOfflineRepository.isDeviceOnline(context))
+    }
+    var selectedOfflineYtVideo by remember(instance.instanceId) {
+        mutableStateOf<YouTubeOfflineVideo?>(null)
+    }
+
+    LaunchedEffect(instance.instanceId, isYoutube) {
+        if (isYoutube) {
+            val saved = YouTubeOfflineRepository.loadSavedVideos(context)
+            val online = YouTubeOfflineRepository.isDeviceOnline(context)
+            isYoutubeNetworkOffline = !online
+            if (!online) {
+                showYoutubeOfflineLibrary = true
+                if (selectedOfflineYtVideo == null) {
+                    selectedOfflineYtVideo = saved.firstOrNull()
+                }
+            }
+        }
+    }
+
     val buildRequiredCallPermissions: (Boolean, Boolean) -> Array<String> = remember {
         { needAudio, needVideo ->
             val list = mutableListOf<String>()
@@ -2412,34 +2678,48 @@ fun CloneWorkspaceScreen(
         }
     }
 
-    // Properly release WebView renderer and call audio resources when leaving CloneWorkspaceScreen
+    // Properly release or retain WebView renderer and call audio resources when leaving CloneWorkspaceScreen
     DisposableEffect(instance.instanceId) {
         onDispose {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    audioFocusRequest?.let { req ->
-                        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                        am?.abandonAudioFocusRequest(req)
+            if (keepAliveInMinimizedPool) {
+                try {
+                    webViewInstance?.let { wv ->
+                        (wv.parent as? ViewGroup)?.removeView(wv)
+                        CloneWebViewPool.retain(instance.instanceId, wv)
                     }
-                }
-                setWhatsAppCallAudioMode(context, active = false)
-            } catch (_: Exception) {}
-            try {
-                webViewInstance?.let { wv ->
-                    wv.keepScreenOn = false
-                    (wv.parent as? ViewGroup)?.removeView(wv)
-                    wv.stopLoading()
-                    wv.destroy()
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            } else {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        audioFocusRequest?.let { req ->
+                            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                            am?.abandonAudioFocusRequest(req)
+                        }
+                    }
+                    setWhatsAppCallAudioMode(context, active = false)
+                } catch (_: Exception) {}
+                CloneWebViewPool.destroy(instance.instanceId)
+                try {
+                    webViewInstance?.let { wv ->
+                        wv.keepScreenOn = false
+                        (wv.parent as? ViewGroup)?.removeView(wv)
+                        wv.stopLoading()
+                        wv.destroy()
+                    }
+                } catch (_: Exception) {}
+            }
             webViewInstance = null
         }
     }
 
     BackHandler {
-        if (webViewInstance?.canGoBack() == true) {
+        if (isYoutube && showYoutubeOfflineLibrary && YouTubeOfflineRepository.isDeviceOnline(context)) {
+            showYoutubeOfflineLibrary = false
+        } else if (webViewInstance?.canGoBack() == true && !showYoutubeOfflineLibrary) {
             webViewInstance?.goBack()
         } else {
+            keepAliveInMinimizedPool = false
+            CloneWebViewPool.destroy(instance.instanceId)
             onCloseWorkspace()
         }
     }
@@ -2464,7 +2744,11 @@ fun CloneWorkspaceScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
-                    onClick = onCloseWorkspace,
+                    onClick = {
+                        keepAliveInMinimizedPool = false
+                        CloneWebViewPool.destroy(instance.instanceId)
+                        onCloseWorkspace()
+                    },
                     modifier = Modifier
                         .size(32.dp)
                         .testTag("workspace_back_btn")
@@ -2478,19 +2762,11 @@ fun CloneWorkspaceScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                val appIcon = remember(instance.packageName) {
-                    try {
-                        if (instance.packageName.isNotBlank()) {
-                            context.packageManager.getApplicationIcon(instance.packageName)
-                        } else null
-                    } catch (_: Exception) {
-                        null
-                    }
-                }
-                AppIconImage(
-                    iconDrawable = appIcon,
-                    fallbackName = instance.originalName,
-                    modifier = Modifier.size(22.dp)
+                CloneAppVisualIcon(
+                    instance = instance,
+                    iconSize = 24.dp,
+                    cornerRadius = 7.dp,
+                    showBadgeDot = false
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -2530,6 +2806,135 @@ fun CloneWorkspaceScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    if (isYoutube) {
+                        // YouTube Download Current Video Button
+                        val isDownloadingAny = youtubeActiveDownloads.isNotEmpty()
+                        IconButton(
+                            onClick = {
+                                val wv = webViewInstance
+                                if (wv != null && !showYoutubeOfflineLibrary) {
+                                    wv.evaluateJavascript(
+                                        "(function(){ return (window.__xenoTriggerYtDownload && window.__xenoTriggerYtDownload()) ? 'started' : ''; })()"
+                                    ) { result ->
+                                        val cleaned = result?.trim('"') ?: ""
+                                        if (cleaned != "started") {
+                                            // Fallback: parse video ID from current URL if on /watch or /shorts
+                                            val urlStr = wv.url ?: currentUrl
+                                            val fallbackId = when {
+                                                urlStr.contains("v=") -> urlStr.substringAfter("v=").substringBefore("&")
+                                                urlStr.contains("/shorts/") -> urlStr.substringAfter("/shorts/").substringBefore("?").substringBefore("/")
+                                                else -> ""
+                                            }
+                                            if (fallbackId.isNotBlank()) {
+                                                YouTubeOfflineRepository.startVideoDownload(
+                                                    context = context,
+                                                    mainHandler = mainHandler,
+                                                    videoId = fallbackId,
+                                                    rawTitle = currentTitle.removeSuffix("- YouTube").trim(),
+                                                    rawChannel = "YouTube",
+                                                    durationSecondsStr = "0",
+                                                    directStreamUrl = "",
+                                                    userAgent = wv.settings.userAgentString ?: MOBILE_USER_AGENT
+                                                )
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Open any YouTube video or Short first to download it for offline viewing",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Switch to Live YouTube and open a video to download",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
+                            modifier = Modifier
+                                .size(30.dp)
+                                .testTag("youtube_download_video_btn")
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isDownloadingAny) Color(0xFFFF0000).copy(alpha = 0.2f) else Color.Transparent,
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (isDownloadingAny) {
+                                        CircularProgressIndicator(
+                                            color = Color(0xFFFF0000),
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Filled.Download,
+                                            contentDescription = "Download YouTube Video for Offline",
+                                            tint = Color(0xFFFF0000),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // YouTube Offline Downloads Library Toggle Button (Desktop Downloads style)
+                        IconButton(
+                            onClick = {
+                                val nextShow = !showYoutubeOfflineLibrary
+                                showYoutubeOfflineLibrary = nextShow
+                                if (nextShow) {
+                                    webViewInstance?.evaluateJavascript(
+                                        "try { document.querySelectorAll('video').forEach(function(v){ v.pause(); }); } catch(e){}",
+                                        null
+                                    )
+                                    val saved = YouTubeOfflineRepository.loadSavedVideos(context)
+                                    if (selectedOfflineYtVideo == null) {
+                                        selectedOfflineYtVideo = saved.firstOrNull()
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("youtube_offline_library_btn")
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (showYoutubeOfflineLibrary) Color(0xFFFF0000).copy(alpha = 0.22f) else Color.Transparent,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (youtubeOfflineVideos.isNotEmpty()) Icons.Filled.DownloadDone else Icons.Filled.VideoLibrary,
+                                        contentDescription = "Offline Downloaded Videos (${youtubeOfflineVideos.size})",
+                                        tint = if (showYoutubeOfflineLibrary || youtubeOfflineVideos.isNotEmpty()) Color(0xFFFF0000) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    if (youtubeOfflineVideos.isNotEmpty()) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(12.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFFF0000))
+                                        ) {
+                                            Text(
+                                                text = youtubeOfflineVideos.size.coerceAtMost(99).toString(),
+                                                color = Color.White,
+                                                fontSize = 7.5.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if (isWhatsapp) {
                         // Voice & Video Call Permission / Audio Routing Controls for WhatsApp Web
                         if (isCallActive) {
@@ -2699,8 +3104,41 @@ fun CloneWorkspaceScreen(
                         )
                     }
 
+                    // Minimize to Floating Icon Button
                     IconButton(
-                        onClick = onCloseWorkspace,
+                        onClick = {
+                            keepAliveInMinimizedPool = true
+                            webViewInstance?.let { wv ->
+                                CloneWebViewPool.retain(instance.instanceId, wv)
+                            }
+                            onMinimizeWorkspace()
+                        },
+                        modifier = Modifier
+                            .size(30.dp)
+                            .testTag("workspace_minimize_btn")
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Remove,
+                                    contentDescription = "Minimize to floating icon",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = {
+                            keepAliveInMinimizedPool = false
+                            CloneWebViewPool.destroy(instance.instanceId)
+                            onCloseWorkspace()
+                        },
                         modifier = Modifier
                             .size(30.dp)
                             .testTag("workspace_close_btn")
@@ -2777,6 +3215,7 @@ fun CloneWorkspaceScreen(
                         ) {
                             Button(
                                 onClick = {
+                                    CloneWebViewPool.destroy(instance.instanceId)
                                     useSoftwareLayer = true
                                     hasRenderCrash = false
                                     reloadKey++
@@ -2789,6 +3228,7 @@ fun CloneWorkspaceScreen(
 
                             FilledTonalButton(
                                 onClick = {
+                                    CloneWebViewPool.destroy(instance.instanceId)
                                     try {
                                         val cookieManager = CookieManager.getInstance()
                                         cookieManager.removeAllCookies(null)
@@ -2810,24 +3250,37 @@ fun CloneWorkspaceScreen(
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
-                            WebView(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
+                            val existing = CloneWebViewPool.get(instance.instanceId)
+                            if (existing != null && reloadKey == 0) {
+                                (existing.parent as? ViewGroup)?.removeView(existing)
+                                existing.layoutParams = ViewGroup.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                // Use hardware layer for WhatsApp Web and YouTube so WebRTC video/audio codecs and HTML5 MSE work at full capability
-                                if (useSoftwareLayer && !isYoutube && !isWhatsapp) {
-                                    setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                                } else {
-                                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                }
-                                isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
-                                isHorizontalScrollBarEnabled = !isShortVideoSocialApp
-                                if (isInstagram) {
-                                    overScrollMode = View.OVER_SCROLL_NEVER
-                                } else {
-                                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                                }
+                                isLoading = false
+                                loadProgress = 100
+                                canGoBack = existing.canGoBack()
+                                webViewInstance = existing
+                                existing
+                            } else {
+                                WebView(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    // Use hardware layer for WhatsApp Web and YouTube so WebRTC video/audio codecs and HTML5 MSE work at full capability
+                                    if (useSoftwareLayer && !isYoutube && !isWhatsapp) {
+                                        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                                    } else {
+                                        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                    }
+                                    isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
+                                    isHorizontalScrollBarEnabled = !isShortVideoSocialApp
+                                    if (isInstagram) {
+                                        overScrollMode = View.OVER_SCROLL_NEVER
+                                    } else {
+                                        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                                    }
                                 isNestedScrollingEnabled = true
                                 isFocusable = true
                                 isFocusableInTouchMode = true
@@ -2925,6 +3378,31 @@ fun CloneWorkspaceScreen(
                                     "XenoCallBridge"
                                 )
 
+                                // Register YouTube Offline Download Bridge
+                                if (isYoutube) {
+                                    addJavascriptInterface(
+                                        YouTubeJsDownloadBridge(
+                                            context = ctx,
+                                            mainHandler = mainHandler,
+                                            userAgentProvider = {
+                                                this@apply.settings.userAgentString ?: MOBILE_USER_AGENT
+                                            },
+                                            onOpenOfflineLibrary = {
+                                                this@apply.evaluateJavascript(
+                                                    "try { document.querySelectorAll('video').forEach(function(v){ v.pause(); }); } catch(e){}",
+                                                    null
+                                                )
+                                                val saved = YouTubeOfflineRepository.loadSavedVideos(ctx)
+                                                if (selectedOfflineYtVideo == null) {
+                                                    selectedOfflineYtVideo = saved.firstOrNull()
+                                                }
+                                                showYoutubeOfflineLibrary = true
+                                            }
+                                        ),
+                                        "XenoYtBridge"
+                                    )
+                                }
+
                                 setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                                     try {
                                         val request = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
@@ -2969,6 +3447,12 @@ fun CloneWorkspaceScreen(
 
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                         isLoading = true
+                                        if (isYoutube) {
+                                            isYoutubeNetworkOffline = !YouTubeOfflineRepository.isDeviceOnline(ctx)
+                                            if (isYoutubeNetworkOffline) {
+                                                showYoutubeOfflineLibrary = true
+                                            }
+                                        }
                                         injectSocialAppHelpers(view, url)
                                         url?.let {
                                             if (it.startsWith("http://") || it.startsWith("https://")) {
@@ -2977,6 +3461,30 @@ fun CloneWorkspaceScreen(
                                             }
                                         }
                                         canGoBack = view?.canGoBack() == true
+                                    }
+
+                                    override fun onReceivedError(
+                                        view: WebView?,
+                                        request: WebResourceRequest?,
+                                        error: WebResourceError?
+                                    ) {
+                                        super.onReceivedError(view, request, error)
+                                        if (isYoutube && request?.isForMainFrame == true) {
+                                            val errCode = error?.errorCode ?: 0
+                                            if (!YouTubeOfflineRepository.isDeviceOnline(ctx) ||
+                                                errCode == ERROR_HOST_LOOKUP ||
+                                                errCode == ERROR_CONNECT ||
+                                                errCode == ERROR_TIMEOUT
+                                            ) {
+                                                isLoading = false
+                                                isYoutubeNetworkOffline = true
+                                                val saved = YouTubeOfflineRepository.loadSavedVideos(ctx)
+                                                if (selectedOfflineYtVideo == null) {
+                                                    selectedOfflineYtVideo = saved.firstOrNull()
+                                                }
+                                                showYoutubeOfflineLibrary = true
+                                            }
+                                        }
                                     }
 
                                     override fun onLoadResource(view: WebView?, url: String?) {
@@ -3245,6 +3753,7 @@ fun CloneWorkspaceScreen(
                                 }
                                 webViewInstance = this
                             }
+                            }
                         },
                         update = { wv ->
                             webViewInstance = wv
@@ -3254,7 +3763,33 @@ fun CloneWorkspaceScreen(
                 }
             }
 
-            if (isLoading && loadProgress < 25 && !hasRenderCrash) {
+            if (isYoutube && showYoutubeOfflineLibrary) {
+                YouTubeOfflineDesktopView(
+                    videos = youtubeOfflineVideos,
+                    activeDownloads = youtubeActiveDownloads,
+                    isOfflineNetwork = isYoutubeNetworkOffline,
+                    selectedVideo = selectedOfflineYtVideo,
+                    onSelectVideo = { selectedOfflineYtVideo = it },
+                    onDeleteVideo = { videoId ->
+                        YouTubeOfflineRepository.deleteOfflineVideo(context, videoId)
+                        if (selectedOfflineYtVideo?.videoId == videoId) {
+                            selectedOfflineYtVideo = youtubeOfflineVideos.firstOrNull { it.videoId != videoId }
+                        }
+                    },
+                    onReturnToLiveYouTube = {
+                        val online = YouTubeOfflineRepository.isDeviceOnline(context)
+                        isYoutubeNetworkOffline = !online
+                        if (online) {
+                            showYoutubeOfflineLibrary = false
+                            webViewInstance?.reload()
+                        } else {
+                            showYoutubeOfflineLibrary = false
+                            webViewInstance?.reload()
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (isLoading && loadProgress < 25 && !hasRenderCrash) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),

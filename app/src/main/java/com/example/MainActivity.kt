@@ -59,6 +59,8 @@ import com.example.ui.screens.FileManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
 import com.example.ui.screens.MessagesScreen
+import com.example.ui.screens.MinimizedCloneFloatingOverlay
+import com.example.ui.screens.MusicPlayerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.XenoTab
@@ -280,6 +282,11 @@ fun XenoApp(
                 viewModel.selectTab(XenoTab.CALLS)
             }
 
+            if (intent.getBooleanExtra("open_music_player", false)) {
+                intent.removeExtra("open_music_player")
+                viewModel.setShowMusicPlayer(true)
+            }
+
             when (intent.action) {
                 Intent.ACTION_DIAL, Intent.ACTION_VIEW -> {
                     val scheme = intent.data?.scheme
@@ -339,7 +346,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = { viewModel.selectTab(it) },
@@ -376,6 +383,21 @@ fun XenoApp(
                         onRefresh = { viewModel.refreshDocumentFolders() },
                         onOpenDocumentContent = { doc -> viewModel.openDocumentReadOnly(doc) },
                         onClose = { viewModel.setShowDocsManager(false) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            } else if (uiState.showMusicPlayer) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MusicPlayerScreen(
+                        tracks = uiState.musicTracks,
+                        isLoading = uiState.isLoadingMusic,
+                        onRefreshScan = { viewModel.refreshMusicTracks() },
+                        onToggleFavorite = { trackId -> viewModel.toggleFavoriteMusicTrack(trackId) },
+                        onImportAudioUris = { uris -> viewModel.importMusicUris(uris) },
+                        onClose = { viewModel.setShowMusicPlayer(false) },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -527,11 +549,13 @@ fun XenoApp(
                                 onSetBrowserFullscreenVideo = { viewModel.setBrowserFullscreenVideo(it) },
                                 spaceClones = uiState.spaceClones,
                                 activeSpaceDock = uiState.activeSpaceDock,
+                                minimizedCloneIds = uiState.minimizedSpaceCloneIds,
                                 activeSpaceInstance = uiState.activeSpaceInstance,
                                 showAddCloneDialog = uiState.showAddCloneDialog,
                                 selectedCloneForEdit = uiState.selectedCloneForEdit,
                                 onLaunchClone = { viewModel.launchCloneWorkspace(it) },
                                 onCloseCloneWorkspace = { viewModel.closeCloneWorkspace() },
+                                onMinimizeCloneWorkspace = { viewModel.minimizeCloneWorkspace() },
                                 onOpenAddClone = { viewModel.openAddCloneDialog() },
                                 onCloseAddClone = { viewModel.closeAddCloneDialog() },
                                 onCreateClone = { pkg, appName, name, badgeTag, badgeColorHex ->
@@ -555,6 +579,7 @@ fun XenoApp(
                                 onSetShowPasswordManager = { viewModel.setShowPasswordManager(it) },
                                 onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
                                 onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
+                                onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },
@@ -590,6 +615,16 @@ fun XenoApp(
                 }
             }
         }
+
+            // Floating Minimized Clone App Icons Overlay
+            if (uiState.activeCallState == null && uiState.minimizedSpaceClones.isNotEmpty()) {
+                MinimizedCloneFloatingOverlay(
+                    minimizedClones = uiState.minimizedSpaceClones,
+                    onRestoreClone = { viewModel.restoreMinimizedClone(it) },
+                    onCloseMinimizedClone = { viewModel.closeMinimizedClone(it) },
+                    modifier = Modifier.zIndex(15f)
+                )
+            }
 
             // Top In-App Incoming Call & SMS Notification Popup Overlay
             InAppNotificationOverlay(

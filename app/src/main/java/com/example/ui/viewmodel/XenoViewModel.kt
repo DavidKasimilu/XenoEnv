@@ -20,6 +20,8 @@ import com.example.data.DownloadRepository
 import com.example.data.GalleryRepository
 import com.example.data.GameSpaceRepository
 import com.example.data.LoadedDocumentContent
+import com.example.data.MusicRepository
+import com.example.data.MusicTrackItem
 import com.example.data.PasswordRepository
 import com.example.data.SmsRepository
 import com.example.data.SpaceRepository
@@ -40,10 +42,12 @@ import com.example.data.models.ApkInstallState
 import com.example.data.models.InstalledGameItem
 import com.example.data.models.VirtualEnvProfile
 import com.example.data.models.MediaItem
+import com.example.data.models.SmsDeliveryStatus
 import com.example.data.models.SmsMessage
 import com.example.data.models.SmsThread
 import com.example.data.models.WebTab
 import com.example.telecom.CallPhase
+import com.example.telecom.MusicPlaybackController
 import com.example.telecom.OngoingCallHelper
 import com.example.telecom.SmsDeliverReceiver
 import com.example.telecom.XenoNotificationHelper
@@ -127,6 +131,7 @@ data class XenoUiState(
     // Space Sandbox state
     val spaceClones: List<ClonedAppInstance> = emptyList(),
     val activeSpaceDock: List<String> = emptyList(),
+    val minimizedSpaceCloneIds: List<String> = emptyList(),
     val activeSpaceInstanceId: String? = null,
     val showAddCloneDialog: Boolean = false,
     val selectedCloneForEdit: ClonedAppInstance? = null,
@@ -143,6 +148,12 @@ data class XenoUiState(
     val showDocsManager: Boolean = false,
     val documentFolders: List<DocumentFolderItem> = emptyList(),
     val isLoadingDocs: Boolean = false,
+
+    // Clone Space Music Player state
+    val showMusicPlayer: Boolean = false,
+    val musicTracks: List<MusicTrackItem> = emptyList(),
+    val isLoadingMusic: Boolean = false,
+
     // Notification state
     val deviceNotifications: List<DeviceNotification> = emptyList(),
     val hasNotificationAccess: Boolean = false,
@@ -168,6 +179,12 @@ data class XenoUiState(
 
     val activeSpaceInstance: ClonedAppInstance?
         get() = spaceClones.find { it.instanceId == activeSpaceInstanceId }
+
+    val minimizedSpaceClones: List<ClonedAppInstance>
+        get() = minimizedSpaceCloneIds.mapNotNull { id ->
+            if (id == activeSpaceInstanceId) null
+            else spaceClones.find { it.instanceId == id }
+        }
 }
 
 data class ActiveCallState(
@@ -188,6 +205,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val passwordRepo = PasswordRepository(application)
     private val downloadRepo = DownloadRepository(application)
     private val documentRepo = DocumentRepository(application)
+    private val musicRepo = MusicRepository(application)
 
     private val callPrefs = application.getSharedPreferences("xeno_call_prefs", Context.MODE_PRIVATE)
     private val recentInMemoryCalls = CopyOnWriteArrayList<CallLogEntry>()
@@ -614,25 +632,72 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         refreshSms()
     }
 
+    private fun applyMessageDeliveryStatus(messageId: Long, status: SmsDeliveryStatus) {
+        smsRepo.updateMessageDeliveryStatus(messageId, status)
+        val updatedMessages = _uiState.value.activeChatMessages.map { msg ->
+            if (msg.id == messageId) msg.copy(deliveryStatus = status) else msg
+        }
+        _uiState.value = _uiState.value.copy(
+            activeChatMessages = updatedMessages
+        )
+    }
+
     fun sendChatMessage(text: String) {
         val activeThread = _uiState.value.activeChatThread ?: return
-        if (text.isBlank()) return
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) return
+
+        val msgId = System.nanoTime()
+        val now = System.currentTimeMillis()
+        val pendingMsg = SmsMessage(
+            id = msgId,
+            threadId = activeThread.threadId,
+            address = activeThread.address,
+            body = cleanText,
+            date = now,
+            isSent = true,
+            read = true,
+            deliveryStatus = SmsDeliveryStatus.SENDING
+        )
+
+        val initialList = _uiState.value.activeChatMessages + pendingMsg
+        val updatedThread = activeThread.copy(
+            snippet = cleanText,
+            date = now,
+            read = true
+        )
+        val otherThreads = _uiState.value.smsThreads.filter { it.threadId != activeThread.threadId }
+        _uiState.value = _uiState.value.copy(
+            activeChatThread = updatedThread,
+            activeChatMessages = initialList,
+            smsThreads = listOf(updatedThread) + otherThreads
+        )
 
         viewModelScope.launch {
-            val result = smsRepo.sendSms(activeThread.address, text.trim(), activeThread.threadId)
-            result.onSuccess { newMsg ->
-                val updatedList = _uiState.value.activeChatMessages + newMsg
-                val updatedThread = activeThread.copy(
-                    snippet = text.trim(),
-                    date = newMsg.date,
-                    read = true
-                )
-                val updatedThreads = _uiState.value.smsThreads.filter { it.threadId != activeThread.threadId }
-                _uiState.value = _uiState.value.copy(
-                    activeChatThread = updatedThread,
-                    activeChatMessages = updatedList,
-                    smsThreads = listOf(updatedThread) + updatedThreads
-                )
+            val result = smsRepo.sendSms(
+                destinationAddress = activeThread.address,
+                text = cleanText,
+                currentThreadId = activeThread.threadId,
+                messageId = msgId,
+                onStatusUpdate = { status ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        applyMessageDeliveryStatus(msgId, status)
+                    }
+                }
+            )
+            result.onSuccess {
+                delay(420)
+                val currentAfterSend = _uiState.value.activeChatMessages.find { it.id == msgId }?.deliveryStatus
+                if (currentAfterSend == SmsDeliveryStatus.SENDING) {
+                    applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.SENT)
+                }
+                delay(650)
+                val currentBeforeDeliver = _uiState.value.activeChatMessages.find { it.id == msgId }?.deliveryStatus
+                if (currentBeforeDeliver == SmsDeliveryStatus.SENT || currentBeforeDeliver == SmsDeliveryStatus.SENDING) {
+                    applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.DELIVERED)
+                }
+            }.onFailure {
+                applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.FAILED)
             }
         }
     }
@@ -849,6 +914,57 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         return documentRepo.openDocumentReadOnly(item)
     }
 
+    // ==========================================
+    // Clone Space Music Player Functions
+    // ==========================================
+    fun setShowMusicPlayer(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showMusicPlayer = show)
+        if (show) {
+            refreshMusicTracks()
+        }
+    }
+
+    fun refreshMusicTracks() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingMusic = true)
+            val tracks = musicRepo.scanDeviceMp3Files()
+            val favs = musicRepo.getFavoriteTrackIds()
+            MusicPlaybackController.setPlaylist(tracks, favs)
+            _uiState.value = _uiState.value.copy(
+                musicTracks = tracks,
+                isLoadingMusic = false
+            )
+        }
+    }
+
+    fun toggleFavoriteMusicTrack(track: MusicTrackItem) {
+        val updatedFavs = musicRepo.toggleFavorite(track.id)
+        val isNowFav = updatedFavs.contains(track.id)
+        val updatedTracks = _uiState.value.musicTracks.map {
+            it.copy(isFavorite = updatedFavs.contains(it.id))
+        }
+        MusicPlaybackController.syncFavorites(updatedFavs)
+        _uiState.value = _uiState.value.copy(
+            musicTracks = updatedTracks,
+            userNotice = if (isNowFav) "Added \"${track.title}\" to Favourites" else "Removed \"${track.title}\" from Favourites"
+        )
+    }
+
+    fun importMusicUris(uris: List<Uri>) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingMusic = true)
+            val count = musicRepo.importAudioUris(uris)
+            val tracks = musicRepo.scanDeviceMp3Files()
+            val favs = musicRepo.getFavoriteTrackIds()
+            MusicPlaybackController.setPlaylist(tracks, favs)
+            _uiState.value = _uiState.value.copy(
+                musicTracks = tracks,
+                isLoadingMusic = false,
+                userNotice = if (count > 0) "Imported $count MP3 track${if (count == 1) "" else "s"}" else "Scanned audio library"
+            )
+        }
+    }
+
     fun addCustomMedia(uri: Uri, isVideo: Boolean, displayName: String = if (isVideo) "Video.mp4" else "Photo.jpg") {
         viewModelScope.launch {
             val item = galleryRepo.importMediaUri(uri, isVideo)
@@ -994,12 +1110,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteAppClone(instanceId: String) {
         val instance = _uiState.value.spaceClones.find { it.instanceId == instanceId }
+        com.example.ui.screens.CloneWebViewPool.destroy(instanceId)
         spaceRepo.deleteClone(instanceId)
         loadSpaceData()
-        if (_uiState.value.activeSpaceInstanceId == instanceId) {
-            _uiState.value = _uiState.value.copy(activeSpaceInstanceId = null)
-        }
+        val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
+        val nextActive = if (_uiState.value.activeSpaceInstanceId == instanceId) null else _uiState.value.activeSpaceInstanceId
         _uiState.value = _uiState.value.copy(
+            activeSpaceInstanceId = nextActive,
+            minimizedSpaceCloneIds = updatedMinimized,
             userNotice = "Removed '${instance?.displayName ?: "clone"}' from Space"
         )
     }
@@ -1010,23 +1128,88 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             dock.add(instanceId)
             spaceRepo.saveActiveDock(dock)
         }
+        val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
         _uiState.value = _uiState.value.copy(
             activeSpaceInstanceId = instanceId,
-            activeSpaceDock = dock
+            activeSpaceDock = dock,
+            minimizedSpaceCloneIds = updatedMinimized,
+            browserDualTab = BrowserDualTab.SPACE,
+            currentTab = XenoTab.CLONE_SPACE
+        )
+    }
+
+    fun minimizeCloneWorkspace() {
+        val currentId = _uiState.value.activeSpaceInstanceId ?: return
+        val currentMinimized = _uiState.value.minimizedSpaceCloneIds.toMutableList()
+        if (!currentMinimized.contains(currentId)) {
+            currentMinimized.add(currentId)
+        }
+        _uiState.value = _uiState.value.copy(
+            activeSpaceInstanceId = null,
+            minimizedSpaceCloneIds = currentMinimized
+        )
+    }
+
+    fun restoreMinimizedClone(instanceId: String) {
+        val previousActiveId = _uiState.value.activeSpaceInstanceId
+        val updatedMinimized = _uiState.value.minimizedSpaceCloneIds
+            .filter { it != instanceId }
+            .toMutableList()
+        if (previousActiveId != null && previousActiveId != instanceId && !updatedMinimized.contains(previousActiveId)) {
+            updatedMinimized.add(previousActiveId)
+        }
+        val dock = _uiState.value.activeSpaceDock.toMutableList()
+        if (!dock.contains(instanceId)) {
+            dock.add(instanceId)
+            spaceRepo.saveActiveDock(dock)
+        }
+        _uiState.value = _uiState.value.copy(
+            activeSpaceInstanceId = instanceId,
+            activeSpaceDock = dock,
+            minimizedSpaceCloneIds = updatedMinimized,
+            browserDualTab = BrowserDualTab.SPACE,
+            currentTab = XenoTab.CLONE_SPACE,
+            showDocsManager = false,
+            showMediaManager = false,
+            showMusicPlayer = false,
+            activeChatThread = null
+        )
+    }
+
+    fun closeMinimizedClone(instanceId: String) {
+        com.example.ui.screens.CloneWebViewPool.destroy(instanceId)
+        val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
+        _uiState.value = _uiState.value.copy(
+            minimizedSpaceCloneIds = updatedMinimized
         )
     }
 
     fun closeCloneWorkspace() {
-        _uiState.value = _uiState.value.copy(activeSpaceInstanceId = null)
+        val currentId = _uiState.value.activeSpaceInstanceId
+        if (currentId != null) {
+            com.example.ui.screens.CloneWebViewPool.destroy(currentId)
+        }
+        val updatedMinimized = if (currentId != null) {
+            _uiState.value.minimizedSpaceCloneIds.filter { it != currentId }
+        } else {
+            _uiState.value.minimizedSpaceCloneIds
+        }
+        _uiState.value = _uiState.value.copy(
+            activeSpaceInstanceId = null,
+            minimizedSpaceCloneIds = updatedMinimized
+        )
     }
 
     fun closeCloneFromDock(instanceId: String) {
+        com.example.ui.screens.CloneWebViewPool.destroy(instanceId)
         val dock = _uiState.value.activeSpaceDock.filter { it != instanceId }
         spaceRepo.saveActiveDock(dock)
         val nextActive = if (_uiState.value.activeSpaceInstanceId == instanceId) null else _uiState.value.activeSpaceInstanceId
+        val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
         _uiState.value = _uiState.value.copy(
             activeSpaceDock = dock,
-            activeSpaceInstanceId = nextActive
+            activeSpaceInstanceId = nextActive,
+            minimizedSpaceCloneIds = updatedMinimized
         )
     }
 

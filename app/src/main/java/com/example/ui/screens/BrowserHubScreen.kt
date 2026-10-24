@@ -72,11 +72,13 @@ fun BrowserHubScreen(
     // Space Sandbox parameters
     spaceClones: List<ClonedAppInstance>,
     activeSpaceDock: List<String>,
+    minimizedCloneIds: List<String> = emptyList(),
     activeSpaceInstance: ClonedAppInstance?,
     showAddCloneDialog: Boolean,
     selectedCloneForEdit: ClonedAppInstance?,
     onLaunchClone: (String) -> Unit,
     onCloseCloneWorkspace: () -> Unit,
+    onMinimizeCloneWorkspace: () -> Unit = {},
     onOpenAddClone: () -> Unit,
     onCloseAddClone: () -> Unit,
     onCreateClone: (packageName: String, appName: String, displayName: String, badgeTag: String, badgeColorHex: String) -> Unit,
@@ -98,6 +100,7 @@ fun BrowserHubScreen(
     onSetShowPasswordManager: (Boolean) -> Unit = {},
     onSetShowMediaManager: (Boolean) -> Unit = {},
     onSetShowDocsManager: (Boolean) -> Unit = {},
+    onSetShowMusicPlayer: (Boolean) -> Unit = {},
     onSavePassword: (domain: String, title: String, username: String, pass: String) -> Unit = { _, _, _, _ -> },
     onDeletePassword: (Long) -> Unit = {},
     onPlayVideo: (MediaItem) -> Unit = {},
@@ -109,6 +112,7 @@ fun BrowserHubScreen(
         CloneWorkspaceScreen(
             instance = activeSpaceInstance,
             onCloseWorkspace = onCloseCloneWorkspace,
+            onMinimizeWorkspace = onMinimizeCloneWorkspace,
             onUrlChanged = { url -> onCloneUrlChanged(activeSpaceInstance.instanceId, url) },
             onToggleDesktopMode = { onToggleDesktopMode(activeSpaceInstance.instanceId) },
             onOpenInBrowser = { url ->
@@ -165,6 +169,7 @@ fun BrowserHubScreen(
                     SpaceSandboxScreen(
                         clones = spaceClones,
                         activeDockIds = activeSpaceDock,
+                        minimizedCloneIds = minimizedCloneIds,
                         onLaunchInstance = onLaunchClone,
                         onOpenAddClone = onOpenAddClone,
                         onOpenEditClone = onOpenEditClone,
@@ -172,6 +177,7 @@ fun BrowserHubScreen(
                         onCloseFromDock = onCloseFromDock,
                         onOpenMedia = { onSetShowMediaManager(true) },
                         onOpenDocs = { onSetShowDocsManager(true) },
+                        onOpenMusic = { onSetShowMusicPlayer(true) },
                         onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) }
                     )
                 }

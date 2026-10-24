@@ -1,16 +1,23 @@
 package com.example.data
 
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.data.models.SmsDeliveryStatus
 import com.example.data.models.SmsMessage
 import com.example.data.models.SmsThread
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -19,10 +26,73 @@ class SmsRepository(
     private val contactsRepository: ContactsRepository
 ) {
 
+    companion object {
+        private const val ACTION_SMS_SENT = "com.example.SMS_SENT_STATUS"
+        private const val ACTION_SMS_DELIVERED = "com.example.SMS_DELIVERED_STATUS"
+        private const val EXTRA_MESSAGE_ID = "extra_message_id"
+    }
+
     private val contentResolver: ContentResolver = context.contentResolver
 
     // Memory cache for user interactions
     private val inMemoryMessages = mutableListOf<SmsMessage>()
+    private val deliveryStatusMap = ConcurrentHashMap<Long, SmsDeliveryStatus>()
+    private val deliveryStatusListeners = ConcurrentHashMap<Long, (SmsDeliveryStatus) -> Unit>()
+
+    init {
+        registerDeliveryReceivers()
+    }
+
+    private fun registerDeliveryReceivers() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val msgId = intent?.getLongExtra(EXTRA_MESSAGE_ID, -1L) ?: -1L
+                if (msgId == -1L) return
+                when (intent?.action) {
+                    ACTION_SMS_SENT -> {
+                        val newStatus = if (resultCode == Activity.RESULT_OK) {
+                            SmsDeliveryStatus.SENT
+                        } else {
+                            SmsDeliveryStatus.FAILED
+                        }
+                        updateMessageDeliveryStatus(msgId, newStatus)
+                    }
+                    ACTION_SMS_DELIVERED -> {
+                        if (resultCode == Activity.RESULT_OK) {
+                            updateMessageDeliveryStatus(msgId, SmsDeliveryStatus.DELIVERED)
+                        }
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(ACTION_SMS_SENT)
+            addAction(ACTION_SMS_DELIVERED)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.applicationContext.registerReceiver(receiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.w("SmsRepository", "Could not register SMS delivery receiver: ${e.message}")
+        }
+    }
+
+    fun updateMessageDeliveryStatus(messageId: Long, status: SmsDeliveryStatus) {
+        deliveryStatusMap[messageId] = status
+        synchronized(inMemoryMessages) {
+            val idx = inMemoryMessages.indexOfFirst { it.id == messageId }
+            if (idx != -1) {
+                inMemoryMessages[idx] = inMemoryMessages[idx].copy(deliveryStatus = status)
+            }
+        }
+        deliveryStatusListeners[messageId]?.invoke(status)
+        if (status == SmsDeliveryStatus.DELIVERED || status == SmsDeliveryStatus.FAILED) {
+            deliveryStatusListeners.remove(messageId)
+        }
+    }
 
     suspend fun getConversations(): List<SmsThread> = withContext(Dispatchers.IO) {
         val hasPermission = ContextCompat.checkSelfPermission(
@@ -73,14 +143,24 @@ class SmsRepository(
                             else -> System.currentTimeMillis() + threadsMap.size
                         }
                         val effectiveId = if (id != 0L) id else (System.currentTimeMillis() + threadsMap.size)
+                        val isSentMsg = type == Telephony.Sms.MESSAGE_TYPE_SENT ||
+                            type == Telephony.Sms.MESSAGE_TYPE_OUTBOX ||
+                            type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
+                            type == Telephony.Sms.MESSAGE_TYPE_FAILED
+                        val resolvedStatus = deliveryStatusMap[effectiveId] ?: when (type) {
+                            Telephony.Sms.MESSAGE_TYPE_OUTBOX, Telephony.Sms.MESSAGE_TYPE_QUEUED -> SmsDeliveryStatus.SENDING
+                            Telephony.Sms.MESSAGE_TYPE_FAILED -> SmsDeliveryStatus.FAILED
+                            else -> SmsDeliveryStatus.DELIVERED
+                        }
                         val msg = SmsMessage(
                             id = effectiveId,
                             threadId = effectiveThreadId,
                             address = address,
                             body = body,
                             date = date,
-                            isSent = type == Telephony.Sms.MESSAGE_TYPE_SENT,
-                            read = read
+                            isSent = isSentMsg,
+                            read = read,
+                            deliveryStatus = resolvedStatus
                         )
                         threadsMap.getOrPut(effectiveThreadId) { mutableListOf() }.add(msg)
                     }
@@ -217,7 +297,8 @@ class SmsRepository(
             Telephony.Sms.BODY,
             Telephony.Sms.DATE,
             Telephony.Sms.READ,
-            Telephony.Sms.TYPE
+            Telephony.Sms.TYPE,
+            Telephony.Sms.STATUS
         )
 
         try {
@@ -237,6 +318,7 @@ class SmsRepository(
                 val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
                 val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
                 val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
+                val statusIdx = cursor.getColumnIndex(Telephony.Sms.STATUS)
 
                 while (cursor.moveToNext()) {
                     val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
@@ -246,6 +328,17 @@ class SmsRepository(
                     val date = if (dateIdx != -1) cursor.getLong(dateIdx) else System.currentTimeMillis()
                     val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                     val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
+                    val statusCol = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
+
+                    val isSentMsg = type == Telephony.Sms.MESSAGE_TYPE_SENT ||
+                        type == Telephony.Sms.MESSAGE_TYPE_OUTBOX ||
+                        type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
+                        type == Telephony.Sms.MESSAGE_TYPE_FAILED
+                    val deliveryStatus = deliveryStatusMap[id] ?: when {
+                        type == Telephony.Sms.MESSAGE_TYPE_FAILED || statusCol == Telephony.Sms.STATUS_FAILED -> SmsDeliveryStatus.FAILED
+                        type == Telephony.Sms.MESSAGE_TYPE_OUTBOX || type == Telephony.Sms.MESSAGE_TYPE_QUEUED || statusCol == Telephony.Sms.STATUS_PENDING -> SmsDeliveryStatus.SENDING
+                        else -> SmsDeliveryStatus.DELIVERED
+                    }
 
                     messages.add(
                         SmsMessage(
@@ -254,8 +347,9 @@ class SmsRepository(
                             address = addr,
                             body = body,
                             date = date,
-                            isSent = type == Telephony.Sms.MESSAGE_TYPE_SENT,
-                            read = read
+                            isSent = isSentMsg,
+                            read = read,
+                            deliveryStatus = deliveryStatus
                         )
                     )
                 }
@@ -273,12 +367,26 @@ class SmsRepository(
         stitchMultipartMessages(allMessages)
     }
 
-    suspend fun sendSms(destinationAddress: String, text: String, currentThreadId: Long?): Result<SmsMessage> = withContext(Dispatchers.IO) {
+    suspend fun sendSms(
+        destinationAddress: String,
+        text: String,
+        currentThreadId: Long?,
+        messageId: Long = System.nanoTime(),
+        onStatusUpdate: ((SmsDeliveryStatus) -> Unit)? = null
+    ): Result<SmsMessage> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
+        if (onStatusUpdate != null) {
+            deliveryStatusListeners[messageId] = onStatusUpdate
+        }
+        deliveryStatusMap[messageId] = SmsDeliveryStatus.SENDING
+
         val hasSendPermission = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.SEND_SMS
         ) == PackageManager.PERMISSION_GRANTED
+
+        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
 
         // Attempt actual SmsManager dispatch if permission is available
         if (hasSendPermission) {
@@ -290,11 +398,32 @@ class SmsRepository(
                     SmsManager.getDefault()
                 }
 
+                val sentIntent = PendingIntent.getBroadcast(
+                    context,
+                    (messageId and 0x7FFFFFFF).toInt(),
+                    Intent(ACTION_SMS_SENT).apply {
+                        setPackage(context.packageName)
+                        putExtra(EXTRA_MESSAGE_ID, messageId)
+                    },
+                    pendingFlags
+                )
+                val deliveryIntent = PendingIntent.getBroadcast(
+                    context,
+                    ((messageId + 1) and 0x7FFFFFFF).toInt(),
+                    Intent(ACTION_SMS_DELIVERED).apply {
+                        setPackage(context.packageName)
+                        putExtra(EXTRA_MESSAGE_ID, messageId)
+                    },
+                    pendingFlags
+                )
+
                 val parts = smsManager.divideMessage(text)
                 if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(destinationAddress, null, parts, null, null)
+                    val sentIntents = ArrayList<PendingIntent>(parts.map { sentIntent })
+                    val deliveryIntents = ArrayList<PendingIntent>(parts.map { deliveryIntent })
+                    smsManager.sendMultipartTextMessage(destinationAddress, null, parts, sentIntents, deliveryIntents)
                 } else {
-                    smsManager.sendTextMessage(destinationAddress, null, text, null, null)
+                    smsManager.sendTextMessage(destinationAddress, null, text, sentIntent, deliveryIntent)
                 }
 
                 // Insert into sent box in provider
@@ -321,16 +450,19 @@ class SmsRepository(
         // Create the message object
         val effectiveThreadId = currentThreadId ?: destinationAddress.hashCode().toLong()
         val newMessage = SmsMessage(
-            id = System.nanoTime(),
+            id = messageId,
             threadId = effectiveThreadId,
             address = destinationAddress,
             body = text,
             date = now,
             isSent = true,
-            read = true
+            read = true,
+            deliveryStatus = SmsDeliveryStatus.SENDING
         )
 
-        inMemoryMessages.add(newMessage)
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.add(newMessage)
+        }
         Result.success(newMessage)
     }
 

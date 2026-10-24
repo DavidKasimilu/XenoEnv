@@ -137,6 +137,13 @@ data class SmsThread(
         }
 }
 
+enum class SmsDeliveryStatus(val label: String) {
+    SENDING("Sending..."),
+    SENT("Sent"),
+    DELIVERED("Delivered"),
+    FAILED("Failed")
+}
+
 data class SmsMessage(
     val id: Long,
     val threadId: Long,
@@ -144,7 +151,8 @@ data class SmsMessage(
     val body: String,
     val date: Long,
     val isSent: Boolean,
-    val read: Boolean
+    val read: Boolean,
+    val deliveryStatus: SmsDeliveryStatus = SmsDeliveryStatus.DELIVERED
 ) {
     val formattedTime: String
         get() {
