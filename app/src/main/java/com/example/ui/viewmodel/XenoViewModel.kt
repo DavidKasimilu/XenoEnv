@@ -1350,24 +1350,63 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         return TelecomHelper.isUssdCode(number)
     }
 
-    fun startCall(number: String, name: String?) {
+    fun startCall(
+        number: String,
+        name: String?,
+        simCard: com.example.telecom.SimCardInfo? = null,
+        skipSystemCall: Boolean = false
+    ) {
         val clean = number.trim()
+        if (clean.isBlank()) return
         startActiveCall(phoneNumber = clean, contactName = name, isIncoming = false)
         if (isUssdCode(clean)) {
             _uiState.value = _uiState.value.copy(
                 userNotice = "Executing USSD code $clean..."
             )
-            try {
-                TelecomHelper.makeCall(getApplication(), clean)
-            } catch (e: Exception) {
-                android.util.Log.e("XenoViewModel", "Error running USSD: ${e.message}")
+            if (!skipSystemCall) {
+                try {
+                    if (simCard != null) {
+                        TelecomHelper.makeCallWithSim(
+                            getApplication(),
+                            clean,
+                            simCard.phoneAccountHandle,
+                            simCard.subscriptionId
+                        )
+                    } else {
+                        TelecomHelper.makeCall(getApplication(), clean)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("XenoViewModel", "Error running USSD: ${e.message}")
+                }
             }
             return
         }
-        try {
-            TelecomHelper.makeCall(getApplication(), clean)
-        } catch (e: Exception) {
-            android.util.Log.e("XenoViewModel", "Error placing call: ${e.message}")
+        if (simCard != null) {
+            val prefs = getApplication<Application>().getSharedPreferences("xeno_telecom_prefs", Context.MODE_PRIVATE)
+            val label = if (simCard.carrierName.length > 14) "SIM ${simCard.subscriptionId + 1}" else simCard.carrierName
+            prefs.edit()
+                .putInt("preferred_sim_slot", simCard.subscriptionId)
+                .putString("preferred_sim_name", label)
+                .apply()
+            _uiState.value = _uiState.value.copy(
+                userNotice = "Calling ${name ?: clean} via ${simCard.carrierName} (SIM ${simCard.subscriptionId + 1})"
+            )
+        }
+        if (!skipSystemCall) {
+            try {
+                if (simCard != null) {
+                    TelecomHelper.makeCallWithSim(
+                        getApplication(),
+                        clean,
+                        simCard.phoneAccountHandle,
+                        simCard.subscriptionId
+                    )
+                } else {
+                    TelecomHelper.makeCall(getApplication(), clean)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("XenoViewModel", "Error placing call: ${e.message}")
+            }
         }
     }
 

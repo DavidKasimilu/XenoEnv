@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PhoneInTalk
+import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -86,6 +87,7 @@ fun CallsScreen(
     onStartSms: (String, String?) -> Unit,
     onOpenContacts: () -> Unit,
     onStartCall: (String, String?) -> Unit,
+    onStartCallWithSim: (String, String?, SimCardInfo?) -> Unit = { num, name, _ -> onStartCall(num, name) },
     onSimulateIncomingCall: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -94,6 +96,7 @@ fun CallsScreen(
     var selectedEntry by remember { mutableStateOf<CallLogEntry?>(null) }
     var showClearDialog by remember { mutableStateOf(false) }
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
+    var callNameTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
 
     LaunchedEffect(Unit, callLogs.size) {
@@ -102,11 +105,22 @@ fun CallsScreen(
 
     fun placeCall(number: String, name: String? = null) {
         val clean = number.trim()
+        if (clean.isBlank()) return
         if (TelecomHelper.isUssdCode(clean)) {
-            TelecomHelper.makeCall(context, clean)
+            onStartCallWithSim(clean, name, null)
             return
         }
-        onStartCall(number, name)
+        val sims = TelecomHelper.getSimChoicesForCall(context)
+        availableSims = sims
+        callNameTarget = name?.takeIf { it.isNotBlank() && it != clean }
+        callNumberTarget = clean
+    }
+
+    fun placeCallWithSpecificSim(number: String, name: String?, sim: SimCardInfo) {
+        val clean = number.trim()
+        if (clean.isBlank()) return
+        val resolvedName = name?.takeIf { it.isNotBlank() && it != clean }
+        onStartCallWithSim(clean, resolvedName, sim)
     }
 
     val filteredLogs = remember(callLogs, filter) {
@@ -308,7 +322,7 @@ fun CallsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    // Call
+                    // Call (Choose SIM)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Surface(
                             shape = CircleShape,
@@ -316,14 +330,17 @@ fun CallsScreen(
                             modifier = Modifier
                                 .size(50.dp)
                                 .clickable {
-                                    placeCall(entry.number, entry.displayName)
+                                    val num = entry.number
+                                    val name = entry.displayName
                                     selectedEntry = null
+                                    placeCall(num, name)
                                 }
+                                .testTag("sheet_call_choose_sim_btn")
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Filled.Call,
-                                    contentDescription = "Call",
+                                    contentDescription = "Call and choose SIM",
                                     tint = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
@@ -406,6 +423,53 @@ fun CallsScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                // Quick SIM Call Buttons in Details Sheet
+                val sheetSims = remember { TelecomHelper.getSimChoicesForCall(context) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    sheetSims.forEachIndexed { idx, sim ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    val num = entry.number
+                                    val name = entry.displayName
+                                    selectedEntry = null
+                                    placeCallWithSpecificSim(num, name, sim)
+                                }
+                                .testTag("sheet_quick_sim_${idx + 1}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SimCard,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Call SIM ${sim.subscriptionId + 1}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
@@ -473,13 +537,18 @@ fun CallsScreen(
     callNumberTarget?.let { num ->
         SimSelectionDialog(
             phoneNumber = num,
+            contactName = callNameTarget,
             simCards = availableSims,
             onSimSelected = { sim ->
+                val targetName = callNameTarget
                 callNumberTarget = null
-                placeCall(num)
-                TelecomHelper.makeCallWithSim(context, num, sim.phoneAccountHandle)
+                callNameTarget = null
+                placeCallWithSpecificSim(num, targetName, sim)
             },
-            onDismiss = { callNumberTarget = null }
+            onDismiss = {
+                callNumberTarget = null
+                callNameTarget = null
+            }
         )
     }
   }

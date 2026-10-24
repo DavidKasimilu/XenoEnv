@@ -144,7 +144,12 @@ object TelecomHelper {
     }
 
     @android.annotation.SuppressLint("MissingPermission")
-    fun makeCallWithSim(context: Context, phoneNumber: String, phoneAccountHandle: android.telecom.PhoneAccountHandle?) {
+    fun makeCallWithSim(
+        context: Context,
+        phoneNumber: String,
+        phoneAccountHandle: android.telecom.PhoneAccountHandle?,
+        simSlotIndex: Int = 0
+    ) {
         val cleanedNumber = phoneNumber.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
         if (cleanedNumber.isBlank()) return
 
@@ -155,11 +160,31 @@ object TelecomHelper {
             context,
             android.Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
+        val hasPhoneStatePermission = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
 
-        if (!isUssd && phoneAccountHandle != null && telecomManager != null && hasCallPermission && isDefaultDialer(context)) {
+        val resolvedHandle = phoneAccountHandle ?: run {
+            if (telecomManager != null && hasPhoneStatePermission) {
+                try {
+                    val handles = telecomManager.callCapablePhoneAccounts
+                    handles.getOrNull(simSlotIndex) ?: handles.firstOrNull()
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+        }
+
+        if (!isUssd && telecomManager != null && hasCallPermission && isDefaultDialer(context)) {
             try {
                 val extras = android.os.Bundle().apply {
-                    putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
+                    if (resolvedHandle != null) {
+                        putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, resolvedHandle)
+                    }
+                    putInt("com.android.phone.extra.slot", simSlotIndex)
+                    putInt("simSlot", simSlotIndex)
+                    putInt("slot", simSlotIndex)
                 }
                 telecomManager.placeCall(targetUri, extras)
                 return
@@ -168,11 +193,18 @@ object TelecomHelper {
             }
         }
 
-        if (phoneAccountHandle != null && hasCallPermission) {
+        if (hasCallPermission) {
             try {
                 val intent = Intent(Intent.ACTION_CALL, targetUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
+                    if (resolvedHandle != null) {
+                        putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, resolvedHandle)
+                    }
+                    putExtra("com.android.phone.extra.slot", simSlotIndex)
+                    putExtra("simSlot", simSlotIndex)
+                    putExtra("slot", simSlotIndex)
+                    putExtra("subscription", simSlotIndex)
+                    putExtra("extra_asus_dial_use_dualsim", simSlotIndex)
                 }
                 context.startActivity(intent)
                 return
@@ -188,20 +220,69 @@ object TelecomHelper {
     fun getAvailableSimCards(context: Context): List<SimCardInfo> {
         val simList = mutableListOf<SimCardInfo>()
         try {
-            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-            if (telecomManager != null) {
-                val hasPermission = ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.READ_PHONE_STATE
-                ) == PackageManager.PERMISSION_GRANTED
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_PHONE_STATE
+            ) == PackageManager.PERMISSION_GRANTED
 
-                if (hasPermission) {
-                    val handles = telecomManager.callCapablePhoneAccounts
-                    handles.forEachIndexed { index, handle ->
-                        val account = telecomManager.getPhoneAccount(handle)
-                        val label = account?.label?.toString() ?: "SIM ${index + 1}"
-                        simList.add(SimCardInfo(handle, label, index))
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            val handles = if (telecomManager != null && hasPermission) {
+                try {
+                    telecomManager.callCapablePhoneAccounts
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+
+            if (hasPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                val activeSubs = try {
+                    subManager?.activeSubscriptionInfoList.orEmpty()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                if (activeSubs.isNotEmpty()) {
+                    activeSubs.sortedBy { it.simSlotIndex }.forEachIndexed { idx, subInfo ->
+                        val slotIndex = if (subInfo.simSlotIndex >= 0) subInfo.simSlotIndex else idx
+                        val matchedHandle = handles.find { handle ->
+                            handle.id.contains(subInfo.subscriptionId.toString()) ||
+                                handle.id.contains(subInfo.iccId.orEmpty())
+                        } ?: handles.getOrNull(slotIndex)
+                        val carrier = subInfo.carrierName?.toString()?.takeIf { it.isNotBlank() }
+                            ?: subInfo.displayName?.toString()?.takeIf { it.isNotBlank() }
+                            ?: "SIM ${slotIndex + 1}"
+                        val number = subInfo.number?.takeIf { it.isNotBlank() }
+                        simList.add(
+                            SimCardInfo(
+                                phoneAccountHandle = matchedHandle,
+                                carrierName = carrier,
+                                subscriptionId = slotIndex,
+                                phoneNumber = number
+                            )
+                        )
                     }
+                }
+            }
+
+            if (simList.isEmpty() && telecomManager != null && handles.isNotEmpty()) {
+                handles.forEachIndexed { index, handle ->
+                    val account = try {
+                        telecomManager.getPhoneAccount(handle)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val label = account?.label?.toString()?.takeIf { it.isNotBlank() } ?: "SIM ${index + 1}"
+                    val address = account?.address?.schemeSpecificPart?.takeIf { it.isNotBlank() }
+                    simList.add(
+                        SimCardInfo(
+                            phoneAccountHandle = handle,
+                            carrierName = label,
+                            subscriptionId = index,
+                            phoneNumber = address
+                        )
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -209,10 +290,33 @@ object TelecomHelper {
         }
         return simList
     }
+
+    /**
+     * Returns selectable SIM options when initiating a call so the user can always choose
+     * between SIM 1 and SIM 2 (populated with real carrier/account handles when available).
+     */
+    fun getSimChoicesForCall(context: Context): List<SimCardInfo> {
+        val detected = getAvailableSimCards(context)
+        if (detected.size >= 2) return detected
+        val firstSim = detected.firstOrNull()
+        return listOf(
+            firstSim ?: SimCardInfo(
+                phoneAccountHandle = null,
+                carrierName = "SIM 1 (Primary)",
+                subscriptionId = 0
+            ),
+            SimCardInfo(
+                phoneAccountHandle = null,
+                carrierName = "SIM 2 (Secondary)",
+                subscriptionId = 1
+            )
+        )
+    }
 }
 
 data class SimCardInfo(
     val phoneAccountHandle: android.telecom.PhoneAccountHandle?,
     val carrierName: String,
-    val subscriptionId: Int
+    val subscriptionId: Int,
+    val phoneNumber: String? = null
 )

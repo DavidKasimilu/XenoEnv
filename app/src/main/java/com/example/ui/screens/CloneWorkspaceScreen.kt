@@ -217,7 +217,8 @@ private class WhatsAppCallJsBridge(
     private val mainHandler: Handler,
     private val onCallStateChanged: (active: Boolean, isVideo: Boolean) -> Unit,
     private val onEnsurePermissions: (needAudio: Boolean, needVideo: Boolean) -> Unit,
-    private val checkPermissionsGranted: () -> Boolean
+    private val checkPermissionsGranted: () -> Boolean,
+    private val onMobileChatStateChanged: (isChatOpen: Boolean, chatTitle: String) -> Unit = { _, _ -> }
 ) {
     @JavascriptInterface
     fun onCallStarted(isVideo: Boolean) {
@@ -244,27 +245,38 @@ private class WhatsAppCallJsBridge(
     fun hasNativeCallPermissions(): Boolean {
         return checkPermissionsGranted()
     }
+
+    @JavascriptInterface
+    fun onMobileNavStateChanged(isChatOpen: Boolean, chatTitle: String?) {
+        mainHandler.post {
+            onMobileChatStateChanged(isChatOpen, chatTitle.orEmpty())
+        }
+    }
 }
 
 /**
- * Lightweight, idempotent WhatsApp Web Support & Voice/Video Calling Engine for Android WebView:
- * 1. Polyfills Desktop Chrome 131 (Windows 64-bit) APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`).
- * 2. Enables WebRTC Voice & Video Calls using device microphone and camera:
- *    - Grants `navigator.permissions.query` for `'microphone'`, `'camera'`, `'audio-capture'`, `'video-capture'`, and `'notifications'`.
- *    - Enhances `navigator.mediaDevices.enumerateDevices` so labeled microphone, front/rear cameras, and speaker output are always detected by WhatsApp Web.
- *    - Wraps `navigator.mediaDevices.getUserMedia` with automatic constraint fallback (`OverconstrainedError` / `NotFoundError` protection) so desktop camera/mic constraints seamlessly map to Android device cameras and hardware microphone.
- *    - Polyfills `HTMLMediaElement.prototype.setSinkId` and inline video playback so call audio/video streams never fail.
- * 3. Preserves the untouched 1280px desktop layout.
+ * WhatsApp Web Complete Desktop Functionality + Phone Screen UI Engine for Android WebView:
+ * 1. Polyfills Desktop Chrome 131 (Windows 64-bit) APIs (`window.Notification`, `window.chrome`, `navigator.userAgentData`)
+ *    so WhatsApp Web serves 100% of its desktop features without ever redirecting to mobile download pages.
+ * 2. Enables WebRTC Voice & Video Calls using device microphone and camera.
+ * 3. Adapts WhatsApp Web's multi-column desktop UI (`#side` chat list, `#main` active conversation, navigation rail,
+ *    drawers, modals, and QR/phone-number login landing screen) to fit a mobile phone screen (`width=device-width, initial-scale=1.0`)
+ *    with smooth single-pane switching and an injected mobile Back button inside the conversation header.
  */
-private fun injectWhatsAppWebSupportEngine(view: WebView?) {
+private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean = true) {
+    val phoneModeLiteral = if (phoneUiMode) "true" else "false"
     val js = """
         (function() {
             try {
+                window.__xenoWaPhoneMode = $phoneModeLiteral;
+
                 if (!window.__xenoWaPolyfilled) {
                     window.__xenoWaPolyfilled = true;
                     window.__xenoPreferredFacingMode = 'user';
                     window.__xenoActiveCallStreams = [];
                     window.__xenoLastChatContact = { name: 'WhatsApp Contact', avatar: '', isVideo: false };
+                    window.__xenoDismissedChatSignature = null;
+                    window.__xenoLastKnownChatSignature = '';
 
                     // 1. Full Desktop Chrome 131 Environment & Window Chrome Object
                     if (!window.chrome) {
@@ -705,7 +717,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 });
                         };
 
-                        // Desktop Chrome always provides navigator.mediaDevices.getDisplayMedia (checked by WhatsApp Web calling support)
                         if (typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
                             var displayMediaFn = function(constraints) {
                                 return navigator.mediaDevices.getUserMedia({ video: true, audio: Boolean(constraints && constraints.audio) });
@@ -768,7 +779,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         } catch(e) {}
                     };
 
-                    // 8. Preserve 100% of RTCPeerConnection static & prototype methods (especially generateCertificate!) using Proxy
+                    // 8. Preserve 100% of RTCPeerConnection static & prototype methods using Proxy
                     var OrigPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
                     if (OrigPeerConnection && !window.__xenoPeerPatched) {
                         window.__xenoPeerPatched = true;
@@ -895,7 +906,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     hookWhatsAppRequire();
                     setInterval(hookWhatsAppRequire, 600);
 
-                    // 11. Built-in WhatsApp Web Live Voice & Video Call UI (Handles Calls when WhatsApp Web shows 'Browser does not support calls')
+                    // 11. Built-in WhatsApp Web Live Voice & Video Call UI (Phone-Screen Responsive)
                     window.__xenoExtractActiveChatContact = function() {
                         try {
                             var mainEl = document.getElementById('main') || document.querySelector('[data-testid="conversation-panel-wrapper"]') || document.querySelector('header');
@@ -1027,27 +1038,27 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
 
                             var overlay = document.createElement('div');
                             overlay.id = 'xeno-wa-live-call-overlay';
-                            overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:36px 24px 44px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;transition:all 0.25s ease;';
+                            overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:20px 16px 28px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;transition:all 0.25s ease;';
 
                             var topBar = document.createElement('div');
-                            topBar.style.cssText = 'width:100%;display:flex;align-items:center;justify-content:space-between;';
+                            topBar.style.cssText = 'width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;';
                             topBar.innerHTML =
-                                '<div style="display:flex;align-items:center;gap:8px;color:#8696a0;font-size:16px;">' +
-                                '  <span style="color:#00a884;font-size:18px;">&#128274;</span>' +
-                                '  <span>End-to-end encrypted &bull; WhatsApp ' + (isVideo ? 'Video' : 'Voice') + ' Call</span>' +
+                                '<div style="display:flex;align-items:center;gap:6px;color:#8696a0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                                '  <span style="color:#00a884;font-size:14px;">&#128274;</span>' +
+                                '  <span>End-to-end encrypted &bull; ' + (isVideo ? 'Video' : 'Voice') + ' Call</span>' +
                                 '</div>';
 
                             var minBtn = document.createElement('button');
                             minBtn.textContent = 'Minimize';
-                            minBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.16);color:#e9edef;padding:8px 16px;border-radius:20px;font-size:14px;cursor:pointer;';
+                            minBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.16);color:#e9edef;padding:6px 14px;border-radius:18px;font-size:13px;cursor:pointer;flex-shrink:0;';
                             topBar.appendChild(minBtn);
 
                             var centerBox = document.createElement('div');
-                            centerBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;position:relative;flex:1;width:100%;max-width:680px;';
+                            centerBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;position:relative;flex:1;width:100%;max-width:480px;';
 
                             var videoContainer = document.createElement('div');
                             videoContainer.id = 'xeno-wa-call-video-wrap';
-                            videoContainer.style.cssText = 'width:100%;max-width:520px;height:' + (isVideo ? '340px' : '0px') + ';border-radius:20px;overflow:hidden;background:#1f2c34;position:relative;display:' + (isVideo ? 'flex' : 'none') + ';align-items:center;justify-content:center;box-shadow:0 12px 36px rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.1);';
+                            videoContainer.style.cssText = 'width:100%;max-width:360px;height:' + (isVideo ? '240px' : '0px') + ';border-radius:18px;overflow:hidden;background:#1f2c34;position:relative;display:' + (isVideo ? 'flex' : 'none') + ';align-items:center;justify-content:center;box-shadow:0 12px 36px rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.1);';
 
                             var localVideo = document.createElement('video');
                             localVideo.id = 'xeno-wa-call-local-video';
@@ -1060,7 +1071,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                             videoContainer.appendChild(localVideo);
 
                             var avatarWrap = document.createElement('div');
-                            avatarWrap.style.cssText = 'width:136px;height:136px;border-radius:50%;overflow:hidden;background:#202c33;display:flex;align-items:center;justify-content:center;border:3px solid #00a884;box-shadow:0 0 0 10px rgba(0,168,132,0.12);';
+                            avatarWrap.style.cssText = 'width:110px;height:110px;border-radius:50%;overflow:hidden;background:#202c33;display:flex;align-items:center;justify-content:center;border:3px solid #00a884;box-shadow:0 0 0 8px rgba(0,168,132,0.12);';
                             if (avatar) {
                                 var avatarImg = document.createElement('img');
                                 avatarImg.src = avatar;
@@ -1069,17 +1080,17 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                             } else {
                                 var initials = document.createElement('span');
                                 initials.textContent = (name.trim()[0] || 'W').toUpperCase();
-                                initials.style.cssText = 'font-size:54px;font-weight:700;color:#00a884;';
+                                initials.style.cssText = 'font-size:44px;font-weight:700;color:#00a884;';
                                 avatarWrap.appendChild(initials);
                             }
 
                             var nameEl = document.createElement('div');
                             nameEl.textContent = name;
-                            nameEl.style.cssText = 'font-size:30px;font-weight:600;color:#e9edef;text-align:center;margin-top:6px;';
+                            nameEl.style.cssText = 'font-size:22px;font-weight:600;color:#e9edef;text-align:center;margin-top:4px;max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
                             var statusEl = document.createElement('div');
                             statusEl.textContent = 'Calling...';
-                            statusEl.style.cssText = 'font-size:18px;color:#00a884;font-weight:500;letter-spacing:0.3px;';
+                            statusEl.style.cssText = 'font-size:15px;color:#00a884;font-weight:500;letter-spacing:0.3px;';
 
                             centerBox.appendChild(avatarWrap);
                             centerBox.appendChild(nameEl);
@@ -1087,19 +1098,19 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                             centerBox.appendChild(videoContainer);
 
                             var controlsBar = document.createElement('div');
-                            controlsBar.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:22px;background:#1f2c34;padding:16px 32px;border-radius:48px;box-shadow:0 10px 28px rgba(0,0,0,0.4);';
+                            controlsBar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;background:#1f2c34;padding:12px 16px;border-radius:32px;box-shadow:0 10px 28px rgba(0,0,0,0.4);max-width:calc(100vw - 24px);box-sizing:border-box;';
 
                             var makeBtn = function(label, bg, onClick) {
                                 var b = document.createElement('button');
                                 b.textContent = label;
-                                b.style.cssText = 'min-width:110px;height:54px;border-radius:27px;border:none;background:' + bg + ';color:#ffffff;font-size:15px;font-weight:600;cursor:pointer;padding:0 20px;display:flex;align-items:center;justify-content:center;gap:8px;transition:background 0.2s;';
+                                b.style.cssText = 'min-width:74px;height:44px;border-radius:22px;border:none;background:' + bg + ';color:#ffffff;font-size:13px;font-weight:600;cursor:pointer;padding:0 14px;display:flex;align-items:center;justify-content:center;gap:6px;transition:background 0.2s;';
                                 b.onclick = onClick;
                                 return b;
                             };
 
-                            var muteBtn = makeBtn('Mute Mic', '#2a3942', function() {
+                            var muteBtn = makeBtn('Mute', '#2a3942', function() {
                                 isMuted = !isMuted;
-                                muteBtn.textContent = isMuted ? 'Unmute Mic' : 'Mute Mic';
+                                muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
                                 muteBtn.style.background = isMuted ? '#00a884' : '#2a3942';
                                 var streams = window.__xenoActiveCallStreams || [];
                                 streams.forEach(function(s) {
@@ -1107,12 +1118,12 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 });
                             });
 
-                            var videoBtn = makeBtn(isVideo ? 'Camera On' : 'Camera Off', isVideo ? '#00a884' : '#2a3942', function() {
+                            var videoBtn = makeBtn(isVideo ? 'Cam On' : 'Cam Off', isVideo ? '#00a884' : '#2a3942', function() {
                                 isVideo = !isVideo;
-                                videoBtn.textContent = isVideo ? 'Camera On' : 'Camera Off';
+                                videoBtn.textContent = isVideo ? 'Cam On' : 'Cam Off';
                                 videoBtn.style.background = isVideo ? '#00a884' : '#2a3942';
                                 videoContainer.style.display = isVideo ? 'flex' : 'none';
-                                videoContainer.style.height = isVideo ? '340px' : '0px';
+                                videoContainer.style.height = isVideo ? '240px' : '0px';
                                 if (isVideo) {
                                     navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(function(s) {
                                         localVideo.srcObject = s;
@@ -1126,7 +1137,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                 }
                             });
 
-                            var flipBtn = makeBtn('Flip Cam', '#2a3942', function() {
+                            var flipBtn = makeBtn('Flip', '#2a3942', function() {
                                 if (window.__xenoFlipCallCamera) window.__xenoFlipCallCamera();
                             });
 
@@ -1142,24 +1153,24 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                             minBtn.onclick = function() {
                                 isMinimized = !isMinimized;
                                 if (isMinimized) {
-                                    overlay.style.cssText = 'position:fixed;top:16px;right:16px;width:360px;height:auto;z-index:2147483646;background:#1f2c34;color:#e9edef;display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px;border-radius:20px;box-shadow:0 12px 32px rgba(0,0,0,0.55);border:1px solid #00a884;font-family:Segoe UI,sans-serif;';
+                                    overlay.style.cssText = 'position:fixed;top:12px;right:12px;width:min(280px, calc(100vw - 24px));height:auto;z-index:2147483646;background:#1f2c34;color:#e9edef;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px;border-radius:18px;box-shadow:0 12px 32px rgba(0,0,0,0.55);border:1px solid #00a884;font-family:Segoe UI,sans-serif;box-sizing:border-box;';
                                     avatarWrap.style.display = 'none';
                                     videoContainer.style.display = 'none';
-                                    nameEl.style.fontSize = '18px';
-                                    statusEl.style.fontSize = '14px';
-                                    controlsBar.style.padding = '8px 12px';
-                                    controlsBar.style.gap = '8px';
+                                    nameEl.style.fontSize = '16px';
+                                    statusEl.style.fontSize = '13px';
+                                    controlsBar.style.padding = '6px 10px';
+                                    controlsBar.style.gap = '6px';
                                     flipBtn.style.display = 'none';
                                     videoBtn.style.display = 'none';
                                     minBtn.textContent = 'Expand';
                                 } else {
-                                    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:36px 24px 44px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;';
+                                    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:linear-gradient(180deg,#0b141a 0%,#111b21 55%,#0b141a 100%);color:#e9edef;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:20px 16px 28px;font-family:Segoe UI,Helvetica Neue,Helvetica,Lucida Grande,Arial,sans-serif;user-select:none;box-sizing:border-box;';
                                     avatarWrap.style.display = 'flex';
                                     videoContainer.style.display = isVideo ? 'flex' : 'none';
-                                    nameEl.style.fontSize = '30px';
-                                    statusEl.style.fontSize = '18px';
-                                    controlsBar.style.padding = '16px 32px';
-                                    controlsBar.style.gap = '22px';
+                                    nameEl.style.fontSize = '22px';
+                                    statusEl.style.fontSize = '15px';
+                                    controlsBar.style.padding = '12px 16px';
+                                    controlsBar.style.gap = '10px';
                                     flipBtn.style.display = 'flex';
                                     videoBtn.style.display = 'flex';
                                     minBtn.textContent = 'Minimize';
@@ -1204,11 +1215,153 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                         } catch(e) {}
                     };
 
-                    // Track clicks on Voice Call / Video Call buttons in WhatsApp Web
+                    // 12. Phone UI Navigation Helpers: Open / Close Mobile Chat & Android Hardware Back Handler
+                    window.__xenoGetMainChatSignature = function() {
+                        try {
+                            var mainEl = document.getElementById('main');
+                            if (!mainEl) return '';
+                            var header = mainEl.querySelector('header');
+                            if (!header) return 'chat-active';
+                            var spans = header.querySelectorAll('span[title], span[dir="auto"]');
+                            for (var i = 0; i < spans.length; i++) {
+                                var t = (spans[i].getAttribute('title') || spans[i].textContent || '').trim();
+                                if (t && t.length > 0 &&
+                                    t.toLowerCase().indexOf('click here') === -1 &&
+                                    t.toLowerCase().indexOf('online') !== 0 &&
+                                    t.toLowerCase().indexOf('last seen') === -1 &&
+                                    t.toLowerCase().indexOf('typing') === -1) {
+                                    return t;
+                                }
+                            }
+                            return 'chat-active';
+                        } catch(e) {
+                            return '';
+                        }
+                    };
+
+                    window.__xenoNotifyMobileNavBridge = function() {
+                        try {
+                            var isChatOpen = document.documentElement.classList.contains('xeno-wa-chat-open') ||
+                                document.documentElement.classList.contains('xeno-wa-right-drawer-open') ||
+                                Boolean(window.__xenoCallOverlayActive);
+                            var sig = window.__xenoGetMainChatSignature();
+                            if (window.XenoCallBridge && typeof window.XenoCallBridge.onMobileNavStateChanged === 'function') {
+                                window.XenoCallBridge.onMobileNavStateChanged(Boolean(isChatOpen), sig || '');
+                            }
+                        } catch(e) {}
+                    };
+
+                    window.__xenoOpenMobileChat = function() {
+                        try {
+                            window.__xenoDismissedChatSignature = null;
+                            document.documentElement.classList.add('xeno-wa-chat-open');
+                            window.__xenoNotifyMobileNavBridge();
+                        } catch(e) {}
+                    };
+
+                    window.__xenoCloseMobileChat = function() {
+                        try {
+                            var sig = window.__xenoGetMainChatSignature();
+                            window.__xenoDismissedChatSignature = sig || 'dismissed';
+                            document.documentElement.classList.remove('xeno-wa-chat-open');
+                            document.documentElement.classList.remove('xeno-wa-right-drawer-open');
+                            window.__xenoNotifyMobileNavBridge();
+                        } catch(e) {}
+                    };
+
+                    window.__xenoHandleAndroidBack = function() {
+                        try {
+                            if (window.__xenoCallOverlayActive) {
+                                window.__xenoEndWhatsAppCallOverlay();
+                                return 'handled';
+                            }
+                            // 1. Check if a media viewer / status viewer / modal dialog is open
+                            var mediaCloseBtn = document.querySelector('[data-animate-media-viewer="true"] [data-icon="x-viewer"], [data-animate-media-viewer="true"] [aria-label="Close"], [data-animate-status-v3-modal-background="true"] [data-icon="back"], [data-animate-status-v3-modal-background="true"] [data-icon="x"]');
+                            if (mediaCloseBtn) {
+                                var btnTarget = mediaCloseBtn.closest('button, [role="button"]') || mediaCloseBtn;
+                                btnTarget.click();
+                                return 'handled';
+                            }
+                            // 2. Check if Right Drawer (Contact Info / Group Info / Search Messages) is open
+                            if (document.documentElement.classList.contains('xeno-wa-right-drawer-open')) {
+                                var rightDrawer = document.querySelector('[data-xeno-wa-role="right-drawer"]');
+                                if (rightDrawer) {
+                                    var closeBtn = rightDrawer.querySelector('header button, header [role="button"], [data-icon="x"], [data-icon="back"]');
+                                    if (closeBtn) {
+                                        var targetClose = closeBtn.closest('button, [role="button"]') || closeBtn;
+                                        targetClose.click();
+                                    }
+                                }
+                                document.documentElement.classList.remove('xeno-wa-right-drawer-open');
+                                window.__xenoNotifyMobileNavBridge();
+                                return 'handled';
+                            }
+                            // 3. Check if Active Chat (#main) is open in Phone UI mode
+                            if (window.__xenoWaPhoneMode && document.documentElement.classList.contains('xeno-wa-chat-open')) {
+                                window.__xenoCloseMobileChat();
+                                return 'handled';
+                            }
+                            // 4. Check if a Left Drawer (Settings, Profile, New Chat, Archived, etc.) has a visible Back button over #side
+                            var sideCol = document.querySelector('[data-xeno-wa-role="side-col"]');
+                            if (sideCol) {
+                                var sideBackIcon = sideCol.querySelector('header [data-icon="back"], [aria-label="Back"]');
+                                if (sideBackIcon && sideBackIcon.offsetParent !== null) {
+                                    var sideBackBtn = sideBackIcon.closest('button, [role="button"]') || sideBackIcon;
+                                    sideBackBtn.click();
+                                    return 'handled';
+                                }
+                            }
+                        } catch(e) {}
+                        return 'exit';
+                    };
+
+                    // Track clicks on Voice/Video Call buttons AND Chat List rows / Navigation Rail items
                     document.addEventListener('click', function(ev) {
                         try {
                             var target = ev.target;
                             if (!target || !target.closest) return;
+
+                            // A. Handle clicks on our injected Back to Chats button inside #main header
+                            if (target.closest('#xeno-wa-back-to-chats-btn')) {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                window.__xenoCloseMobileChat();
+                                return;
+                            }
+
+                            // B. Handle clicks inside the Left Navigation Rail (Chats, Status, Channels, Communities, Settings, Profile)
+                            var navRailHit = target.closest('[data-xeno-wa-role="nav-rail"]');
+                            if (navRailHit && window.__xenoWaPhoneMode) {
+                                window.__xenoCloseMobileChat();
+                            }
+
+                            // C. Handle clicks on a chat item or contact item in #pane-side or left drawers to open the conversation on phone screen
+                            if (window.__xenoWaPhoneMode) {
+                                var paneSideItem = target.closest('#pane-side [role="listitem"], #pane-side [role="row"], #pane-side [data-testid="cell-frame-container"]');
+                                var sideDrawerChatItem = !paneSideItem && target.closest('[data-xeno-wa-role="side-col"] [role="listitem"], [data-xeno-wa-role="side-col"] [role="row"], [data-xeno-wa-role="side-col"] [data-testid="cell-frame-container"]');
+                                var chatItem = paneSideItem || sideDrawerChatItem;
+                                if (chatItem) {
+                                    var isArchiveBtn = Boolean(chatItem.querySelector('[data-icon*="archive"]')) ||
+                                        (String(chatItem.textContent || '').trim().toLowerCase().indexOf('archived') === 0 && String(chatItem.textContent || '').trim().length < 24);
+                                    var isFilterOrHeader = Boolean(target.closest('header, [role="tablist"], button[aria-pressed], input'));
+                                    if (!isArchiveBtn && !isFilterOrHeader) {
+                                        window.__xenoDismissedChatSignature = null;
+                                        window.__xenoLastChatRowTapTime = Date.now();
+                                        setTimeout(function() {
+                                            if (document.getElementById('main')) {
+                                                window.__xenoOpenMobileChat();
+                                            }
+                                        }, 50);
+                                        setTimeout(function() {
+                                            if (document.getElementById('main') && !window.__xenoDismissedChatSignature) {
+                                                window.__xenoOpenMobileChat();
+                                            }
+                                        }, 220);
+                                    }
+                                }
+                            }
+
+                            // D. Track clicks on Voice Call / Video Call buttons in WhatsApp Web
                             var btn = target.closest('button, [role="button"], li, [data-icon]');
                             if (!btn) return;
                             var iconEl = btn.querySelector('[data-icon]');
@@ -1251,7 +1404,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     (txt.indexOf('make calls') !== -1 && (txt.indexOf('get the app') !== -1 || txt.indexOf('download') !== -1 || txt.indexOf('windows') !== -1));
 
                                 if (isUnsupportedCallMsg) {
-                                    // Hide the modal backdrop and click its dismiss button immediately
                                     var backdrop = dlg.closest('.overlay, [data-animate-modal-backdrop="true"]') || dlg.parentElement;
                                     dlg.style.display = 'none';
                                     if (backdrop && backdrop !== document.body && backdrop.id !== 'app') {
@@ -1261,7 +1413,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                                     for (var b = 0; b < okBtns.length; b++) {
                                         try { okBtns[b].click(); } catch(e) {}
                                     }
-                                    // Launch the live WhatsApp Web Call session for the active contact
                                     var contact = window.__xenoExtractActiveChatContact();
                                     window.__xenoStartWhatsAppCallOverlay(contact.name, contact.avatar, Boolean(contact.isVideo));
                                     return true;
@@ -1286,56 +1437,328 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?) {
                     }
                 }
 
-                // Remove any custom style overrides so WhatsApp Web keeps its exact untouched desktop CSS
-                var oldStyle = document.getElementById('xeno-wa-support-style');
-                if (oldStyle && oldStyle.parentNode) {
-                    oldStyle.parentNode.removeChild(oldStyle);
+                // 13. Inject Phone-Optimized Responsive Stylesheet for WhatsApp Web
+                function ensureWhatsAppPhoneStyles() {
+                    if (!document.head) return;
+                    var styleId = 'xeno-wa-mobile-style';
+                    var existingStyle = document.getElementById(styleId);
+                    if (!window.__xenoWaPhoneMode) {
+                        if (existingStyle && existingStyle.parentNode) {
+                            existingStyle.parentNode.removeChild(existingStyle);
+                        }
+                        document.documentElement.classList.remove('xeno-wa-phone-ui', 'xeno-wa-chat-open', 'xeno-wa-right-drawer-open', 'xeno-wa-landing-mode');
+                        var oldBack = document.getElementById('xeno-wa-back-to-chats-btn');
+                        if (oldBack) oldBack.style.display = 'none';
+                        return;
+                    }
+
+                    document.documentElement.classList.add('xeno-wa-phone-ui');
+                    if (!existingStyle) {
+                        var st = document.createElement('style');
+                        st.id = styleId;
+                        st.textContent =
+                            /* Root & App Container Unlocking */
+                            'html.xeno-wa-phone-ui, html.xeno-wa-phone-ui body { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; -webkit-text-size-adjust: 100% !important; touch-action: manipulation !important; } ' +
+                            'html.xeno-wa-phone-ui #app, html.xeno-wa-phone-ui .app-wrapper-web, html.xeno-wa-phone-ui [data-xeno-wa-anc="1"] { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; top: 0 !important; left: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui .app-wrapper-web::after, html.xeno-wa-phone-ui .app-wrapper-web::before { display: none !important; } ' +
+
+                            /* Landing / QR Code / Link with Phone Number Screen Adaptation */
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode body, html.xeno-wa-phone-ui.xeno-wa-landing-mode #app { overflow-y: auto !important; overflow-x: hidden !important; height: 100% !important; -webkit-overflow-scrolling: touch !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-wrapper, html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-window, html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-main, html.xeno-wa-phone-ui.xeno-wa-landing-mode [data-xeno-wa-landing-anc="1"] { min-width: 0 !important; width: 100% !important; max-width: 100vw !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 10px !important; box-sizing: border-box !important; overflow-x: hidden !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode .landing-header { min-width: 0 !important; width: 100% !important; max-width: 100vw !important; padding: 10px 14px !important; margin: 0 !important; height: auto !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode [data-xeno-wa-landing-split="1"] { display: flex !important; flex-direction: column-reverse !important; align-items: center !important; justify-content: flex-start !important; gap: 16px !important; width: 100% !important; max-width: 100% !important; min-width: 0 !important; padding: 8px 4px !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode [data-xeno-wa-landing-split="1"] > * { width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-landing-mode canvas { display: block !important; margin: 6px auto !important; max-width: min(240px, 75vw) !important; max-height: min(240px, 75vw) !important; } ' +
+
+                            /* Left Navigation Rail (Chats, Status, Channels, Communities, Settings, Profile) */
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="nav-rail"] { flex: 0 0 48px !important; width: 48px !important; max-width: 48px !important; min-width: 48px !important; height: 100% !important; z-index: 25 !important; box-sizing: border-box !important; } ' +
+
+                            /* Chat List & Left Drawers Column (#side + Profile/Settings/Status/Channels/New Chat drawers) */
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] { flex: 1 1 auto !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; position: relative !important; z-index: 20 !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-has-nav-rail [data-xeno-wa-role="side-col"] { width: calc(100vw - 48px) !important; max-width: calc(100vw - 48px) !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] > *, html.xeno-wa-phone-ui #side { width: 100% !important; max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
+
+                            /* Active Chat Conversation Column (#main) - Full-Screen Phone Slide Over */
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease !important; transform: translateX(104vw) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-chat-open [data-xeno-wa-role="main-col"] { transform: translateX(0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 45 !important; } ' +
+                            'html.xeno-wa-phone-ui #main { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; box-sizing: border-box !important; } ' +
+
+                            /* Right Drawer Column (Contact Info, Group Info, Search Messages) */
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; transform: translateX(104vw) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; transition: transform 0.2s ease, opacity 0.16s ease !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui.xeno-wa-right-drawer-open [data-xeno-wa-role="right-drawer"] { transform: translateX(0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 60 !important; background: #111b21 !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] > * { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
+
+                            /* Mobile Chat Header, Bubbles & Compose Footer Refinements */
+                            'html.xeno-wa-phone-ui #main > header { padding-left: 4px !important; padding-right: 6px !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #xeno-wa-back-to-chats-btn { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 36px !important; height: 36px !important; min-width: 36px !important; border-radius: 50% !important; border: none !important; background: transparent !important; color: inherit !important; cursor: pointer !important; margin-right: 2px !important; padding: 0 !important; flex-shrink: 0 !important; -webkit-tap-highlight-color: transparent !important; } ' +
+                            'html.xeno-wa-phone-ui #xeno-wa-back-to-chats-btn:active { background: rgba(134, 150, 160, 0.2) !important; } ' +
+                            'html.xeno-wa-phone-ui #main [role="application"], html.xeno-wa-phone-ui #main [data-testid="conversation-panel-messages"] > div { padding-left: 10px !important; padding-right: 10px !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #main .message-in, html.xeno-wa-phone-ui #main .message-out { max-width: 86% !important; } ' +
+                            'html.xeno-wa-phone-ui #main footer { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; padding-left: 4px !important; padding-right: 4px !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [role="dialog"] { max-width: calc(100vw - 16px) !important; min-width: 0 !important; box-sizing: border-box !important; }';
+                        document.head.appendChild(st);
+                    }
                 }
 
-                // Replace WhatsApp Web's 'width=device-width' meta viewport with a standard 1280px desktop viewport
-                // so WebView renders the genuine desktop layout as-is without squishing or resizing panels to phone width
-                function ensureDesktopViewport() {
+                // 14. Configure Viewport Meta Tag (Phone Native 1.0 Scale vs Classic 1280px Split Desktop View)
+                function ensureWhatsAppViewport() {
                     if (!document.head) return;
-                    var existingMetas = document.head.querySelectorAll('meta[name="viewport"]');
-                    for (var i = 0; i < existingMetas.length; i++) {
-                        if (existingMetas[i].id !== 'xeno-wa-desktop-viewport') {
-                            existingMetas[i].parentNode.removeChild(existingMetas[i]);
+                    if (window.__xenoWaPhoneMode) {
+                        var oldDesktop = document.getElementById('xeno-wa-desktop-viewport');
+                        if (oldDesktop && oldDesktop.parentNode) {
+                            oldDesktop.parentNode.removeChild(oldDesktop);
+                        }
+                        var existingMetas = document.head.querySelectorAll('meta[name="viewport"]');
+                        for (var i = 0; i < existingMetas.length; i++) {
+                            if (existingMetas[i].id !== 'xeno-wa-mobile-viewport') {
+                                existingMetas[i].parentNode.removeChild(existingMetas[i]);
+                            }
+                        }
+                        var mvp = document.getElementById('xeno-wa-mobile-viewport');
+                        var targetContent = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=3.0, user-scalable=yes, viewport-fit=cover';
+                        if (!mvp) {
+                            mvp = document.createElement('meta');
+                            mvp.id = 'xeno-wa-mobile-viewport';
+                            mvp.name = 'viewport';
+                            mvp.content = targetContent;
+                            document.head.appendChild(mvp);
+                        } else if (mvp.content !== targetContent) {
+                            mvp.content = targetContent;
+                        }
+                    } else {
+                        var oldMobile = document.getElementById('xeno-wa-mobile-viewport');
+                        if (oldMobile && oldMobile.parentNode) {
+                            oldMobile.parentNode.removeChild(oldMobile);
+                        }
+                        var existingMetasDesk = document.head.querySelectorAll('meta[name="viewport"]');
+                        for (var j = 0; j < existingMetasDesk.length; j++) {
+                            if (existingMetasDesk[j].id !== 'xeno-wa-desktop-viewport') {
+                                existingMetasDesk[j].parentNode.removeChild(existingMetasDesk[j]);
+                            }
+                        }
+                        var vp = document.getElementById('xeno-wa-desktop-viewport');
+                        if (!vp) {
+                            var desktopWidth = 1280;
+                            var sw = Math.min(window.screen.width || 390, window.screen.availWidth || 390);
+                            if (!sw || sw <= 0 || sw > 1200) sw = 390;
+                            var initScale = Math.max(0.15, Math.min(1.0, sw / desktopWidth)).toFixed(4);
+                            vp = document.createElement('meta');
+                            vp.id = 'xeno-wa-desktop-viewport';
+                            vp.name = 'viewport';
+                            vp.content = 'width=' + desktopWidth + ', initial-scale=' + initScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                            document.head.appendChild(vp);
                         }
                     }
-                    var vp = document.getElementById('xeno-wa-desktop-viewport');
-                    if (!vp) {
-                        var desktopWidth = 1280;
-                        var sw = Math.min(window.screen.width || 390, window.screen.availWidth || 390);
-                        if (!sw || sw <= 0 || sw > 1200) sw = 390;
-                        var initScale = Math.max(0.15, Math.min(1.0, sw / desktopWidth)).toFixed(4);
-                        vp = document.createElement('meta');
-                        vp.id = 'xeno-wa-desktop-viewport';
-                        vp.name = 'viewport';
-                        vp.content = 'width=' + desktopWidth + ', initial-scale=' + initScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                        document.head.appendChild(vp);
-                    }
                 }
 
-                ensureDesktopViewport();
+                // 15. Structural DOM Tagging & Mobile Header Back Button Injection
+                window.__xenoSyncWaMobileLayout = function() {
+                    try {
+                        ensureWhatsAppViewport();
+                        ensureWhatsAppPhoneStyles();
+                        if (!window.__xenoWaPhoneMode) return;
+
+                        var appEl = document.getElementById('app');
+                        if (!appEl) return;
+
+                        var sideEl = document.getElementById('side') || document.getElementById('pane-side');
+                        var mainEl = document.getElementById('main');
+
+                        if (!sideEl && !mainEl) {
+                            // Landing / Login / QR / Link with Phone Number Screen
+                            document.documentElement.classList.add('xeno-wa-landing-mode');
+                            document.documentElement.classList.remove('xeno-wa-chat-open', 'xeno-wa-right-drawer-open', 'xeno-wa-has-nav-rail');
+
+                            var landingTargets = appEl.querySelectorAll('canvas, [data-testid="qrcode"], .landing-main, .landing-window, ol');
+                            for (var lt = 0; lt < landingTargets.length; lt++) {
+                                var cur = landingTargets[lt].parentElement;
+                                while (cur && cur !== appEl && cur !== document.body) {
+                                    cur.setAttribute('data-xeno-wa-landing-anc', '1');
+                                    try {
+                                        var cs = window.getComputedStyle(cur);
+                                        if ((cs.display === 'flex' || cs.display === 'inline-flex') &&
+                                            cs.flexDirection === 'row' &&
+                                            cur.children.length >= 2 &&
+                                            cur.querySelector('ol') &&
+                                            (cur.querySelector('canvas') || cur.querySelector('[data-testid*="qrcode"]'))) {
+                                            cur.setAttribute('data-xeno-wa-landing-split', '1');
+                                        }
+                                    } catch(e) {}
+                                    cur = cur.parentElement;
+                                }
+                            }
+                            window.__xenoNotifyMobileNavBridge();
+                            return;
+                        }
+
+                        document.documentElement.classList.remove('xeno-wa-landing-mode');
+
+                        // Locate sideCol and mainGrid
+                        var sideRoot = document.getElementById('side') || sideEl;
+                        var sideCol = null;
+                        var mainGrid = null;
+                        if (sideRoot) {
+                            if (sideRoot.parentElement && mainEl && sideRoot.parentElement.contains(mainEl)) {
+                                mainGrid = sideRoot.parentElement;
+                                sideCol = sideRoot;
+                            } else if (sideRoot.parentElement) {
+                                sideCol = sideRoot.parentElement;
+                                mainGrid = sideCol.parentElement;
+                            }
+                        } else if (mainEl && mainEl.parentElement) {
+                            mainGrid = mainEl.parentElement.parentElement;
+                        }
+
+                        if (sideCol) {
+                            sideCol.setAttribute('data-xeno-wa-role', 'side-col');
+                        }
+
+                        // Walk ancestors from mainGrid up to #app and tag with data-xeno-wa-anc="1"
+                        var anc = mainGrid;
+                        while (anc && anc !== appEl && anc !== document.body) {
+                            anc.setAttribute('data-xeno-wa-anc', '1');
+                            anc = anc.parentElement;
+                        }
+
+                        // Identify navRail, mainCol, and rightDrawerCol inside mainGrid (and mainGrid.parentElement)
+                        var hasNavRail = false;
+                        if (mainGrid && sideCol) {
+                            var children = mainGrid.children;
+                            var seenSide = false;
+                            var mainColFound = null;
+                            for (var c = 0; c < children.length; c++) {
+                                var child = children[c];
+                                if (!child || child.nodeType !== 1) continue;
+                                if (child === sideCol) {
+                                    seenSide = true;
+                                    continue;
+                                }
+                                if (!seenSide) {
+                                    child.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                    hasNavRail = true;
+                                } else if (!mainColFound && (child.contains(mainEl) || !mainEl)) {
+                                    child.setAttribute('data-xeno-wa-role', 'main-col');
+                                    mainColFound = child;
+                                } else {
+                                    child.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                }
+                            }
+
+                            // Also check if navRail is a sibling of mainGrid inside mainGrid.parentElement
+                            if (!hasNavRail && mainGrid.parentElement && mainGrid.parentElement !== appEl) {
+                                var outerChildren = mainGrid.parentElement.children;
+                                for (var oc = 0; oc < outerChildren.length; oc++) {
+                                    var oChild = outerChildren[oc];
+                                    if (oChild === mainGrid) break;
+                                    if (oChild && oChild.nodeType === 1 && !oChild.contains(sideCol)) {
+                                        oChild.setAttribute('data-xeno-wa-role', 'nav-rail');
+                                        hasNavRail = true;
+                                    }
+                                }
+                            }
+
+                            // Also check if right-drawer is mounted inside mainColFound next to #main
+                            if (mainColFound && mainEl && mainColFound.children.length > 1) {
+                                for (var mc = 0; mc < mainColFound.children.length; mc++) {
+                                    var mChild = mainColFound.children[mc];
+                                    if (mChild && mChild !== mainEl && !mChild.contains(mainEl) && mChild.querySelector('header, section, [role="button"]')) {
+                                        mChild.setAttribute('data-xeno-wa-role', 'right-drawer');
+                                    }
+                                }
+                            }
+                        }
+
+                        if (hasNavRail) {
+                            document.documentElement.classList.add('xeno-wa-has-nav-rail');
+                        } else {
+                            document.documentElement.classList.remove('xeno-wa-has-nav-rail');
+                        }
+
+                        // Check if Right Drawer has active visible content
+                        var rightDrawerEl = document.querySelector('[data-xeno-wa-role="right-drawer"]');
+                        var isRightDrawerActive = Boolean(
+                            rightDrawerEl &&
+                            rightDrawerEl.children.length > 0 &&
+                            rightDrawerEl.querySelector('header, [data-icon="x"], [data-icon="back"], section')
+                        );
+                        if (isRightDrawerActive) {
+                            document.documentElement.classList.add('xeno-wa-right-drawer-open');
+                        } else {
+                            document.documentElement.classList.remove('xeno-wa-right-drawer-open');
+                        }
+
+                        // Sync Active Chat (#main) Open/Close state & inject Mobile Back Button in #main header
+                        if (mainEl) {
+                            var currentSig = window.__xenoGetMainChatSignature();
+                            if (currentSig && currentSig !== window.__xenoLastKnownChatSignature) {
+                                window.__xenoLastKnownChatSignature = currentSig;
+                                if (currentSig !== window.__xenoDismissedChatSignature) {
+                                    document.documentElement.classList.add('xeno-wa-chat-open');
+                                }
+                            } else if (!document.documentElement.classList.contains('xeno-wa-chat-open') && !window.__xenoDismissedChatSignature) {
+                                document.documentElement.classList.add('xeno-wa-chat-open');
+                            }
+
+                            // Inject Mobile Back Arrow Button into #main > header
+                            var mainHeader = mainEl.querySelector('header');
+                            if (mainHeader) {
+                                var backBtn = document.getElementById('xeno-wa-back-to-chats-btn');
+                                if (!backBtn) {
+                                    backBtn = document.createElement('button');
+                                    backBtn.id = 'xeno-wa-back-to-chats-btn';
+                                    backBtn.type = 'button';
+                                    backBtn.setAttribute('aria-label', 'Back to chats');
+                                    backBtn.setAttribute('title', 'Back to chats');
+                                    backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>';
+                                    backBtn.addEventListener('click', function(e) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        window.__xenoCloseMobileChat();
+                                    }, true);
+                                }
+                                backBtn.style.display = 'inline-flex';
+                                if (mainHeader.firstElementChild !== backBtn) {
+                                    mainHeader.insertBefore(backBtn, mainHeader.firstElementChild);
+                                }
+                            }
+                        } else {
+                            window.__xenoLastKnownChatSignature = '';
+                            window.__xenoDismissedChatSignature = null;
+                            document.documentElement.classList.remove('xeno-wa-chat-open', 'xeno-wa-right-drawer-open');
+                        }
+
+                        window.__xenoNotifyMobileNavBridge();
+                    } catch(e) {}
+                };
+
+                window.__xenoSyncWaMobileLayout();
                 if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
                     window.__xenoInterceptUnsupportedCallDialog();
                 }
 
                 if (!window.__xenoWaHeadObserver && window.MutationObserver && document.head) {
                     window.__xenoWaHeadObserver = new MutationObserver(function() {
-                        var extras = document.head ? document.head.querySelectorAll('meta[name="viewport"]:not(#xeno-wa-desktop-viewport)') : [];
-                        if (extras.length > 0 || !document.getElementById('xeno-wa-desktop-viewport')) {
-                            ensureDesktopViewport();
-                        }
+                        ensureWhatsAppViewport();
+                        ensureWhatsAppPhoneStyles();
                     });
                     window.__xenoWaHeadObserver.observe(document.head, { childList: true });
                 }
 
-                // Observe body for dynamically mounted WebRTC call <video>/<audio> elements and unsupported-browser call modals
+                // Observe body for DOM layout changes, WebRTC call <video>/<audio> elements, and call modals
                 if (!window.__xenoWaCallDomObserver && window.MutationObserver && document.body) {
+                    var layoutSyncScheduled = false;
                     window.__xenoWaCallDomObserver = new MutationObserver(function(mutations) {
                         if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
                             window.__xenoInterceptUnsupportedCallDialog();
+                        }
+                        if (!layoutSyncScheduled) {
+                            layoutSyncScheduled = true;
+                            requestAnimationFrame(function() {
+                                layoutSyncScheduled = false;
+                                if (typeof window.__xenoSyncWaMobileLayout === 'function') {
+                                    window.__xenoSyncWaMobileLayout();
+                                }
+                            });
                         }
                         for (var i = 0; i < mutations.length; i++) {
                             var added = mutations[i].addedNodes;
@@ -2553,6 +2976,8 @@ fun CloneWorkspaceScreen(
     var isSpeakerphoneOn by remember(instance.instanceId) { mutableStateOf(true) }
     var isFrontCamera by remember(instance.instanceId) { mutableStateOf(true) }
     var audioFocusRequest by remember { mutableStateOf<AudioFocusRequest?>(null) }
+    var isWhatsAppPhoneUi by remember(instance.instanceId) { mutableStateOf(true) }
+    var isWhatsAppChatOpen by remember(instance.instanceId) { mutableStateOf(false) }
 
     val badgeColor = remember(instance.badgeColorHex) { parseHexColor(instance.badgeColorHex) }
 
@@ -2663,7 +3088,7 @@ fun CloneWorkspaceScreen(
         }
 
         if (isWhatsapp) {
-            injectWhatsAppWebSupportEngine(webViewInstance)
+            injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
         } else if (isDiscord) {
             injectDiscordStabilityAndLoginHelper(webViewInstance, instance.isDesktopMode)
         }
@@ -2715,6 +3140,24 @@ fun CloneWorkspaceScreen(
     BackHandler {
         if (isYoutube && showYoutubeOfflineLibrary && YouTubeOfflineRepository.isDeviceOnline(context)) {
             showYoutubeOfflineLibrary = false
+        } else if (isWhatsapp && webViewInstance != null) {
+            val wv = webViewInstance
+            if (wv != null) {
+                wv.evaluateJavascript(
+                    "(function(){ return (window.__xenoHandleAndroidBack && window.__xenoHandleAndroidBack()) || 'exit'; })()"
+                ) { res ->
+                    val cleaned = res?.trim('"') ?: "exit"
+                    if (cleaned != "handled") {
+                        if (wv.canGoBack()) {
+                            wv.goBack()
+                        } else {
+                            keepAliveInMinimizedPool = false
+                            CloneWebViewPool.destroy(instance.instanceId)
+                            onCloseWorkspace()
+                        }
+                    }
+                }
+            }
         } else if (webViewInstance?.canGoBack() == true && !showYoutubeOfflineLibrary) {
             webViewInstance?.goBack()
         } else {
@@ -2745,9 +3188,16 @@ fun CloneWorkspaceScreen(
             ) {
                 IconButton(
                     onClick = {
-                        keepAliveInMinimizedPool = false
-                        CloneWebViewPool.destroy(instance.instanceId)
-                        onCloseWorkspace()
+                        if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen && webViewInstance != null) {
+                            webViewInstance?.evaluateJavascript(
+                                "if (window.__xenoHandleAndroidBack) window.__xenoHandleAndroidBack();",
+                                null
+                            )
+                        } else {
+                            keepAliveInMinimizedPool = false
+                            CloneWebViewPool.destroy(instance.instanceId)
+                            onCloseWorkspace()
+                        }
                     },
                     modifier = Modifier
                         .size(32.dp)
@@ -2755,7 +3205,7 @@ fun CloneWorkspaceScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = if (isWhatsapp && isWhatsAppChatOpen) "Back to Chats" else "Back",
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -2797,6 +3247,30 @@ fun CloneWorkspaceScreen(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                         )
+                    }
+
+                    if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF25D366).copy(alpha = 0.18f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    webViewInstance?.evaluateJavascript(
+                                        "if (window.__xenoCloseMobileChat) window.__xenoCloseMobileChat();",
+                                        null
+                                    )
+                                }
+                                .testTag("whatsapp_back_to_chats_pill")
+                        ) {
+                            Text(
+                                text = "Chats",
+                                color = Color(0xFF25D366),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
 
@@ -3005,7 +3479,7 @@ fun CloneWorkspaceScreen(
                                     callPermissionsLauncher.launch(buildRequiredCallPermissions(true, true))
                                 } else {
                                     setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
-                                    injectWhatsAppWebSupportEngine(webViewInstance)
+                                    injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
                                     Toast.makeText(
                                         context,
                                         "Voice & Video Calls Ready (Mic & Camera Enabled)",
@@ -3038,7 +3512,13 @@ fun CloneWorkspaceScreen(
                     IconButton(
                         onClick = {
                             if (isWhatsapp) {
-                                webViewInstance?.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
+                                isWhatsAppPhoneUi = !isWhatsAppPhoneUi
+                                injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
+                                Toast.makeText(
+                                    context,
+                                    if (isWhatsAppPhoneUi) "WhatsApp Phone Screen UI Active" else "WhatsApp Split Desktop UI Active",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             } else {
                                 onToggleDesktopMode()
                                 webViewInstance?.let { wv ->
@@ -3051,16 +3531,26 @@ fun CloneWorkspaceScreen(
                             .size(30.dp)
                             .testTag("toggle_desktop_mode_btn")
                     ) {
+                        val isPhoneUiHighlighted = isWhatsapp && isWhatsAppPhoneUi
+                        val isDesktopHighlighted = (!isWhatsapp && instance.isDesktopMode) || (isWhatsapp && !isWhatsAppPhoneUi)
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = if (instance.isDesktopMode || isWhatsapp) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            color = when {
+                                isPhoneUiHighlighted -> Color(0xFF25D366).copy(alpha = 0.16f)
+                                isDesktopHighlighted -> MaterialTheme.colorScheme.primaryContainer
+                                else -> Color.Transparent
+                            },
                             modifier = Modifier.size(26.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = if (instance.isDesktopMode || isWhatsapp) Icons.Filled.DesktopMac else Icons.Filled.PhoneAndroid,
-                                    contentDescription = if (instance.isDesktopMode || isWhatsapp) "Desktop View Active" else "Mobile View Active",
-                                    tint = if (instance.isDesktopMode || isWhatsapp) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    imageVector = if (isDesktopHighlighted) Icons.Filled.DesktopMac else Icons.Filled.PhoneAndroid,
+                                    contentDescription = if (isDesktopHighlighted) "Desktop View Active" else "Phone Screen UI Active",
+                                    tint = when {
+                                        isPhoneUiHighlighted -> Color(0xFF25D366)
+                                        isDesktopHighlighted -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -3260,6 +3750,9 @@ fun CloneWorkspaceScreen(
                                 isLoading = false
                                 loadProgress = 100
                                 canGoBack = existing.canGoBack()
+                                if (isWhatsapp) {
+                                    injectWhatsAppWebSupportEngine(existing, isWhatsAppPhoneUi)
+                                }
                                 webViewInstance = existing
                                 existing
                             } else {
@@ -3373,6 +3866,9 @@ fun CloneWorkspaceScreen(
                                             val micOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                                             val camOk = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                                             micOk && camOk
+                                        },
+                                        onMobileChatStateChanged = { chatOpen, _ ->
+                                            isWhatsAppChatOpen = chatOpen
                                         }
                                     ),
                                     "XenoCallBridge"
@@ -3433,7 +3929,7 @@ fun CloneWorkspaceScreen(
                                 webViewClient = object : WebViewClient() {
                                     private fun injectSocialAppHelpers(view: WebView?, url: String?) {
                                         when {
-                                            isWhatsapp -> injectWhatsAppWebSupportEngine(view)
+                                            isWhatsapp -> injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
                                             isDiscord || url?.contains("discord.com", ignoreCase = true) == true || url?.contains("discord.gg", ignoreCase = true) == true ->
                                                 injectDiscordStabilityAndLoginHelper(view, instance.isDesktopMode)
                                             isInstagram || url?.contains("instagram.com", ignoreCase = true) == true ->
@@ -3490,7 +3986,7 @@ fun CloneWorkspaceScreen(
                                     override fun onLoadResource(view: WebView?, url: String?) {
                                         super.onLoadResource(view, url)
                                         if (isWhatsapp) {
-                                            injectWhatsAppWebSupportEngine(view)
+                                            injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
                                         }
                                     }
 

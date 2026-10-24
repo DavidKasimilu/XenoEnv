@@ -475,6 +475,7 @@ fun XenoApp(
                                     onStartSms = { num, name -> viewModel.startChatWithNumber(num, name) },
                                     onOpenContacts = { viewModel.selectTab(XenoTab.CONTACTS) },
                                     onStartCall = { num, name -> viewModel.startCall(num, name) },
+                                    onStartCallWithSim = { num, name, sim -> viewModel.startCall(num, name, sim) },
                                     onSimulateIncomingCall = { viewModel.simulateIncomingCall() }
                                 )
                             }
