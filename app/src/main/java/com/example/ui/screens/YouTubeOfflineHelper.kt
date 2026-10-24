@@ -148,6 +148,176 @@ object YouTubeOfflineRepository {
     private var latestCapturedStreams = CapturedMediaStreams()
 
     /**
+     * Checks if a `googlevideo.com` URL is a true progressive stream that contains BOTH video and audio tracks
+     * (`itag=18` [360p MP4+AAC], `itag=22` [720p MP4+AAC], `itag=37`, `itag=59`, `itag=78`).
+     * Adaptive `mime=video/mp4` URLs (`itag=133..137, 160, 298, 299, 394..399`) are video-only and must be muxed with audio.
+     */
+    fun isProgressiveMuxedStreamUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        if (!url.contains("googlevideo.com/videoplayback")) {
+            return url.startsWith("http://") || url.startsWith("https://")
+        }
+        val itag = Regex("[?&]itag=(\\d+)").find(url)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+        return itag in setOf(18, 22, 37, 59, 78)
+    }
+
+    /**
+     * Inspects a local MP4 file with Android's native `MediaExtractor` to verify that it contains
+     * a playable `audio/` track (`audio/mp4a-latm`, `audio/mpeg`, etc.).
+     */
+    fun hasAudioTrack(mp4File: File): Boolean {
+        if (!mp4File.exists() || mp4File.length() <= 1024L) return false
+        var extractor: MediaExtractor? = null
+        return try {
+            extractor = MediaExtractor().apply { setDataSource(mp4File.absolutePath) }
+            var foundAudio = false
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/", ignoreCase = true)) {
+                    foundAudio = true
+                    break
+                }
+            }
+            foundAudio
+        } catch (_: Exception) {
+            false
+        } finally {
+            try { extractor?.release() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Inspects a local MP4 file with Android's native `MediaExtractor` to verify that it contains
+     * a playable `video/` track.
+     */
+    fun hasVideoTrack(mp4File: File): Boolean {
+        if (!mp4File.exists() || mp4File.length() <= 1024L) return false
+        var extractor: MediaExtractor? = null
+        return try {
+            extractor = MediaExtractor().apply { setDataSource(mp4File.absolutePath) }
+            var foundVideo = false
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/", ignoreCase = true)) {
+                    foundVideo = true
+                    break
+                }
+            }
+            foundVideo
+        } catch (_: Exception) {
+            false
+        } finally {
+            try { extractor?.release() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Dedicated Helper Function (`downloadYouTubeVideoWithSoundHelper`):
+     * Guarantees that downloaded YouTube videos include both video and sound:
+     * 1. Distinguishes true progressive muxed MP4 streams (`itag=18`, `itag=22`) from adaptive video-only streams
+     *    (`itag=134`, `135`, `136`, `160`) so an adaptive video-only stream is never saved without its audio track.
+     * 2. Verifies any downloaded progressive MP4 using `hasAudioTrack(file)` via `MediaExtractor`.
+     * 3. If a downloaded video stream lacks an embedded audio track, automatically downloads the best AAC `audio/mp4`
+     *    stream (`itag=140`, `139`, `141`) and muxes the video + audio tracks into a single MP4 with sound using
+     *    `muxVideoAndAudioMp4`.
+     */
+    private fun downloadYouTubeVideoWithSoundHelper(
+        cleanId: String,
+        progressiveCandidates: List<Pair<String, String>>,
+        adaptiveVideoCandidates: List<Pair<String, String>>,
+        adaptiveAudioCandidates: List<Pair<String, String>>,
+        cookies: String,
+        tempFile: File,
+        tempVideoOnlyFile: File,
+        tempAudioOnlyFile: File
+    ): Boolean {
+        // Step 1: Try progressive (single-file video+audio MP4) candidates first
+        for ((candUrl, candUa) in progressiveCandidates) {
+            if (downloadStreamWithRangeFallback(
+                    urlStr = candUrl,
+                    destFile = tempFile,
+                    userAgent = candUa,
+                    cookies = cookies
+                ) { progressPct ->
+                    val mapped = (15 + (progressPct * 0.80f).toInt()).coerceIn(15, 95)
+                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                }
+            ) {
+                if (hasAudioTrack(tempFile)) {
+                    // Confirmed: single MP4 contains both video and audio!
+                    return true
+                } else if (hasVideoTrack(tempFile)) {
+                    // The stream only contained video; move it to tempVideoOnlyFile and attach an audio track below
+                    if (tempVideoOnlyFile.exists()) tempVideoOnlyFile.delete()
+                    tempFile.renameTo(tempVideoOnlyFile)
+                    break
+                }
+            }
+        }
+
+        // Step 2: If we already have a downloaded video-only file from Step 1, or if we need to download from adaptiveVideoCandidates,
+        // pair it with an AAC audio track and mux them together so the final MP4 always has sound.
+        val hasPreDownloadedVideo = tempVideoOnlyFile.exists() && tempVideoOnlyFile.length() > 1024L && hasVideoTrack(tempVideoOnlyFile)
+        val videoSourcesToTry: List<Pair<String, String>?> = if (hasPreDownloadedVideo) {
+            listOf(null) + adaptiveVideoCandidates
+        } else {
+            adaptiveVideoCandidates
+        }
+
+        for (videoCandidate in videoSourcesToTry) {
+            val videoReady = if (videoCandidate == null) {
+                tempVideoOnlyFile.exists() && tempVideoOnlyFile.length() > 1024L
+            } else {
+                val (vUrl, vUa) = videoCandidate
+                downloadStreamWithRangeFallback(
+                    urlStr = vUrl,
+                    destFile = tempVideoOnlyFile,
+                    userAgent = vUa,
+                    cookies = cookies
+                ) { progressPct ->
+                    val mapped = (15 + (progressPct * 0.58f).toInt()).coerceIn(15, 73)
+                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                }
+            }
+
+            if (videoReady && tempVideoOnlyFile.exists() && tempVideoOnlyFile.length() > 1024L) {
+                // Check if this video file already has an embedded audio track
+                if (hasAudioTrack(tempVideoOnlyFile)) {
+                    if (tempFile.exists()) tempFile.delete()
+                    tempVideoOnlyFile.renameTo(tempFile)
+                    return true
+                }
+
+                // Download an AAC M4A audio stream and mux it with tempVideoOnlyFile
+                for ((aUrl, aUa) in adaptiveAudioCandidates) {
+                    if (aUrl.isBlank()) continue
+                    val audioOk = downloadStreamWithRangeFallback(
+                        urlStr = aUrl,
+                        destFile = tempAudioOnlyFile,
+                        userAgent = aUa,
+                        cookies = cookies
+                    ) { progressPct ->
+                        val mapped = (73 + (progressPct * 0.19f).toInt()).coerceIn(73, 92)
+                        _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                    }
+                    if (audioOk && tempAudioOnlyFile.exists() && tempAudioOnlyFile.length() > 512L) {
+                        _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 95)
+                        if (muxVideoAndAudioMp4(tempVideoOnlyFile, tempAudioOnlyFile, tempFile)) {
+                            if (tempFile.exists() && tempFile.length() > 4096L && hasAudioTrack(tempFile)) {
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
      * Called from WebViewClient.onLoadResource whenever YouTube's HTML5 player requests a
      * `googlevideo.com/videoplayback` segment. Stripping `&range=`, `&rn=`, `&rbuf=`, and `&ump=`
      * yields a signed stream URL bound to the user's exact IP and session.
@@ -166,16 +336,17 @@ object YouTubeOfflineRepository {
             }
             entry.userAgent = userAgent
 
-            val isItag18Or22 = cleanedUrl.contains("itag=18&") || cleanedUrl.contains("itag=22&") ||
-                cleanedUrl.endsWith("itag=18") || cleanedUrl.endsWith("itag=22")
+            val isProgressiveWithSound = isProgressiveMuxedStreamUrl(cleanedUrl)
             val isVideoMp4 = cleanedUrl.contains("mime=video%2Fmp4", ignoreCase = true) ||
                 cleanedUrl.contains("mime=video/mp4", ignoreCase = true)
             val isAudioMp4 = cleanedUrl.contains("mime=audio%2Fmp4", ignoreCase = true) ||
                 cleanedUrl.contains("mime=audio/mp4", ignoreCase = true) ||
-                cleanedUrl.contains("itag=140&")
+                cleanedUrl.contains("itag=140&") ||
+                cleanedUrl.contains("itag=139&") ||
+                cleanedUrl.contains("itag=141&")
 
             when {
-                isItag18Or22 -> {
+                isProgressiveWithSound -> {
                     entry.progressiveMp4Url = cleanedUrl
                     latestCapturedStreams.progressiveMp4Url = cleanedUrl
                     latestCapturedStreams.userAgent = userAgent
@@ -339,7 +510,7 @@ object YouTubeOfflineRepository {
         mainHandler.post {
             Toast.makeText(
                 appCtx,
-                "Downloading \"${rawTitle.ifBlank { "YouTube Video" }}\" for offline playback...",
+                "Downloading \"${rawTitle.ifBlank { "YouTube Video" }}\" with sound for offline playback...",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -380,12 +551,20 @@ object YouTubeOfflineRepository {
                             pageAdaptiveVideoUrl = vPart
                             pageAdaptiveAudioUrl = aPart
                         } else if (vPart.startsWith("http")) {
-                            pageProgressiveUrl = vPart
+                            if (isProgressiveMuxedStreamUrl(vPart)) {
+                                pageProgressiveUrl = vPart
+                            } else {
+                                pageAdaptiveVideoUrl = vPart
+                            }
                         }
                     } else {
                         val cleaned = sanitizeGoogleVideoUrl(directStreamUrl)
                         if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
-                            pageProgressiveUrl = cleaned
+                            if (isProgressiveMuxedStreamUrl(cleaned)) {
+                                pageProgressiveUrl = cleaned
+                            } else {
+                                pageAdaptiveVideoUrl = cleaned
+                            }
                         }
                     }
                 }
@@ -397,22 +576,28 @@ object YouTubeOfflineRepository {
                 }
                 if (pageAdaptiveVideoUrl.isNullOrBlank() && !captured.adaptiveVideoMp4Url.isNullOrBlank()) {
                     pageAdaptiveVideoUrl = captured.adaptiveVideoMp4Url
+                }
+                if (pageAdaptiveAudioUrl.isNullOrBlank() && !captured.adaptiveAudioMp4Url.isNullOrBlank()) {
                     pageAdaptiveAudioUrl = captured.adaptiveAudioMp4Url
                 }
 
                 // Resolve via InnerTube multi-client engine + public API fallback
                 _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 10)
-                val innertubeResult = resolveInnerTubeStream(cleanId, cookies) ?: resolvePipedOrInvidiousStream(cleanId)
+                val innertubeResult = resolveInnerTubeStream(cleanId, cookies)
+                val pipedResult = if (innertubeResult == null || (innertubeResult.progressiveUrls.isEmpty() && innertubeResult.adaptiveAudioUrl.isNullOrBlank())) {
+                    resolvePipedOrInvidiousStream(cleanId)
+                } else null
 
-                if (innertubeResult != null) {
-                    if (innertubeResult.title.isNotBlank() && (finalTitle.startsWith("YouTube Video") || finalTitle.length < 4)) {
-                        finalTitle = innertubeResult.title
+                val primaryMeta = innertubeResult ?: pipedResult
+                if (primaryMeta != null) {
+                    if (primaryMeta.title.isNotBlank() && (finalTitle.startsWith("YouTube Video") || finalTitle.length < 4)) {
+                        finalTitle = primaryMeta.title
                     }
-                    if (innertubeResult.author.isNotBlank() && (finalAuthor == "YouTube Channel" || finalAuthor == "YouTube")) {
-                        finalAuthor = innertubeResult.author
+                    if (primaryMeta.author.isNotBlank() && (finalAuthor == "YouTube Channel" || finalAuthor == "YouTube")) {
+                        finalAuthor = primaryMeta.author
                     }
-                    if (innertubeResult.durationSec > 0L && finalDurationSec <= 0L) {
-                        finalDurationSec = innertubeResult.durationSec
+                    if (primaryMeta.durationSec > 0L && finalDurationSec <= 0L) {
+                        finalDurationSec = primaryMeta.durationSec
                     }
                 }
 
@@ -431,92 +616,61 @@ object YouTubeOfflineRepository {
 
                 _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 15)
 
-                var downloadedOk = false
-
-                // Candidate list of progressive (single-file video+audio MP4) streams
+                // Build candidate lists for downloadYouTubeVideoWithSoundHelper
                 val progressiveCandidates = mutableListOf<Pair<String, String>>()
                 if (!pageProgressiveUrl.isNullOrBlank()) {
                     progressiveCandidates.add(pageProgressiveUrl to userAgent)
                 }
                 if (innertubeResult != null) {
-                    if (innertubeResult.progressiveUrls.isNotEmpty()) {
-                        for (pUrl in innertubeResult.progressiveUrls) {
-                            progressiveCandidates.add(pUrl to innertubeResult.clientUserAgent)
-                        }
+                    for (pUrl in innertubeResult.progressiveUrls) {
+                        progressiveCandidates.add(pUrl to innertubeResult.clientUserAgent)
+                    }
+                }
+                if (pipedResult != null) {
+                    for (pUrl in pipedResult.progressiveUrls) {
+                        progressiveCandidates.add(pUrl to pipedResult.clientUserAgent)
                     }
                 }
 
-                // Step A: Try all progressive MP4 streams first (single file with both video & audio)
-                for ((candUrl, candUa) in progressiveCandidates) {
-                    if (downloadStreamWithRangeFallback(
-                            urlStr = candUrl,
-                            destFile = tempFile,
-                            userAgent = candUa,
-                            cookies = cookies
-                        ) { progressPct ->
-                            val mapped = (15 + (progressPct * 0.82f).toInt()).coerceIn(15, 98)
-                            _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
-                        }
-                    ) {
-                        downloadedOk = true
-                        break
+                val adaptiveVideoCandidates = mutableListOf<Pair<String, String>>()
+                if (!pageAdaptiveVideoUrl.isNullOrBlank()) {
+                    adaptiveVideoCandidates.add(pageAdaptiveVideoUrl to userAgent)
+                }
+                if (innertubeResult != null) {
+                    for (vUrl in innertubeResult.adaptiveVideoUrls) {
+                        adaptiveVideoCandidates.add(vUrl to innertubeResult.clientUserAgent)
+                    }
+                }
+                if (pipedResult != null) {
+                    for (vUrl in pipedResult.adaptiveVideoUrls) {
+                        adaptiveVideoCandidates.add(vUrl to pipedResult.clientUserAgent)
                     }
                 }
 
-                // Step B: If no progressive stream succeeded, try Adaptive Video MP4 + Adaptive Audio M4A muxing
-                if (!downloadedOk) {
-                    val adaptiveVideoCandidates = mutableListOf<Pair<String, String>>()
-                    if (!pageAdaptiveVideoUrl.isNullOrBlank()) {
-                        adaptiveVideoCandidates.add(pageAdaptiveVideoUrl to userAgent)
-                    }
-                    if (innertubeResult != null) {
-                        for (vUrl in innertubeResult.adaptiveVideoUrls) {
-                            adaptiveVideoCandidates.add(vUrl to innertubeResult.clientUserAgent)
-                        }
-                    }
-
-                    val adaptiveAudioUrl = pageAdaptiveAudioUrl?.takeIf { it.isNotBlank() }
-                        ?: innertubeResult?.adaptiveAudioUrl
-                    val adaptiveAudioUa = if (!pageAdaptiveAudioUrl.isNullOrBlank()) userAgent else (innertubeResult?.clientUserAgent ?: userAgent)
-
-                    for ((vUrl, vUa) in adaptiveVideoCandidates) {
-                        val videoOk = downloadStreamWithRangeFallback(
-                            urlStr = vUrl,
-                            destFile = tempVideoOnlyFile,
-                            userAgent = vUa,
-                            cookies = cookies
-                        ) { progressPct ->
-                            val mapped = (15 + (progressPct * 0.60f).toInt()).coerceIn(15, 75)
-                            _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
-                        }
-
-                        if (videoOk && tempVideoOnlyFile.exists() && tempVideoOnlyFile.length() > 1024L) {
-                            var muxedOk = false
-                            if (!adaptiveAudioUrl.isNullOrBlank()) {
-                                val audioOk = downloadStreamWithRangeFallback(
-                                    urlStr = adaptiveAudioUrl,
-                                    destFile = tempAudioOnlyFile,
-                                    userAgent = adaptiveAudioUa,
-                                    cookies = cookies
-                                ) { progressPct ->
-                                    val mapped = (75 + (progressPct * 0.18f).toInt()).coerceIn(75, 93)
-                                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
-                                }
-                                if (audioOk && tempAudioOnlyFile.exists() && tempAudioOnlyFile.length() > 512L) {
-                                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 95)
-                                    muxedOk = muxVideoAndAudioMp4(tempVideoOnlyFile, tempAudioOnlyFile, tempFile)
-                                }
-                            }
-                            if (!muxedOk) {
-                                // Use the video MP4 directly if audio track muxing was not needed or skipped
-                                if (tempFile.exists()) tempFile.delete()
-                                tempVideoOnlyFile.renameTo(tempFile)
-                            }
-                            downloadedOk = tempFile.exists() && tempFile.length() > 1024L
-                            break
-                        }
-                    }
+                val adaptiveAudioCandidates = mutableListOf<Pair<String, String>>()
+                if (!pageAdaptiveAudioUrl.isNullOrBlank()) {
+                    adaptiveAudioCandidates.add(pageAdaptiveAudioUrl to userAgent)
                 }
+                if (!captured.adaptiveAudioMp4Url.isNullOrBlank() && captured.adaptiveAudioMp4Url != pageAdaptiveAudioUrl) {
+                    adaptiveAudioCandidates.add(captured.adaptiveAudioMp4Url!! to (captured.userAgent.ifBlank { userAgent }))
+                }
+                if (innertubeResult != null && !innertubeResult.adaptiveAudioUrl.isNullOrBlank()) {
+                    adaptiveAudioCandidates.add(innertubeResult.adaptiveAudioUrl to innertubeResult.clientUserAgent)
+                }
+                if (pipedResult != null && !pipedResult.adaptiveAudioUrl.isNullOrBlank()) {
+                    adaptiveAudioCandidates.add(pipedResult.adaptiveAudioUrl to pipedResult.clientUserAgent)
+                }
+
+                val downloadedOk = downloadYouTubeVideoWithSoundHelper(
+                    cleanId = cleanId,
+                    progressiveCandidates = progressiveCandidates,
+                    adaptiveVideoCandidates = adaptiveVideoCandidates,
+                    adaptiveAudioCandidates = adaptiveAudioCandidates,
+                    cookies = cookies,
+                    tempFile = tempFile,
+                    tempVideoOnlyFile = tempVideoOnlyFile,
+                    tempAudioOnlyFile = tempAudioOnlyFile
+                )
 
                 try { if (tempVideoOnlyFile.exists()) tempVideoOnlyFile.delete() } catch (_: Exception) {}
                 try { if (tempAudioOnlyFile.exists()) tempAudioOnlyFile.delete() } catch (_: Exception) {}
@@ -544,7 +698,7 @@ object YouTubeOfflineRepository {
                     mainHandler.post {
                         Toast.makeText(
                             appCtx,
-                            "Downloaded \"$finalTitle\" for offline viewing!",
+                            "Downloaded \"$finalTitle\" (with sound) for offline viewing!",
                             Toast.LENGTH_SHORT
                         ).show()
                         onCompleted(true, finalTitle)
@@ -1156,31 +1310,34 @@ object YouTubeOfflineRepository {
                 }
             }
 
-            if (videoTrackIndexExtractor < 0 || videoFormat == null) return false
+            if (videoTrackIndexExtractor < 0 || videoFormat == null || audioTrackIndexExtractor < 0 || audioFormat == null) {
+                return false
+            }
 
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             videoExtractor.selectTrack(videoTrackIndexExtractor)
             val muxVideoTrack = muxer.addTrack(videoFormat)
 
-            var muxAudioTrack = -1
-            if (audioTrackIndexExtractor >= 0 && audioFormat != null) {
-                audioExtractor.selectTrack(audioTrackIndexExtractor)
-                muxAudioTrack = muxer.addTrack(audioFormat)
-            }
+            audioExtractor.selectTrack(audioTrackIndexExtractor)
+            val muxAudioTrack = muxer.addTrack(audioFormat)
 
             muxer.start()
 
-            val buffer = ByteBuffer.allocate(512 * 1024)
+            val buffer = ByteBuffer.allocate(1024 * 1024)
             val bufferInfo = MediaCodec.BufferInfo()
 
             // Write video samples
+            var lastVideoPts = 0L
             while (true) {
                 buffer.clear()
                 val sampleSize = videoExtractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
+                val rawPts = videoExtractor.sampleTime
+                val pts = if (rawPts >= lastVideoPts) rawPts else lastVideoPts + 1L
+                lastVideoPts = pts
                 bufferInfo.offset = 0
                 bufferInfo.size = sampleSize
-                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                bufferInfo.presentationTimeUs = pts
                 val sampleFlags = videoExtractor.sampleFlags
                 bufferInfo.flags = if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
                     MediaCodec.BUFFER_FLAG_KEY_FRAME
@@ -1190,21 +1347,23 @@ object YouTubeOfflineRepository {
             }
 
             // Write audio samples
-            if (muxAudioTrack >= 0) {
-                while (true) {
-                    buffer.clear()
-                    val sampleSize = audioExtractor.readSampleData(buffer, 0)
-                    if (sampleSize < 0) break
-                    bufferInfo.offset = 0
-                    bufferInfo.size = sampleSize
-                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
-                    val sampleFlags = audioExtractor.sampleFlags
-                    bufferInfo.flags = if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
-                        MediaCodec.BUFFER_FLAG_KEY_FRAME
-                    } else 0
-                    muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
-                    audioExtractor.advance()
-                }
+            var lastAudioPts = 0L
+            while (true) {
+                buffer.clear()
+                val sampleSize = audioExtractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) break
+                val rawPts = audioExtractor.sampleTime
+                val pts = if (rawPts >= lastAudioPts) rawPts else lastAudioPts + 1L
+                lastAudioPts = pts
+                bufferInfo.offset = 0
+                bufferInfo.size = sampleSize
+                bufferInfo.presentationTimeUs = pts
+                val sampleFlags = audioExtractor.sampleFlags
+                bufferInfo.flags = if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                    MediaCodec.BUFFER_FLAG_KEY_FRAME
+                } else 0
+                muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
+                audioExtractor.advance()
             }
 
             muxer.stop()
@@ -1246,7 +1405,8 @@ class YouTubeJsDownloadBridge(
     private val context: Context,
     private val mainHandler: Handler,
     private val userAgentProvider: () -> String,
-    private val onOpenOfflineLibrary: () -> Unit
+    private val onOpenOfflineLibrary: () -> Unit,
+    private val onPageModeChanged: (String) -> Unit = {}
 ) {
     @JavascriptInterface
     fun downloadVideo(
@@ -1274,6 +1434,13 @@ class YouTubeJsDownloadBridge(
     fun openOfflineDownloads() {
         mainHandler.post {
             onOpenOfflineLibrary()
+        }
+    }
+
+    @JavascriptInterface
+    fun onYoutubePageModeChanged(mode: String) {
+        mainHandler.post {
+            onPageModeChanged(mode.trim().lowercase(Locale.US))
         }
     }
 
@@ -1461,7 +1628,7 @@ fun YouTubeOfflineDesktopView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Saving video for offline playback (${entry.key})...",
+                            text = "Saving video with sound for offline playback (${entry.key})...",
                             color = Color.White,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.Medium
@@ -1529,7 +1696,7 @@ fun YouTubeOfflineDesktopView(
                         )
 
                         Text(
-                            text = "While watching any YouTube video or Short in Clone Space, tap the Download button in the top bar or below the video. Your downloaded videos will appear here so you can watch them anytime offline!",
+                            text = "While watching any YouTube video in Clone Space, tap the Download button in the top bar or below the video. Your downloaded videos will appear here with full sound so you can watch them anytime offline!",
                             color = Color(0xFFAAAAAA),
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center
@@ -1584,6 +1751,9 @@ fun YouTubeOfflineDesktopView(
                                         setMediaController(mediaController)
                                         setVideoURI(Uri.fromFile(File(activePlayingVideo.localVideoPath)))
                                         setOnPreparedListener { mp ->
+                                            try {
+                                                mp.setVolume(1.0f, 1.0f)
+                                            } catch (_: Exception) {}
                                             durationMs = mp.duration.coerceAtLeast(1)
                                             mp.start()
                                             isPlaying = true

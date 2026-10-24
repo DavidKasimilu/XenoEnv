@@ -2444,13 +2444,29 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                 function getYouTubePageMode() {
                     var path = (window.location.pathname || '').toLowerCase();
                     var search = (window.location.search || '').toLowerCase();
-                    if (path.indexOf('/shorts') === 0 || path.indexOf('/shorts/') !== -1) {
+                    var href = (window.location.href || '').toLowerCase();
+                    if (path.indexOf('/shorts') === 0 || path.indexOf('/shorts/') !== -1 || href.indexOf('/shorts/') !== -1) {
+                        return 'shorts';
+                    }
+                    var shortsDom = document.querySelector('ytm-shorts, ytd-shorts, #shorts-container');
+                    if (shortsDom && shortsDom.offsetParent !== null && path.indexOf('/watch') === -1 && search.indexOf('v=') === -1) {
                         return 'shorts';
                     }
                     if (path.indexOf('/watch') === 0 || path.indexOf('/watch') !== -1 || (search.indexOf('v=') !== -1 && path.indexOf('/results') === -1)) {
                         return 'watch';
                     }
                     return 'home';
+                }
+
+                function isMuxedVideoWithSoundUrl(url) {
+                    if (!url || typeof url !== 'string') return false;
+                    if (url.indexOf('|||') !== -1) return true;
+                    return url.indexOf('itag=18&') !== -1 ||
+                           url.indexOf('itag=22&') !== -1 ||
+                           url.indexOf('itag=37&') !== -1 ||
+                           url.indexOf('itag=59&') !== -1 ||
+                           url.indexOf('itag=78&') !== -1 ||
+                           /([?&])itag=(18|22|37|59|78)$/.test(url);
                 }
 
                 function sanitizeVideoPlaybackUrl(rawUrl) {
@@ -2521,14 +2537,14 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             var u = entries[i] && entries[i].name ? entries[i].name : '';
                             if (u.indexOf('googlevideo.com/videoplayback') === -1) continue;
                             var clean = sanitizeVideoPlaybackUrl(u);
-                            if (clean.indexOf('itag=18&') !== -1 || clean.indexOf('itag=22&') !== -1) {
+                            if (isMuxedVideoWithSoundUrl(clean)) {
                                 progUrl = clean;
                                 break;
                             }
                             if (!vidUrl && (clean.indexOf('mime=video%2Fmp4') !== -1 || clean.indexOf('mime=video/mp4') !== -1)) {
                                 vidUrl = clean;
                             }
-                            if (!audUrl && (clean.indexOf('mime=audio%2Fmp4') !== -1 || clean.indexOf('mime=audio/mp4') !== -1 || clean.indexOf('itag=140&') !== -1)) {
+                            if (!audUrl && (clean.indexOf('mime=audio%2Fmp4') !== -1 || clean.indexOf('mime=audio/mp4') !== -1 || clean.indexOf('itag=140&') !== -1 || clean.indexOf('itag=139&') !== -1 || clean.indexOf('itag=141&') !== -1)) {
                                 audUrl = clean;
                             }
                         }
@@ -2541,20 +2557,23 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
 
                 function extractActiveYouTubeMetadata() {
                     var m = getYouTubePageMode();
+                    if (m === 'shorts') {
+                        return {
+                            videoId: '',
+                            title: '',
+                            author: '',
+                            durationSec: '0',
+                            directStreamUrl: ''
+                        };
+                    }
                     var rawId = '';
                     if (m === 'watch') {
                         try {
                             rawId = (new URLSearchParams(window.location.search)).get('v') || '';
                         } catch(e) {}
-                    } else if (m === 'shorts') {
-                        var sp = (window.location.pathname || '').split('/shorts/');
-                        if (sp.length > 1 && sp[1]) {
-                            rawId = sp[1].split('/')[0].split('?')[0];
-                        }
                     }
 
-                    var pEl = (m === 'shorts' ? document.getElementById('shorts-player') : null) ||
-                              document.getElementById('movie_player') ||
+                    var pEl = document.getElementById('movie_player') ||
                               document.querySelector('.html5-video-player');
                     var pr = null;
                     try {
@@ -2599,7 +2618,6 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         var domTitleEl = document.querySelector(
                             '.slim-video-metadata-header .slim-video-information-title, ' +
                             'ytm-slim-video-metadata-section-renderer h2, ' +
-                            '.reel-player-header-renderer .reel-player-header-title, ' +
                             'h1.title'
                         );
                         if (domTitleEl && domTitleEl.textContent) {
@@ -2611,8 +2629,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     if (!author) {
                         var domAuthorEl = document.querySelector(
                             'ytm-slim-owner-renderer .slim-owner-icon-and-title a, ' +
-                            '.slim-owner-channel-name, ' +
-                            '.reel-player-header-channel-title'
+                            '.slim-owner-channel-name'
                         );
                         if (domAuthorEl && domAuthorEl.textContent) {
                             author = domAuthorEl.textContent.trim();
@@ -2638,6 +2655,12 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             directStream = extractBestStreamFromStreamingData(pr.streamingData);
                         }
                     } catch(e) {}
+                    if (!directStream || !isMuxedVideoWithSoundUrl(directStream)) {
+                        var perfStream = extractStreamFromPerformanceEntries();
+                        if (perfStream && (isMuxedVideoWithSoundUrl(perfStream) || !directStream)) {
+                            directStream = perfStream;
+                        }
+                    }
                     if (!directStream) {
                         var domVid = document.querySelector('video');
                         if (domVid) {
@@ -2646,9 +2669,6 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                                 directStream = sanitizeVideoPlaybackUrl(src);
                             }
                         }
-                    }
-                    if (!directStream) {
-                        directStream = extractStreamFromPerformanceEntries();
                     }
 
                     return {
@@ -2661,6 +2681,9 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                 }
 
                 window.__xenoTriggerYtDownload = function() {
+                    if (getYouTubePageMode() === 'shorts') {
+                        return false;
+                    }
                     var meta = extractActiveYouTubeMetadata();
                     if (!meta.videoId) {
                         return false;
@@ -2669,8 +2692,225 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         return false;
                     }
 
-                    // If we already have a direct progressive stream URL, start immediately
-                    if (meta.directStreamUrl && meta.directStreamUrl.indexOf('http') === 0 && meta.directStreamUrl.indexOf('|||') === -1) {
+                    if (typeof window.__xenoResolveVideoWithSoundStream === 'function') {
+                        return window.__xenoResolveVideoWithSoundStream(meta);
+                    }
+
+                    window.XenoYtBridge.downloadVideo(
+                        meta.videoId,
+                        meta.title,
+                        meta.author,
+                        meta.durationSec,
+                        meta.directStreamUrl || ''
+                    );
+                    return true;
+                };
+
+                function optimizeYouTubeAndShorts() {
+                    var mode = getYouTubePageMode();
+                    if (document.documentElement) {
+                        document.documentElement.setAttribute('data-xeno-yt-page', mode);
+                    }
+                    if (window.__xenoLastReportedYtMode !== mode) {
+                        window.__xenoLastReportedYtMode = mode;
+                        try {
+                            if (window.XenoYtBridge && typeof window.XenoYtBridge.onYoutubePageModeChanged === 'function') {
+                                window.XenoYtBridge.onYoutubePageModeChanged(mode);
+                            }
+                        } catch(e) {}
+                    }
+
+                    // Ensure inline video playback without altering YouTube layout or forcing play/pause loops
+                    var videos = document.querySelectorAll('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        var v = videos[i];
+                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
+                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
+                        v.playsInline = true;
+                    }
+
+                    // Intercept /feed/downloads navigation to open the Clone Space Offline Library
+                    var pathLower = (window.location.pathname || '').toLowerCase();
+                    if (pathLower.indexOf('/feed/downloads') === 0 && window.XenoYtBridge && typeof window.XenoYtBridge.openOfflineDownloads === 'function') {
+                        window.XenoYtBridge.openOfflineDownloads();
+                    }
+
+                    // Inject or update the sleek in-page Download Pill ONLY on Watch pages (strictly hidden on Shorts!)
+                    var pillId = 'xeno-yt-download-pill';
+                    var existingPill = document.getElementById(pillId);
+                    if (mode === 'watch') {
+                        if (!existingPill && document.body) {
+                            existingPill = document.createElement('button');
+                            existingPill.id = pillId;
+                            existingPill.type = 'button';
+                            existingPill.style.cssText =
+                                'position:fixed; right:12px; bottom:62px; ' +
+                                'z-index:2147483640; display:flex; align-items:center; gap:6px; ' +
+                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.24); ' +
+                                'border-radius:20px; padding:7px 13px; font-family:Roboto,sans-serif; font-size:12px; ' +
+                                'font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
+                                '-webkit-tap-highlight-color:transparent;';
+                            existingPill.addEventListener('click', function(ev) {
+                                ev.stopPropagation();
+                                ev.preventDefault();
+                                if (getYouTubePageMode() === 'shorts') return;
+                                var curMeta = extractActiveYouTubeMetadata();
+                                if (curMeta.videoId && window.XenoYtBridge && typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curMeta.videoId)) {
+                                    window.XenoYtBridge.openOfflineDownloads();
+                                } else {
+                                    window.__xenoTriggerYtDownload();
+                                }
+                            });
+                            document.body.appendChild(existingPill);
+                        }
+                        if (existingPill) {
+                            existingPill.style.bottom = '62px';
+                            existingPill.style.display = 'flex';
+                            var curIdCheck = extractActiveYouTubeMetadata().videoId;
+                            var prog = -1;
+                            var isSaved = false;
+                            try {
+                                if (curIdCheck && window.XenoYtBridge) {
+                                    prog = window.XenoYtBridge.getProgress(curIdCheck);
+                                    isSaved = window.XenoYtBridge.isDownloaded(curIdCheck);
+                                }
+                            } catch(e) {}
+                            if (prog >= 0) {
+                                existingPill.textContent = '⬇ Downloading ' + prog + '%';
+                                existingPill.style.borderColor = '#FF0000';
+                            } else if (isSaved) {
+                                existingPill.textContent = '✓ Downloaded (Offline)';
+                                existingPill.style.borderColor = '#2BA640';
+                            } else {
+                                existingPill.textContent = '⬇ Download with Sound';
+                                existingPill.style.borderColor = 'rgba(255,255,255,0.24)';
+                            }
+                        }
+                    } else if (existingPill) {
+                        existingPill.style.display = 'none';
+                    }
+                }
+
+                window.__xenoRunYtOptimizer = optimizeYouTubeAndShorts;
+                optimizeYouTubeAndShorts();
+
+                if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
+                    var throttleTimer = null;
+                    window.__xenoYtMutationObserver = new MutationObserver(function() {
+                        if (throttleTimer) return;
+                        throttleTimer = setTimeout(function() {
+                            throttleTimer = null;
+                            optimizeYouTubeAndShorts();
+                        }, 300);
+                    });
+                    window.__xenoYtMutationObserver.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                }
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+    injectYouTubeDownloadWithSoundAndShortsGuardHelper(view)
+}
+
+/**
+ * Dedicated YouTube Video-With-Sound Download & Shorts Button Guard Helper:
+ * 1. Resolves complete video+audio streams (`itag=18` / `itag=22` muxed MP4 with AAC audio, or
+ *    `adaptiveVideoMp4|||adaptiveAudioMp4` pair) via same-origin InnerTube player requests so
+ *    downloaded videos always have sound.
+ * 2. Strictly hides the Download Video button whenever the user is watching YouTube Shorts
+ *    (`/shorts/...` or active Shorts player).
+ */
+private fun injectYouTubeDownloadWithSoundAndShortsGuardHelper(view: WebView?) {
+    val js = """
+        (function() {
+            try {
+                // 1. CSS Guard: Force-hide the floating download button whenever on YouTube Shorts
+                var guardStyleId = 'xeno-yt-shorts-download-guard-style';
+                var guardStyleEl = document.getElementById(guardStyleId);
+                if (!guardStyleEl && (document.head || document.documentElement)) {
+                    guardStyleEl = document.createElement('style');
+                    guardStyleEl.id = guardStyleId;
+                    (document.head || document.documentElement).appendChild(guardStyleEl);
+                }
+                if (guardStyleEl && !guardStyleEl.__xenoApplied) {
+                    guardStyleEl.__xenoApplied = true;
+                    guardStyleEl.textContent =
+                        'html[data-xeno-yt-page="shorts"] #xeno-yt-download-pill, ' +
+                        'html[data-xeno-yt-page="home"] #xeno-yt-download-pill { ' +
+                        '  display: none !important; visibility: hidden !important; pointer-events: none !important; opacity: 0 !important; ' +
+                        '}';
+                }
+
+                // 2. Helper to check if a stream URL already includes audio (progressive itag 18/22 or video|||audio pair)
+                function hasGuaranteedSoundStream(streamStr) {
+                    if (!streamStr || typeof streamStr !== 'string') return false;
+                    if (streamStr.indexOf('|||') !== -1) return true;
+                    return streamStr.indexOf('itag=18&') !== -1 ||
+                           streamStr.indexOf('itag=22&') !== -1 ||
+                           streamStr.indexOf('itag=37&') !== -1 ||
+                           streamStr.indexOf('itag=59&') !== -1 ||
+                           streamStr.indexOf('itag=78&') !== -1 ||
+                           /([?&])itag=(18|22|37|59|78)$/.test(streamStr);
+                }
+
+                function pickMuxedOrPairedStream(sd, fallbackVideoOnlyUrl) {
+                    if (!sd) return fallbackVideoOnlyUrl || '';
+                    var fmts = sd.formats || [];
+                    for (var i = 0; i < fmts.length; i++) {
+                        var f = fmts[i];
+                        if (f && f.url && f.url.indexOf('http') === 0) {
+                            if (f.itag === 18 || f.itag === 22) {
+                                return f.url;
+                            }
+                        }
+                    }
+                    if (fmts.length > 0 && fmts[0] && fmts[0].url && fmts[0].url.indexOf('http') === 0) {
+                        return fmts[0].url;
+                    }
+
+                    var adaptive = sd.adaptiveFormats || [];
+                    var bestVid = '';
+                    var bestAud = '';
+                    for (var j = 0; j < adaptive.length; j++) {
+                        var af = adaptive[j];
+                        if (!af || !af.url || af.url.indexOf('http') !== 0) continue;
+                        var mime = (af.mimeType || '').toLowerCase();
+                        if (mime.indexOf('video/mp4') === 0) {
+                            if (af.itag === 134 || af.itag === 135 || af.itag === 136 || !bestVid) {
+                                bestVid = af.url;
+                                if (af.itag === 134) break;
+                            }
+                        }
+                    }
+                    for (var k = 0; k < adaptive.length; k++) {
+                        var audF = adaptive[k];
+                        if (!audF || !audF.url || audF.url.indexOf('http') !== 0) continue;
+                        var aMime = (audF.mimeType || '').toLowerCase();
+                        if (aMime.indexOf('audio/mp4') === 0) {
+                            bestAud = audF.url;
+                            if (audF.itag === 140) break;
+                        }
+                    }
+                    var finalVid = bestVid || fallbackVideoOnlyUrl || '';
+                    if (finalVid && bestAud) {
+                        return finalVid + '|||' + bestAud;
+                    }
+                    return finalVid;
+                }
+
+                // 3. Dedicated helper function to resolve a YouTube video stream WITH sound before dispatching to Android
+                window.__xenoResolveVideoWithSoundStream = function(meta) {
+                    if (!meta || !meta.videoId) return false;
+                    var pathNow = (window.location.pathname || '').toLowerCase();
+                    if (pathNow.indexOf('/shorts') === 0 || pathNow.indexOf('/shorts/') !== -1) {
+                        return false;
+                    }
+
+                    // If we already have a verified progressive stream (itag 18/22) or a video|||audio pair, dispatch immediately
+                    if (hasGuaranteedSoundStream(meta.directStreamUrl)) {
                         window.XenoYtBridge.downloadVideo(
                             meta.videoId,
                             meta.title,
@@ -2681,8 +2921,6 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         return true;
                     }
 
-                    // Otherwise perform a fast same-origin InnerTube player fetch inside the WebView (1.5s timeout)
-                    // before handing off to XenoYtBridge so the stream URL uses the WebView's exact TLS session & IP
                     var dispatched = false;
                     var finishDispatch = function(resolvedStream, resolvedTitle, resolvedAuthor, resolvedDur) {
                         if (dispatched) return;
@@ -2698,7 +2936,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
 
                     var safetyTimer = setTimeout(function() {
                         finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
-                    }, 1600);
+                    }, 1800);
 
                     try {
                         fetch('/youtubei/v1/player?prettyPrint=false', {
@@ -2737,12 +2975,13 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             return resp.json();
                         }).then(function(data) {
                             clearTimeout(safetyTimer);
-                            var sUrl = (data && data.streamingData) ? extractBestStreamFromStreamingData(data.streamingData) : '';
+                            var existingVidOnly = (meta.directStreamUrl && meta.directStreamUrl.indexOf('http') === 0) ? meta.directStreamUrl : '';
+                            var sUrl = (data && data.streamingData) ? pickMuxedOrPairedStream(data.streamingData, existingVidOnly) : existingVidOnly;
                             var vd = (data && data.videoDetails) ? data.videoDetails : null;
                             var rTitle = (vd && vd.title) ? vd.title : meta.title;
                             var rAuthor = (vd && vd.author) ? vd.author : meta.author;
                             var rDur = (vd && vd.lengthSeconds) ? String(vd.lengthSeconds) : meta.durationSec;
-                            finishDispatch(sUrl || meta.directStreamUrl, rTitle, rAuthor, rDur);
+                            finishDispatch(sUrl, rTitle, rAuthor, rDur);
                         }).catch(function() {
                             clearTimeout(safetyTimer);
                             finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
@@ -2754,95 +2993,17 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     return true;
                 };
 
-                function optimizeYouTubeAndShorts() {
-                    var mode = getYouTubePageMode();
-
-                    // Ensure inline video playback without altering YouTube layout or forcing play/pause loops
-                    var videos = document.querySelectorAll('video');
-                    for (var i = 0; i < videos.length; i++) {
-                        var v = videos[i];
-                        if (!v.hasAttribute('playsinline')) v.setAttribute('playsinline', 'true');
-                        if (!v.hasAttribute('webkit-playsinline')) v.setAttribute('webkit-playsinline', 'true');
-                        v.playsInline = true;
+                // Immediately enforce Shorts download button hiding if currently on Shorts
+                var curPath = (window.location.pathname || '').toLowerCase();
+                if (curPath.indexOf('/shorts') === 0 || curPath.indexOf('/shorts/') !== -1) {
+                    if (document.documentElement) {
+                        document.documentElement.setAttribute('data-xeno-yt-page', 'shorts');
                     }
-
-                    // Intercept /feed/downloads navigation to open the Clone Space Offline Library
-                    var pathLower = (window.location.pathname || '').toLowerCase();
-                    if (pathLower.indexOf('/feed/downloads') === 0 && window.XenoYtBridge && typeof window.XenoYtBridge.openOfflineDownloads === 'function') {
-                        window.XenoYtBridge.openOfflineDownloads();
+                    var pill = document.getElementById('xeno-yt-download-pill');
+                    if (pill) pill.style.display = 'none';
+                    if (window.XenoYtBridge && typeof window.XenoYtBridge.onYoutubePageModeChanged === 'function') {
+                        window.XenoYtBridge.onYoutubePageModeChanged('shorts');
                     }
-
-                    // Inject or update the sleek in-page Download Pill on Watch & Shorts pages
-                    var pillId = 'xeno-yt-download-pill';
-                    var existingPill = document.getElementById(pillId);
-                    if (mode === 'watch' || mode === 'shorts') {
-                        if (!existingPill && document.body) {
-                            existingPill = document.createElement('button');
-                            existingPill.id = pillId;
-                            existingPill.type = 'button';
-                            existingPill.style.cssText =
-                                'position:fixed; right:12px; bottom:' + (mode === 'shorts' ? '136px' : '62px') + '; ' +
-                                'z-index:2147483640; display:flex; align-items:center; gap:6px; ' +
-                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.24); ' +
-                                'border-radius:20px; padding:7px 13px; font-family:Roboto,sans-serif; font-size:12px; ' +
-                                'font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
-                                '-webkit-tap-highlight-color:transparent;';
-                            existingPill.addEventListener('click', function(ev) {
-                                ev.stopPropagation();
-                                ev.preventDefault();
-                                var curMeta = extractActiveYouTubeMetadata();
-                                if (curMeta.videoId && window.XenoYtBridge && typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curMeta.videoId)) {
-                                    window.XenoYtBridge.openOfflineDownloads();
-                                } else {
-                                    window.__xenoTriggerYtDownload();
-                                }
-                            });
-                            document.body.appendChild(existingPill);
-                        }
-                        if (existingPill) {
-                            existingPill.style.bottom = (mode === 'shorts' ? '136px' : '62px');
-                            existingPill.style.display = 'flex';
-                            var curIdCheck = extractActiveYouTubeMetadata().videoId;
-                            var prog = -1;
-                            var isSaved = false;
-                            try {
-                                if (curIdCheck && window.XenoYtBridge) {
-                                    prog = window.XenoYtBridge.getProgress(curIdCheck);
-                                    isSaved = window.XenoYtBridge.isDownloaded(curIdCheck);
-                                }
-                            } catch(e) {}
-                            if (prog >= 0) {
-                                existingPill.textContent = '⬇ Downloading ' + prog + '%';
-                                existingPill.style.borderColor = '#FF0000';
-                            } else if (isSaved) {
-                                existingPill.textContent = '✓ Downloaded (Offline)';
-                                existingPill.style.borderColor = '#2BA640';
-                            } else {
-                                existingPill.textContent = '⬇ Download Offline';
-                                existingPill.style.borderColor = 'rgba(255,255,255,0.24)';
-                            }
-                        }
-                    } else if (existingPill) {
-                        existingPill.style.display = 'none';
-                    }
-                }
-
-                window.__xenoRunYtOptimizer = optimizeYouTubeAndShorts;
-                optimizeYouTubeAndShorts();
-
-                if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
-                    var throttleTimer = null;
-                    window.__xenoYtMutationObserver = new MutationObserver(function() {
-                        if (throttleTimer) return;
-                        throttleTimer = setTimeout(function() {
-                            throttleTimer = null;
-                            optimizeYouTubeAndShorts();
-                        }, 300);
-                    });
-                    window.__xenoYtMutationObserver.observe(document.body, {
-                        childList: true,
-                        subtree: true
-                    });
                 }
             } catch(e) {}
         })();
@@ -3135,6 +3296,15 @@ fun CloneWorkspaceScreen(
     var selectedOfflineYtVideo by remember(instance.instanceId) {
         mutableStateOf<YouTubeOfflineVideo?>(null)
     }
+    var isYoutubeShortsPage by remember(instance.instanceId) {
+        mutableStateOf(currentUrl.contains("/shorts", ignoreCase = true))
+    }
+
+    LaunchedEffect(currentUrl) {
+        if (isYoutube) {
+            isYoutubeShortsPage = currentUrl.contains("/shorts", ignoreCase = true)
+        }
+    }
 
     LaunchedEffect(instance.instanceId, isYoutube) {
         if (isYoutube) {
@@ -3384,75 +3554,78 @@ fun CloneWorkspaceScreen(
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     if (isYoutube) {
-                        // YouTube Download Current Video Button
-                        val isDownloadingAny = youtubeActiveDownloads.isNotEmpty()
-                        IconButton(
-                            onClick = {
-                                val wv = webViewInstance
-                                if (wv != null && !showYoutubeOfflineLibrary) {
-                                    wv.evaluateJavascript(
-                                        "(function(){ return (window.__xenoTriggerYtDownload && window.__xenoTriggerYtDownload()) ? 'started' : ''; })()"
-                                    ) { result ->
-                                        val cleaned = result?.trim('"') ?: ""
-                                        if (cleaned != "started") {
-                                            // Fallback: parse video ID from current URL if on /watch or /shorts
-                                            val urlStr = wv.url ?: currentUrl
-                                            val fallbackId = when {
-                                                urlStr.contains("v=") -> urlStr.substringAfter("v=").substringBefore("&")
-                                                urlStr.contains("/shorts/") -> urlStr.substringAfter("/shorts/").substringBefore("?").substringBefore("/")
-                                                else -> ""
-                                            }
-                                            if (fallbackId.isNotBlank()) {
-                                                YouTubeOfflineRepository.startVideoDownload(
-                                                    context = context,
-                                                    mainHandler = mainHandler,
-                                                    videoId = fallbackId,
-                                                    rawTitle = currentTitle.removeSuffix("- YouTube").trim(),
-                                                    rawChannel = "YouTube",
-                                                    durationSecondsStr = "0",
-                                                    directStreamUrl = "",
-                                                    userAgent = wv.settings.userAgentString ?: MOBILE_USER_AGENT
-                                                )
-                                            } else {
-                                                Toast.makeText(
-                                                    context,
-                                                    "Open any YouTube video or Short first to download it for offline viewing",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                        // YouTube Download Current Video Button (hidden when watching YouTube Shorts)
+                        val isWatchingShortsNow = isYoutubeShortsPage || currentUrl.contains("/shorts", ignoreCase = true)
+                        if (!isWatchingShortsNow) {
+                            val isDownloadingAny = youtubeActiveDownloads.isNotEmpty()
+                            IconButton(
+                                onClick = {
+                                    val wv = webViewInstance
+                                    if (wv != null && !showYoutubeOfflineLibrary) {
+                                        wv.evaluateJavascript(
+                                            "(function(){ return (window.__xenoTriggerYtDownload && window.__xenoTriggerYtDownload()) ? 'started' : ''; })()"
+                                        ) { result ->
+                                            val cleaned = result?.trim('"') ?: ""
+                                            if (cleaned != "started") {
+                                                // Fallback: parse video ID from current URL if on /watch (never on /shorts)
+                                                val urlStr = wv.url ?: currentUrl
+                                                val fallbackId = if (urlStr.contains("v=") && !urlStr.contains("/shorts", ignoreCase = true)) {
+                                                    urlStr.substringAfter("v=").substringBefore("&")
+                                                } else {
+                                                    ""
+                                                }
+                                                if (fallbackId.isNotBlank()) {
+                                                    YouTubeOfflineRepository.startVideoDownload(
+                                                        context = context,
+                                                        mainHandler = mainHandler,
+                                                        videoId = fallbackId,
+                                                        rawTitle = currentTitle.removeSuffix("- YouTube").trim(),
+                                                        rawChannel = "YouTube",
+                                                        durationSecondsStr = "0",
+                                                        directStreamUrl = "",
+                                                        userAgent = wv.settings.userAgentString ?: MOBILE_USER_AGENT
+                                                    )
+                                                } else {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Open any YouTube video first to download it with sound for offline viewing",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                             }
                                         }
-                                    }
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        "Switch to Live YouTube and open a video to download",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .testTag("youtube_download_video_btn")
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (isDownloadingAny) Color(0xFFFF0000).copy(alpha = 0.2f) else Color.Transparent,
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    if (isDownloadingAny) {
-                                        CircularProgressIndicator(
-                                            color = Color(0xFFFF0000),
-                                            strokeWidth = 2.dp,
-                                            modifier = Modifier.size(15.dp)
-                                        )
                                     } else {
-                                        Icon(
-                                            imageVector = Icons.Filled.Download,
-                                            contentDescription = "Download YouTube Video for Offline",
-                                            tint = Color(0xFFFF0000),
-                                            modifier = Modifier.size(17.dp)
-                                        )
+                                        Toast.makeText(
+                                            context,
+                                            "Switch to Live YouTube and open a video to download",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .testTag("youtube_download_video_btn")
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isDownloadingAny) Color(0xFFFF0000).copy(alpha = 0.2f) else Color.Transparent,
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (isDownloadingAny) {
+                                            CircularProgressIndicator(
+                                                color = Color(0xFFFF0000),
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Filled.Download,
+                                                contentDescription = "Download YouTube Video for Offline",
+                                                tint = Color(0xFFFF0000),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -3998,6 +4171,9 @@ fun CloneWorkspaceScreen(
                                                     selectedOfflineYtVideo = saved.firstOrNull()
                                                 }
                                                 showYoutubeOfflineLibrary = true
+                                            },
+                                            onPageModeChanged = { mode ->
+                                                isYoutubeShortsPage = (mode == "shorts")
                                             }
                                         ),
                                         "XenoYtBridge"
