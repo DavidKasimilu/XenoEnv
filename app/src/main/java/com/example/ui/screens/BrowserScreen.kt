@@ -1,15 +1,29 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
+import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
+import android.webkit.JsResult
+import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -139,11 +153,19 @@ private val DESKTOP_BROWSER_HEADERS = mapOf(
 
 /**
  * Helper function that configures Android WebView to behave as a standard Mobile Chrome Browser
- * by default, or switches to full Desktop Browser mode when toggled from the 3-dot menu.
+ * by default, switches to full Desktop Browser mode when toggled from the 3-dot menu, and automatically
+ * enables Desktop Chrome WebRTC mode for online call platforms like Google Meet, Teams, and Zoom.
  */
 @SuppressLint("SetJavaScriptEnabled")
 private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, currentUrl: String = "") {
-    val forceDesktop = isDesktopMode || currentUrl.contains("web.whatsapp.com", ignoreCase = true)
+    val isOnlineCallPlatform = currentUrl.contains("meet.google.com", ignoreCase = true) ||
+        currentUrl.contains("teams.microsoft.com", ignoreCase = true) ||
+        currentUrl.contains("teams.live.com", ignoreCase = true) ||
+        currentUrl.contains("zoom.us", ignoreCase = true) ||
+        currentUrl.contains("web.whatsapp.com", ignoreCase = true)
+
+    val forceDesktop = isDesktopMode || isOnlineCallPlatform
+
     webView.settings.apply {
         javaScriptEnabled = true
         domStorageEnabled = true
@@ -158,7 +180,8 @@ private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, c
         allowFileAccess = true
         allowContentAccess = true
         javaScriptCanOpenWindowsAutomatically = true
-        setSupportMultipleWindows(false)
+        setSupportMultipleWindows(true)
+        setGeolocationEnabled(true)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             offscreenPreRaster = true
         }
@@ -167,105 +190,50 @@ private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, c
         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         userAgentString = if (forceDesktop) DESKTOP_BROWSER_USER_AGENT else MOBILE_BROWSER_USER_AGENT
+        textZoom = 100
+        defaultTextEncodingName = "UTF-8"
     }
+
+    webView.isFocusable = true
+    webView.isFocusableInTouchMode = true
+    webView.isClickable = true
+
+    try {
+        val cm = CookieManager.getInstance()
+        cm.setAcceptCookie(true)
+        cm.setAcceptThirdPartyCookies(webView, true)
+    } catch (_: Exception) {}
 }
 
 /**
  * Mobile & Desktop Browser Helper Engine:
- * - In Mobile Mode (default): Emulates a native Chrome Mobile browser with responsive mobile viewport
- *   (`width=device-width, initial-scale=1.0`), `navigator.userAgentData.mobile = true`, smooth touch
- *   scrolling, inline/fullscreen video playback support, and popup-to-same-tab link routing.
- * - In Desktop Mode: Emulates Desktop Chrome with a 1280px desktop viewport (`width=1280`) and
- *   `navigator.userAgentData.mobile = false` so websites render their desktop layout.
+ * Injects lightweight polyfills without breaking native DOM APIs, window.open, or navigator.userAgentData,
+ * ensuring flawless GitHub menus, modal popovers, and WebRTC audio/video call compatibility.
  */
 private fun injectBrowserHelperEngine(view: WebView?, isDesktopMode: Boolean) {
     val js = """
         (function() {
             try {
-                var isDesktop = $isDesktopMode;
                 if (!window.chrome) {
                     window.chrome = { runtime: {}, app: { isInstalled: false } };
                 }
                 if (!document.fullscreenEnabled) {
-                    Object.defineProperty(document, 'fullscreenEnabled', { value: true, configurable: true });
+                    try { Object.defineProperty(document, 'fullscreenEnabled', { value: true, configurable: true }); } catch(e) {}
                 }
                 if (!document.webkitFullscreenEnabled) {
-                    Object.defineProperty(document, 'webkitFullscreenEnabled', { value: true, configurable: true });
+                    try { Object.defineProperty(document, 'webkitFullscreenEnabled', { value: true, configurable: true }); } catch(e) {}
                 }
                 if (window.HTMLVideoElement && !HTMLVideoElement.prototype.webkitSupportsFullscreen) {
-                    HTMLVideoElement.prototype.webkitSupportsFullscreen = true;
+                    try { HTMLVideoElement.prototype.webkitSupportsFullscreen = true; } catch(e) {}
                 }
 
-                // Polyfill Client Hints navigator.userAgentData to match Mobile vs Desktop mode
-                Object.defineProperty(navigator, 'userAgentData', {
-                    value: {
-                        brands: [
-                            { brand: 'Google Chrome', version: '131' },
-                            { brand: 'Chromium', version: '131' },
-                            { brand: 'Not_A Brand', version: '24' }
-                        ],
-                        mobile: !isDesktop,
-                        platform: isDesktop ? 'Linux' : 'Android',
-                        getHighEntropyValues: function() {
-                            return Promise.resolve({
-                                architecture: isDesktop ? 'x86' : 'arm',
-                                bitness: '64',
-                                mobile: !isDesktop,
-                                model: isDesktop ? '' : 'Pixel 8 Pro',
-                                platform: isDesktop ? 'Linux' : 'Android',
-                                platformVersion: isDesktop ? '6.5.0' : '14.0.0',
-                                uaFullVersion: '131.0.0.0'
-                            });
-                        }
-                    },
-                    configurable: true
-                });
-
-                // Route window.open into current browsing context so mobile popups/OAuth links never fail
-                if (!window.__xenoPopupPatched) {
-                    window.__xenoPopupPatched = true;
-                    window.open = function(url) {
-                        if (url && typeof url === 'string' && url !== 'about:blank') {
-                            window.location.href = url;
-                        }
-                        return window;
+                // WebRTC Online Call helper: ensure mediaDevices & getUserMedia are exposed and functional
+                if (navigator.mediaDevices && !navigator.mediaDevices.getUserMedia && navigator.getUserMedia) {
+                    navigator.mediaDevices.getUserMedia = function(constraints) {
+                        return new Promise(function(resolve, reject) {
+                            navigator.getUserMedia(constraints, resolve, reject);
+                        });
                     };
-                }
-
-                // Viewport & Mobile/Desktop layout management
-                var head = document.head || document.getElementsByTagName('head')[0];
-                if (head) {
-                    var vp = document.querySelector('meta[name="viewport"]');
-                    if (isDesktop) {
-                        var desktopContent = 'width=1280, initial-scale=0.35, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                        if (!vp) {
-                            vp = document.createElement('meta');
-                            vp.name = 'viewport';
-                            vp.content = desktopContent;
-                            head.appendChild(vp);
-                        } else if (vp.getAttribute('content') !== desktopContent) {
-                            vp.setAttribute('data-original-viewport', vp.getAttribute('content') || '');
-                            vp.setAttribute('content', desktopContent);
-                        }
-                    } else {
-                        var mobileContent = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
-                        if (!vp) {
-                            vp = document.createElement('meta');
-                            vp.name = 'viewport';
-                            vp.content = mobileContent;
-                            head.appendChild(vp);
-                        } else if ((vp.getAttribute('content') || '').indexOf('width=1280') !== -1) {
-                            var orig = vp.getAttribute('data-original-viewport');
-                            vp.setAttribute('content', orig && orig.length > 0 ? orig : mobileContent);
-                        }
-                    }
-
-                    if (!document.getElementById('xeno-mobile-browser-helper-style')) {
-                        var style = document.createElement('style');
-                        style.id = 'xeno-mobile-browser-helper-style';
-                        style.textContent = 'html, body { -webkit-overflow-scrolling: touch !important; -webkit-text-size-adjust: 100%; } video { max-width: 100%; }';
-                        head.appendChild(style);
-                    }
                 }
             } catch (e) {}
         })();
@@ -325,6 +293,57 @@ fun BrowserScreen(
     var showFullscreenControls by remember { mutableStateOf(true) }
     var isLandscapeLocked by remember { mutableStateOf(true) }
     val context = LocalContext.current
+
+    var pendingWebPermissionRequest by remember { mutableStateOf<PermissionRequest?>(null) }
+    val callPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        val micOk = perms[Manifest.permission.RECORD_AUDIO] == true ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val camOk = perms[Manifest.permission.CAMERA] == true ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+        pendingWebPermissionRequest?.let { req ->
+            val granted = mutableListOf<String>()
+            val requested = req.resources ?: emptyArray()
+            for (r in requested) {
+                if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE && micOk) granted.add(r)
+                else if (r == PermissionRequest.RESOURCE_VIDEO_CAPTURE && camOk) granted.add(r)
+                else if (r == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID) granted.add(r)
+            }
+            if (granted.isNotEmpty()) {
+                req.grant(granted.toTypedArray())
+            } else {
+                req.deny()
+            }
+            pendingWebPermissionRequest = null
+        }
+    }
+
+    var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uris = if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            if (data?.clipData != null) {
+                val count = data.clipData!!.itemCount
+                val list = mutableListOf<Uri>()
+                for (i in 0 until count) {
+                    list.add(data.clipData!!.getItemAt(i).uri)
+                }
+                list.toTypedArray()
+            } else if (data?.data != null) {
+                arrayOf(data.data!!)
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+        fileChooserCallback?.onReceiveValue(uris)
+        fileChooserCallback = null
+    }
 
     LaunchedEffect(currentTab?.url) {
         if (currentTab != null && !urlInputText.equals(currentTab.url, ignoreCase = true)) {
@@ -730,12 +749,43 @@ fun BrowserScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Language,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
+                            val isOnlineCallSite = currentTab != null && (
+                                currentTab.url.contains("meet.google.com", ignoreCase = true) ||
+                                currentTab.url.contains("teams.microsoft.com", ignoreCase = true) ||
+                                currentTab.url.contains("zoom.us", ignoreCase = true)
                             )
+                            if (isOnlineCallSite) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF064E3B),
+                                    border = BorderStroke(1.dp, Color(0xFF10B981))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .background(Color(0xFF34D399), CircleShape)
+                                        )
+                                        Text(
+                                            text = "Call Ready",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF6EE7B7)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.Language,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                             Box(
                                 modifier = Modifier.weight(1f),
                                 contentAlignment = Alignment.CenterStart
@@ -1110,6 +1160,9 @@ fun BrowserScreen(
                                             if (url != null) {
                                                 if (view != null) {
                                                     applyBrowserModeSettings(view, isDesktop, url)
+                                                    if (url.contains("meet.google.com") || url.contains("teams.microsoft.com") || url.contains("zoom.us")) {
+                                                        view.keepScreenOn = true
+                                                    }
                                                 }
                                                 onUpdateTabNavState(view?.canGoBack() ?: false, view?.canGoForward() ?: false)
                                             }
@@ -1133,7 +1186,7 @@ fun BrowserScreen(
                                             }
                                             injectBrowserHelperEngine(view, isDesktop)
                                             try {
-                                                android.webkit.CookieManager.getInstance().flush()
+                                                CookieManager.getInstance().flush()
                                             } catch (_: Exception) {}
                                         }
 
@@ -1167,7 +1220,19 @@ fun BrowserScreen(
                                                 } catch (_: Exception) {}
                                                 return true
                                             }
-                                            return false
+                                            if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://") ||
+                                                targetUrl.startsWith("about:") || targetUrl.startsWith("blob:") ||
+                                                targetUrl.startsWith("data:") || targetUrl.startsWith("javascript:")
+                                            ) {
+                                                return false
+                                            }
+                                            return try {
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
+                                                ctx.startActivity(intent)
+                                                true
+                                            } catch (_: Exception) {
+                                                false
+                                            }
                                         }
 
                                         override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
@@ -1196,6 +1261,103 @@ fun BrowserScreen(
                                             if (!title.isNullOrBlank() && view?.url != null) {
                                                 onUpdateTabUrl(view.url ?: "", title)
                                             }
+                                        }
+
+                                        override fun onPermissionRequest(request: PermissionRequest?) {
+                                            if (request == null) return
+                                            val mainHandler = Handler(Looper.getMainLooper())
+                                            mainHandler.post {
+                                                try {
+                                                    val resources = request.resources ?: emptyArray()
+                                                    val needsAudio = resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                                                    val needsVideo = resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+
+                                                    val micGranted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                                    val camGranted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+                                                    if ((needsAudio && !micGranted) || (needsVideo && !camGranted)) {
+                                                        pendingWebPermissionRequest = request
+                                                        val toRequest = mutableListOf<String>()
+                                                        if (needsAudio && !micGranted) toRequest.add(Manifest.permission.RECORD_AUDIO)
+                                                        if (needsVideo && !camGranted) toRequest.add(Manifest.permission.CAMERA)
+                                                        callPermissionsLauncher.launch(toRequest.toTypedArray())
+                                                    } else {
+                                                        this@apply.keepScreenOn = true
+                                                        request.grant(resources)
+                                                    }
+                                                } catch (_: Exception) {
+                                                    try {
+                                                        request.grant(request.resources)
+                                                    } catch (_: Exception) {}
+                                                }
+                                            }
+                                        }
+
+                                        override fun onPermissionRequestCanceled(request: PermissionRequest?) {
+                                            if (pendingWebPermissionRequest == request) {
+                                                pendingWebPermissionRequest = null
+                                            }
+                                        }
+
+                                        override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                                            callback?.invoke(origin, true, false)
+                                        }
+
+                                        override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                            try {
+                                                android.widget.Toast.makeText(ctx, message ?: "", android.widget.Toast.LENGTH_SHORT).show()
+                                            } catch (_: Exception) {}
+                                            result?.confirm()
+                                            return true
+                                        }
+
+                                        override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                            result?.confirm()
+                                            return true
+                                        }
+
+                                        override fun onShowFileChooser(
+                                            webView: WebView?,
+                                            filePathCallback: ValueCallback<Array<Uri>>?,
+                                            fileChooserParams: FileChooserParams?
+                                        ): Boolean {
+                                            fileChooserCallback?.onReceiveValue(null)
+                                            fileChooserCallback = filePathCallback
+                                            val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                                                type = "*/*"
+                                                addCategory(Intent.CATEGORY_OPENABLE)
+                                            }
+                                            return try {
+                                                fileChooserLauncher.launch(intent)
+                                                true
+                                            } catch (_: Exception) {
+                                                fileChooserCallback?.onReceiveValue(null)
+                                                fileChooserCallback = null
+                                                false
+                                            }
+                                        }
+
+                                        override fun onCreateWindow(
+                                            view: WebView?,
+                                            isDialog: Boolean,
+                                            isUserGesture: Boolean,
+                                            resultMsg: Message?
+                                        ): Boolean {
+                                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                                            val tempWebView = WebView(view?.context ?: return false).apply {
+                                                settings.javaScriptEnabled = true
+                                                settings.domStorageEnabled = true
+                                                webViewClient = object : WebViewClient() {
+                                                    override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                                                        val url = req?.url?.toString() ?: return false
+                                                        view.loadUrl(url)
+                                                        return true
+                                                    }
+                                                }
+                                            }
+                                            transport.webView = tempWebView
+                                            resultMsg.sendToTarget()
+                                            return true
                                         }
 
                                         override fun onShowCustomView(view: android.view.View?, callback: WebChromeClient.CustomViewCallback?) {
