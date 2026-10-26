@@ -98,10 +98,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import android.content.pm.ActivityInfo
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.models.ClonedAppInstance
 import com.example.ui.components.AppIconImage
@@ -1529,22 +1534,24 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                             'html.xeno-wa-phone-ui [data-xeno-wa-role="side-col"] > *, html.xeno-wa-phone-ui #side, html.xeno-wa-phone-ui #pane-side { width: 100% !important; max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
 
                             /* Active Chat Conversation Column (#main) - Full-Screen Phone Slide Over */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100dvh) !important; margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.14s ease !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; will-change: transform, opacity !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100%) !important; max-height: var(--xeno-wa-vh, 100%) !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; box-sizing: border-box !important; transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.14s ease !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; will-change: transform, opacity !important; } ' +
                             'html.xeno-wa-phone-ui.xeno-wa-chat-open [data-xeno-wa-role="main-col"] { transform: translate3d(0, 0, 0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 45 !important; } ' +
-                            'html.xeno-wa-phone-ui #main { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="main-col"] > * { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; max-height: 100% !important; min-height: 0 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #main { display: flex !important; flex-direction: column !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; max-height: 100% !important; min-height: 0 !important; overflow: hidden !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #main > div:not(header):not(footer) { min-height: 0 !important; } ' +
 
                             /* Right Drawer Column (Contact Info, Group Info, Search Messages) */
-                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100dvh) !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; transition: transform 0.18s ease, opacity 0.14s ease !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: var(--xeno-wa-vh, 100%) !important; max-height: var(--xeno-wa-vh, 100%) !important; min-height: 0 !important; transform: translate3d(102vw, 0, 0) !important; opacity: 0 !important; pointer-events: none !important; z-index: 10 !important; transition: transform 0.18s ease, opacity 0.14s ease !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui.xeno-wa-right-drawer-open [data-xeno-wa-role="right-drawer"] { transform: translate3d(0, 0, 0) !important; opacity: 1 !important; pointer-events: auto !important; z-index: 60 !important; background: #111b21 !important; } ' +
                             'html.xeno-wa-phone-ui [data-xeno-wa-role="right-drawer"] > * { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
 
                             /* Mobile Chat Header, Bubbles & Compose Footer Refinements */
-                            'html.xeno-wa-phone-ui #main > header { padding-left: 4px !important; padding-right: 6px !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #main > header { flex-shrink: 0 !important; padding-left: 4px !important; padding-right: 6px !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui #xeno-wa-back-to-chats-btn { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 36px !important; height: 36px !important; min-width: 36px !important; border-radius: 50% !important; border: none !important; background: transparent !important; color: inherit !important; cursor: pointer !important; margin-right: 2px !important; padding: 0 !important; flex-shrink: 0 !important; -webkit-tap-highlight-color: transparent !important; } ' +
                             'html.xeno-wa-phone-ui #xeno-wa-back-to-chats-btn:active { background: rgba(134, 150, 160, 0.2) !important; } ' +
                             'html.xeno-wa-phone-ui #main [role="application"], html.xeno-wa-phone-ui #main [data-testid="conversation-panel-messages"] > div { padding-left: 10px !important; padding-right: 10px !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui #main .message-in, html.xeno-wa-phone-ui #main .message-out { max-width: 86% !important; } ' +
-                            'html.xeno-wa-phone-ui #main footer { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; padding-left: 4px !important; padding-right: 4px !important; box-sizing: border-box !important; } ' +
+                            'html.xeno-wa-phone-ui #main footer { flex-shrink: 0 !important; position: relative !important; z-index: 5 !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; padding-left: 4px !important; padding-right: 4px !important; box-sizing: border-box !important; } ' +
                             'html.xeno-wa-phone-ui [role="dialog"] { max-width: calc(100vw - 16px) !important; min-width: 0 !important; box-sizing: border-box !important; }';
                         if (!existingStyle) {
                             document.head.appendChild(st);
@@ -1959,19 +1966,63 @@ private fun injectWhatsAppMobileStabilityAndNavHelper(view: WebView?, isPhoneUiM
                     }
                 }
 
-                // 2. VisualViewport & Window Scroll Pinning (Prevents header jump when keyboard opens)
+                // 2. VisualViewport & Window Scroll Pinning (Keeps #main footer & typed words visible above keyboard)
                 if (!window.__xenoWaViewportPinPatched) {
                     window.__xenoWaViewportPinPatched = true;
-                    var updateVisualViewportHeight = function() {
+                    var lastAppliedVh = 0;
+                    var ensureComposeFooterVisible = function() {
                         try {
-                            if (!window.__xenoWaPhoneMode) return;
-                            var vh = (window.visualViewport && window.visualViewport.height) ? Math.round(window.visualViewport.height) : window.innerHeight;
-                            if (vh && vh > 120) {
-                                document.documentElement.style.setProperty('--xeno-wa-vh', vh + 'px');
-                            }
                             if (window.scrollX !== 0 || window.scrollY !== 0) {
                                 window.scrollTo(0, 0);
                             }
+                            if (document.documentElement && document.documentElement.scrollTop !== 0) {
+                                document.documentElement.scrollTop = 0;
+                            }
+                            if (document.body && document.body.scrollTop !== 0) {
+                                document.body.scrollTop = 0;
+                            }
+                            var activeEl = document.activeElement;
+                            var footer = document.querySelector('#main footer');
+                            if (footer && activeEl && footer.contains(activeEl)) {
+                                var msgScroll = document.querySelector('#main [data-testid="conversation-panel-messages"]');
+                                if (!msgScroll) {
+                                    var mainEl = document.getElementById('main');
+                                    if (mainEl) {
+                                        var candidates = mainEl.querySelectorAll('div');
+                                        for (var c = 0; c < candidates.length; c++) {
+                                            var el = candidates[c];
+                                            if (el.scrollHeight > el.clientHeight + 20 && !footer.contains(el)) {
+                                                var st = window.getComputedStyle(el);
+                                                if (st.overflowY === 'auto' || st.overflowY === 'scroll') {
+                                                    msgScroll = el;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (msgScroll) {
+                                    var distFromBottom = msgScroll.scrollHeight - msgScroll.scrollTop - msgScroll.clientHeight;
+                                    if (distFromBottom < 260) {
+                                        msgScroll.scrollTop = msgScroll.scrollHeight;
+                                    }
+                                }
+                            }
+                        } catch(e) {}
+                    };
+                    var updateVisualViewportHeight = function() {
+                        try {
+                            var vvH = (window.visualViewport && window.visualViewport.height) ? Math.round(window.visualViewport.height) : 0;
+                            var winH = window.innerHeight || document.documentElement.clientHeight || 0;
+                            var vh = (vvH > 0 && winH > 0) ? Math.min(vvH, winH) : (vvH || winH);
+                            if (vh && vh > 120) {
+                                document.documentElement.style.setProperty('--xeno-wa-vh', vh + 'px');
+                                if (Math.abs(vh - lastAppliedVh) > 40) {
+                                    lastAppliedVh = vh;
+                                    setTimeout(ensureComposeFooterVisible, 20);
+                                }
+                            }
+                            ensureComposeFooterVisible();
                         } catch(e) {}
                     };
                     updateVisualViewportHeight();
@@ -1980,6 +2031,20 @@ private fun injectWhatsAppMobileStabilityAndNavHelper(view: WebView?, isPhoneUiM
                         window.visualViewport.addEventListener('scroll', updateVisualViewportHeight, { passive: true });
                     }
                     window.addEventListener('resize', updateVisualViewportHeight, { passive: true });
+                    document.addEventListener('focusin', function(ev) {
+                        var t = ev && ev.target;
+                        var footer = document.querySelector('#main footer');
+                        if (t && footer && footer.contains(t)) {
+                            updateVisualViewportHeight();
+                            setTimeout(updateVisualViewportHeight, 60);
+                            setTimeout(updateVisualViewportHeight, 180);
+                            setTimeout(updateVisualViewportHeight, 350);
+                        }
+                    }, true);
+                    document.addEventListener('focusout', function() {
+                        setTimeout(updateVisualViewportHeight, 80);
+                        setTimeout(updateVisualViewportHeight, 250);
+                    }, true);
                 }
 
                 // 3. Normalize Left Nav Rail DOM Hierarchy & Side Column Drawers
@@ -2057,12 +2122,12 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Passive touch & wheel listener optimization for 60fps+ scroll responsiveness
+                // 1. Passive wheel listener optimization ONLY (never force touchstart/touchmove passive on Instagram so React Reels swipe gestures work natively)
                 if (!window.__xenoIgPassivePatched) {
                     window.__xenoIgPassivePatched = true;
                     var origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'touchstart' || type === 'touchmove' || type === 'wheel' || type === 'mousewheel') {
+                        if (type === 'wheel' || type === 'mousewheel') {
                             var newOpts = options;
                             if (typeof options === 'boolean') {
                                 newOpts = { capture: options, passive: true };
@@ -2079,26 +2144,184 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                     };
                 }
 
-                // 2. Smooth Scroll, GPU Layer Promotion & Reels Snap CSS
+                // 2. Strictly Reels Scroll Physics ONLY (zero layout, sizing, or visual changes to Instagram)
                 var styleId = 'xeno-ig-reels-smooth-style';
-                if (!document.getElementById(styleId) && document.head) {
+                var existingStyle = document.getElementById(styleId);
+                var cleanScrollCss =
+                    'div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; } ' +
+                    'div[style*="scroll-snap-type"] > div { scroll-snap-stop: always !important; }';
+                if (!existingStyle && document.head) {
                     var st = document.createElement('style');
                     st.id = styleId;
-                    st.textContent =
-                        'html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior-y: contain !important; overflow-x: hidden !important; touch-action: pan-y manipulation !important; -webkit-tap-highlight-color: transparent !important; } ' +
-                        'main, section, article, div[role="main"], div[style*="scroll-snap"] { -webkit-overflow-scrolling: touch !important; } ' +
-                        'div[style*="scroll-snap-type"] > div, div[class*=" reel"], article { scroll-snap-stop: always !important; } ' +
-                        'video { transform: translateZ(0) !important; -webkit-transform: translateZ(0) !important; backface-visibility: hidden !important; -webkit-backface-visibility: hidden !important; will-change: transform !important; object-fit: cover; } ' +
-                        '::-webkit-scrollbar { width: 0px !important; height: 0px !important; display: none !important; }';
+                    st.textContent = cleanScrollCss;
                     document.head.appendChild(st);
+                } else if (existingStyle && existingStyle.textContent !== cleanScrollCss) {
+                    existingStyle.textContent = cleanScrollCss;
                 }
 
-                // 3. Reels Video Inline Playback, Preload & Viewport Intersection Optimizer
+                // 3. Locate the active Reels scroll container and apply native momentum & snap-stop without touching layout
+                function isOnReelsRoute() {
+                    var p = (window.location.pathname || '').toLowerCase();
+                    return p.indexOf('/reels') === 0 || p.indexOf('/reel/') === 0;
+                }
+
+                function findReelsScrollContainer(startEl) {
+                    var el = startEl;
+                    while (el && el !== document.body && el !== document.documentElement) {
+                        if (el.nodeType === 1) {
+                            var sh = el.scrollHeight || 0;
+                            var ch = el.clientHeight || 0;
+                            if (sh > ch + 80 && ch >= window.innerHeight * 0.6) {
+                                var cs = window.getComputedStyle(el);
+                                var oy = cs ? cs.overflowY : '';
+                                var snap = cs ? (cs.scrollSnapType || '') : '';
+                                if (oy === 'scroll' || oy === 'auto' || snap.indexOf('y') !== -1 || snap.indexOf('mandatory') !== -1) {
+                                    return el;
+                                }
+                            }
+                        }
+                        el = el.parentElement;
+                    }
+                    var snapDiv = document.querySelector('div[style*="scroll-snap"]');
+                    if (snapDiv && snapDiv.scrollHeight > snapDiv.clientHeight + 40) return snapDiv;
+                    return null;
+                }
+
+                function tuneReelsScrollContainers() {
+                    if (!isOnReelsRoute()) return;
+                    var vids = document.querySelectorAll('video');
+                    for (var i = 0; i < vids.length; i++) {
+                        var sc = findReelsScrollContainer(vids[i]);
+                        if (sc && !sc.__xenoReelsScrollTuned) {
+                            sc.__xenoReelsScrollTuned = true;
+                            sc.style.webkitOverflowScrolling = 'touch';
+                            sc.style.overscrollBehaviorY = 'contain';
+                            var cs = window.getComputedStyle(sc);
+                            if (!cs.scrollSnapType || cs.scrollSnapType === 'none') {
+                                sc.style.scrollSnapType = 'y mandatory';
+                            }
+                        }
+                        if (sc && sc.children) {
+                            for (var c = 0; c < sc.children.length; c++) {
+                                var child = sc.children[c];
+                                if (child && child.style && child.style.scrollSnapStop !== 'always') {
+                                    child.style.scrollSnapStop = 'always';
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Fast, Native-App-Like Reels Vertical Flick Snapper + Scroll Activity Tracker
+                if (!window.__xenoIgReelsSwipeInstalled) {
+                    window.__xenoIgReelsSwipeInstalled = true;
+                    window.__xenoIgIsScrolling = false;
+                    var scrollIdleTimer = null;
+                    var markScrolling = function() {
+                        window.__xenoIgIsScrolling = true;
+                        if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+                        scrollIdleTimer = setTimeout(function() {
+                            window.__xenoIgIsScrolling = false;
+                            if (window.__xenoIgFlushPendingPlay) {
+                                window.__xenoIgFlushPendingPlay();
+                            }
+                        }, 90);
+                    };
+
+                    window.addEventListener('scroll', markScrolling, { capture: true, passive: true });
+
+                    var touchStartY = 0;
+                    var touchStartX = 0;
+                    var touchStartTime = 0;
+                    var activeScroller = null;
+                    var startScrollTop = 0;
+
+                    document.addEventListener('touchstart', function(e) {
+                        if (!isOnReelsRoute() || !e.touches || e.touches.length !== 1) {
+                            activeScroller = null;
+                            return;
+                        }
+                        var t = e.touches[0];
+                        touchStartY = t.clientY;
+                        touchStartX = t.clientX;
+                        touchStartTime = performance.now();
+                        activeScroller = findReelsScrollContainer(e.target);
+                        if (activeScroller) {
+                            startScrollTop = activeScroller.scrollTop;
+                        } else {
+                            startScrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+                        }
+                    }, { capture: true, passive: true });
+
+                    document.addEventListener('touchmove', function(e) {
+                        if (isOnReelsRoute()) {
+                            markScrolling();
+                        }
+                    }, { capture: true, passive: true });
+
+                    document.addEventListener('touchend', function(e) {
+                        if (!isOnReelsRoute() || !e.changedTouches || e.changedTouches.length !== 1) return;
+                        var t = e.changedTouches[0];
+                        var dy = touchStartY - t.clientY;
+                        var dx = touchStartX - t.clientX;
+                        var dt = Math.max(1, performance.now() - touchStartTime);
+                        var absDy = Math.abs(dy);
+                        var absDx = Math.abs(dx);
+                        var vy = absDy / dt; // px per ms
+
+                        // Only assist clear vertical flick gestures (never interfere with taps or horizontal gestures)
+                        if (absDy >= 30 && absDy > absDx * 1.5 && (vy >= 0.32 || absDy >= window.innerHeight * 0.16)) {
+                            var dir = dy > 0 ? 1 : -1;
+                            var sc = activeScroller || findReelsScrollContainer(e.target);
+                            if (sc && sc.clientHeight > 200) {
+                                var pageH = sc.clientHeight;
+                                var baseIndex = Math.round(startScrollTop / pageH);
+                                var targetIndex = Math.max(0, baseIndex + dir);
+                                var targetTop = targetIndex * pageH;
+                                var currentTop = sc.scrollTop;
+                                // If native scroll hasn't already crossed the snap midpoint, smoothly snap to the target Reel
+                                if (Math.abs(currentTop - targetTop) > 12 &&
+                                    ((dir > 0 && currentTop < targetTop - pageH * 0.45) ||
+                                     (dir < 0 && currentTop > targetTop + pageH * 0.45))) {
+                                    sc.scrollTo({ top: targetTop, behavior: 'smooth' });
+                                }
+                            }
+                        }
+                        markScrolling();
+                    }, { capture: true, passive: true });
+                }
+
+                // 5. Reels Video Inline Playback, Preload & Debounced Viewport Optimizer (avoids codec start/stop mid-swipe)
                 if (!window.__xenoIgVideoHelper) {
                     window.__xenoIgVideoHelper = {
                         userPausedMap: new WeakMap(),
                         observedVideos: new WeakSet(),
-                        observer: null
+                        observer: null,
+                        pendingPlayVid: null
+                    };
+
+                    window.__xenoIgFlushPendingPlay = function() {
+                        var vid = window.__xenoIgVideoHelper.pendingPlayVid;
+                        if (!vid || !vid.isConnected) return;
+                        // Pause any other playing videos off-screen once scroll settles
+                        var allVids = document.querySelectorAll('video');
+                        for (var i = 0; i < allVids.length; i++) {
+                            var other = allVids[i];
+                            if (other !== vid && !other.paused) {
+                                try { other.pause(); } catch(e) {}
+                            }
+                        }
+                        if (vid.paused && !window.__xenoIgVideoHelper.userPausedMap.get(vid)) {
+                            var playPromise = vid.play();
+                            if (playPromise && typeof playPromise.catch === 'function') {
+                                playPromise.catch(function() {
+                                    if (!vid.muted) {
+                                        vid.muted = true;
+                                        vid.play().catch(function(){});
+                                    }
+                                });
+                            }
+                        }
                     };
 
                     if ('IntersectionObserver' in window) {
@@ -2106,41 +2329,34 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                             entries.forEach(function(entry) {
                                 var vid = entry.target;
                                 if (!vid || vid.tagName !== 'VIDEO') return;
-                                if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+                                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
                                     vid.preload = 'auto';
-                                    // Pre-warm next video in DOM for zero-lag Reel swipe
+                                    // Pre-buffer next 2 Reel videos for instant swipe playback
                                     try {
                                         var allVids = Array.prototype.slice.call(document.querySelectorAll('video'));
                                         var idx = allVids.indexOf(vid);
-                                        if (idx >= 0 && idx + 1 < allVids.length) {
-                                            allVids[idx + 1].preload = 'auto';
+                                        if (idx >= 0) {
+                                            if (idx + 1 < allVids.length) allVids[idx + 1].preload = 'auto';
+                                            if (idx + 2 < allVids.length) allVids[idx + 2].preload = 'auto';
                                         }
                                     } catch(e) {}
 
-                                    if (vid.paused && !window.__xenoIgVideoHelper.userPausedMap.get(vid)) {
-                                        var playPromise = vid.play();
-                                        if (playPromise && typeof playPromise.catch === 'function') {
-                                            playPromise.catch(function() {
-                                                // If autoplay with sound is blocked before first interaction, play muted smoothly
-                                                if (!vid.muted) {
-                                                    vid.muted = true;
-                                                    vid.play().catch(function(){});
-                                                }
-                                            });
-                                        }
+                                    window.__xenoIgVideoHelper.pendingPlayVid = vid;
+                                    if (!window.__xenoIgIsScrolling) {
+                                        window.__xenoIgFlushPendingPlay();
                                     }
                                 } else if (!entry.isIntersecting || entry.intersectionRatio < 0.15) {
-                                    // Pause off-screen Reels so background decoders don't cause scroll frame drops
-                                    if (!vid.paused) {
+                                    if (!window.__xenoIgIsScrolling && !vid.paused) {
                                         try { vid.pause(); } catch(e) {}
                                     }
                                 }
                             });
-                        }, { threshold: [0.0, 0.15, 0.6, 0.85] });
+                        }, { threshold: [0.0, 0.15, 0.55, 0.85] });
                     }
                 }
 
                 function optimizeInstagramVideos() {
+                    tuneReelsScrollContainers();
                     var videos = document.querySelectorAll('video');
                     for (var i = 0; i < videos.length; i++) {
                         var v = videos[i];
@@ -2153,7 +2369,6 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
 
                         if (!window.__xenoIgVideoHelper.observedVideos.has(v)) {
                             window.__xenoIgVideoHelper.observedVideos.add(v);
-                            // Track manual tap-to-pause vs scroll-away pause
                             v.addEventListener('click', function() {
                                 var self = this;
                                 setTimeout(function() {
@@ -2161,10 +2376,9 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                                 }, 80);
                             }, { passive: true });
 
-                            // Recover smoothly from mid-reel buffer stalls
                             v.addEventListener('stalled', function() {
                                 var self = this;
-                                if (!self.paused && self.readyState >= 2) {
+                                if (!window.__xenoIgIsScrolling && !self.paused && self.readyState >= 2) {
                                     self.play().catch(function(){});
                                 }
                             }, { passive: true });
@@ -2185,7 +2399,7 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
                             optimizeInstagramVideos();
-                        }, 180);
+                        }, 220);
                     });
                     window.__xenoIgMutationObserver.observe(document.body, {
                         childList: true,
@@ -2404,7 +2618,145 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
                         Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                        Object.defineProperty(document, 'fullscreenEnabled', { get: function() { return true; }, configurable: true });
+                        Object.defineProperty(document, 'webkitFullscreenEnabled', { get: function() { return true; }, configurable: true });
+                        if (window.HTMLVideoElement) {
+                            HTMLVideoElement.prototype.webkitSupportsFullscreen = true;
+                        }
+                        if (window.screen && window.screen.orientation) {
+                            window.screen.orientation.lock = function(mode) {
+                                try {
+                                    if (window.XenoYtBridge && typeof window.XenoYtBridge.setFullscreen === 'function') {
+                                        window.XenoYtBridge.setFullscreen(true);
+                                    }
+                                } catch(e) {}
+                                return Promise.resolve();
+                            };
+                            window.screen.orientation.unlock = function() {
+                                try {
+                                    if (window.XenoYtBridge && typeof window.XenoYtBridge.setFullscreen === 'function') {
+                                        window.XenoYtBridge.setFullscreen(false);
+                                    }
+                                } catch(e) {}
+                            };
+                        }
                     } catch(e) {}
+
+                    // YouTube Fullscreen Video Engine (Native + In-DOM Fullscreen Synchronization)
+                    window.__xenoSetYtFullscreenState = function(active) {
+                        try {
+                            window.__xenoYtIsFullscreen = !!active;
+                            if (document.documentElement) {
+                                if (active) {
+                                    document.documentElement.setAttribute('data-xeno-yt-fs', '1');
+                                } else {
+                                    document.documentElement.removeAttribute('data-xeno-yt-fs');
+                                }
+                            }
+                            var pill = document.getElementById('xeno-yt-download-pill');
+                            if (pill) {
+                                pill.style.display = active ? 'none' : (getYouTubePageMode() === 'watch' ? 'flex' : 'none');
+                            }
+                            if (window.XenoYtBridge && typeof window.XenoYtBridge.setFullscreen === 'function') {
+                                window.XenoYtBridge.setFullscreen(!!active);
+                            }
+                            setTimeout(function() {
+                                try { window.dispatchEvent(new Event('resize')); } catch(e) {}
+                            }, 60);
+                        } catch(e) {}
+                    };
+
+                    window.__xenoExitYtFullscreen = function() {
+                        try {
+                            var wasFs = !!(document.fullscreenElement || document.webkitFullscreenElement || window.__xenoYtIsFullscreen);
+                            if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+                                document.exitFullscreen().catch(function(){});
+                            } else if (document.webkitFullscreenElement && typeof document.webkitExitFullscreen === 'function') {
+                                document.webkitExitFullscreen();
+                            }
+                            window.__xenoSetYtFullscreenState(false);
+                            return wasFs;
+                        } catch(e) {
+                            window.__xenoSetYtFullscreenState(false);
+                            return false;
+                        }
+                    };
+
+                    var onNativeFsChange = function() {
+                        var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                        window.__xenoSetYtFullscreenState(!!fsEl);
+                    };
+                    document.addEventListener('fullscreenchange', onNativeFsChange, false);
+                    document.addEventListener('webkitfullscreenchange', onNativeFsChange, false);
+
+                    // Intercept clicks on YouTube's fullscreen button so tapping the fullscreen icon always enters/exits full screen
+                    document.addEventListener('click', function(ev) {
+                        try {
+                            var t = ev && ev.target;
+                            if (!t || typeof t.closest !== 'function') return;
+                            var fsBtn = t.closest(
+                                '.fullscreen-icon, ' +
+                                '.ytp-fullscreen-button, ' +
+                                'button[aria-label*="Full screen" i], ' +
+                                'button[aria-label*="fullscreen" i], ' +
+                                'button[aria-label*="Exit full screen" i], ' +
+                                'ytm-custom-control .player-controls-bottom .icon-button[aria-label*="full" i]'
+                            );
+                            if (!fsBtn) {
+                                // Also check if the clicked button contains a fullscreen icon class or path
+                                var btnCandidate = t.closest('button, [role="button"], .icon-button');
+                                if (btnCandidate && btnCandidate.closest('#movie_player, #player-container-id, .html5-video-player, ytm-custom-control')) {
+                                    var label = (btnCandidate.getAttribute('aria-label') || btnCandidate.getAttribute('title') || '').toLowerCase();
+                                    var cls = (btnCandidate.className && typeof btnCandidate.className === 'string') ? btnCandidate.className.toLowerCase() : '';
+                                    if (label.indexOf('full screen') !== -1 || label.indexOf('fullscreen') !== -1 || cls.indexOf('fullscreen') !== -1 || btnCandidate.querySelector('.fullscreen-icon')) {
+                                        fsBtn = btnCandidate;
+                                    }
+                                }
+                            }
+                            if (!fsBtn) return;
+
+                            var currentlyFs = !!(
+                                document.fullscreenElement ||
+                                document.webkitFullscreenElement ||
+                                window.__xenoYtIsFullscreen ||
+                                (document.documentElement && document.documentElement.getAttribute('data-xeno-yt-fs') === '1')
+                            );
+
+                            setTimeout(function() {
+                                var nativeFsNow = !!(document.fullscreenElement || document.webkitFullscreenElement);
+                                if (currentlyFs) {
+                                    // User tapped fullscreen icon to EXIT fullscreen
+                                    if (nativeFsNow) {
+                                        if (typeof document.exitFullscreen === 'function') {
+                                            document.exitFullscreen().catch(function(){});
+                                        } else if (typeof document.webkitExitFullscreen === 'function') {
+                                            document.webkitExitFullscreen();
+                                        }
+                                    }
+                                    window.__xenoSetYtFullscreenState(false);
+                                } else {
+                                    // User tapped fullscreen icon to ENTER fullscreen
+                                    window.__xenoSetYtFullscreenState(true);
+                                    if (!nativeFsNow) {
+                                        var playerTarget = document.getElementById('movie_player') ||
+                                                           document.getElementById('player-container-id') ||
+                                                           document.querySelector('.html5-video-player') ||
+                                                           document.querySelector('video');
+                                        if (playerTarget) {
+                                            try {
+                                                if (typeof playerTarget.requestFullscreen === 'function') {
+                                                    var p = playerTarget.requestFullscreen();
+                                                    if (p && typeof p.catch === 'function') p.catch(function(){});
+                                                } else if (typeof playerTarget.webkitRequestFullscreen === 'function') {
+                                                    playerTarget.webkitRequestFullscreen();
+                                                }
+                                            } catch(e) {}
+                                        }
+                                    }
+                                }
+                            }, 50);
+                        } catch(e) {}
+                    }, true);
 
                     // Unlock YouTube & Shorts audio on first user interaction
                     window.__xenoYtAudioUnlocked = false;
@@ -2436,6 +2788,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     var origReplaceState = history.replaceState;
                     history.pushState = function() {
                         var ret = origPushState.apply(this, arguments);
+                        if (window.__xenoYtIsFullscreen) window.__xenoSetYtFullscreenState(false);
                         if (window.__xenoRunYtOptimizer) {
                             setTimeout(window.__xenoRunYtOptimizer, 60);
                             setTimeout(window.__xenoRunYtOptimizer, 350);
@@ -2451,6 +2804,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         return ret;
                     };
                     window.addEventListener('popstate', function() {
+                        if (window.__xenoYtIsFullscreen) window.__xenoSetYtFullscreenState(false);
                         if (window.__xenoRunYtOptimizer) {
                             setTimeout(window.__xenoRunYtOptimizer, 60);
                             setTimeout(window.__xenoRunYtOptimizer, 350);
@@ -2458,7 +2812,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     });
                 }
 
-                // 3. Minimal, Non-Intrusive CSS: Only suppress "Open in App" promo banners without touching YouTube layout
+                // 3. Minimal CSS: Suppress promo banners & provide full-bleed landscape layout when in fullscreen mode
                 var styleId = 'xeno-yt-shorts-smooth-style';
                 var styleEl = document.getElementById(styleId);
                 if (!styleEl && (document.head || document.documentElement)) {
@@ -2466,12 +2820,36 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     styleEl.id = styleId;
                     (document.head || document.documentElement).appendChild(styleEl);
                 }
-                if (styleEl && !styleEl.__xenoCleanLayoutV3) {
-                    styleEl.__xenoCleanLayoutV3 = true;
+                if (styleEl && !styleEl.__xenoCleanLayoutV4) {
+                    styleEl.__xenoCleanLayoutV4 = true;
                     styleEl.textContent =
                         'ytm-mealbar-promo-renderer, ytm-app-banner, .mealbar-promo-renderer, ' +
                         'ytm-statement-banner-renderer { ' +
                         '  display: none !important; pointer-events: none !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-fs="1"], html[data-xeno-yt-fs="1"] body { ' +
+                        '  overflow: hidden !important; background: #000 !important; width: 100vw !important; height: 100vh !important; margin: 0 !important; padding: 0 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-fs="1"] ytm-mobile-topbar-renderer, ' +
+                        'html[data-xeno-yt-fs="1"] ytm-pivot-bar-renderer, ' +
+                        'html[data-xeno-yt-fs="1"] #header-bar, ' +
+                        'html[data-xeno-yt-fs="1"] #xeno-yt-download-pill, ' +
+                        'html[data-xeno-yt-fs="1"] .watch-below-the-player { ' +
+                        '  display: none !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-fs="1"] #player-container-id, ' +
+                        'html[data-xeno-yt-fs="1"] #player, ' +
+                        'html[data-xeno-yt-fs="1"] #movie_player, ' +
+                        'html[data-xeno-yt-fs="1"] .html5-video-player { ' +
+                        '  position: fixed !important; inset: 0 !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; ' +
+                        '  width: 100vw !important; max-width: 100vw !important; height: 100vh !important; max-height: 100vh !important; ' +
+                        '  z-index: 2147483645 !important; background: #000 !important; margin: 0 !important; padding: 0 !important; ' +
+                        '} ' +
+                        'html[data-xeno-yt-fs="1"] .html5-video-container, ' +
+                        'html[data-xeno-yt-fs="1"] video.html5-main-video, ' +
+                        'html[data-xeno-yt-fs="1"] #movie_player video { ' +
+                        '  width: 100vw !important; height: 100vh !important; max-width: 100vw !important; max-height: 100vh !important; ' +
+                        '  left: 0 !important; top: 0 !important; object-fit: contain !important; ' +
                         '}';
                 }
 
@@ -2506,12 +2884,11 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                 function sanitizeVideoPlaybackUrl(rawUrl) {
                     if (!rawUrl || rawUrl.indexOf('http') !== 0) return '';
                     if (rawUrl.indexOf('googlevideo.com/videoplayback') === -1) return rawUrl;
+                    if (rawUrl.indexOf('ump=1') !== -1 || rawUrl.indexOf('sabr=1') !== -1) return '';
                     return rawUrl
                         .replace(/([?&])range=[^&]+/g, '$1')
                         .replace(/([?&])rn=[^&]+/g, '$1')
                         .replace(/([?&])rbuf=[^&]+/g, '$1')
-                        .replace(/([?&])ump=[^&]+/g, '$1')
-                        .replace(/([?&])srfvp=[^&]+/g, '$1')
                         .replace(/\?&/g, '?')
                         .replace(/&+/g, '&')
                         .replace(/[&?]$/, '');
@@ -2523,7 +2900,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     var bestProg = '';
                     for (var i = 0; i < fmts.length; i++) {
                         var f = fmts[i];
-                        if (f && f.url && f.url.indexOf('http') === 0) {
+                        if (f && f.url && f.url.indexOf('http') === 0 && f.url.indexOf('ump=1') === -1 && f.url.indexOf('sabr=1') === -1) {
                             if (f.itag === 18 || f.itag === 22) {
                                 return f.url;
                             }
@@ -2537,7 +2914,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     var bestAud = '';
                     for (var j = 0; j < adaptive.length; j++) {
                         var af = adaptive[j];
-                        if (!af || !af.url || af.url.indexOf('http') !== 0) continue;
+                        if (!af || !af.url || af.url.indexOf('http') !== 0 || af.url.indexOf('ump=1') !== -1 || af.url.indexOf('sabr=1') !== -1) continue;
                         var mime = (af.mimeType || '').toLowerCase();
                         if (mime.indexOf('video/mp4') === 0) {
                             if (af.itag === 134 || af.itag === 135 || af.itag === 136 || !bestVid) {
@@ -2548,7 +2925,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     }
                     for (var k = 0; k < adaptive.length; k++) {
                         var audF = adaptive[k];
-                        if (!audF || !audF.url || audF.url.indexOf('http') !== 0) continue;
+                        if (!audF || !audF.url || audF.url.indexOf('http') !== 0 || audF.url.indexOf('ump=1') !== -1 || audF.url.indexOf('sabr=1') !== -1) continue;
                         var aMime = (audF.mimeType || '').toLowerCase();
                         if (aMime.indexOf('audio/mp4') === 0) {
                             bestAud = audF.url;
@@ -2570,7 +2947,9 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         for (var i = entries.length - 1; i >= 0; i--) {
                             var u = entries[i] && entries[i].name ? entries[i].name : '';
                             if (u.indexOf('googlevideo.com/videoplayback') === -1) continue;
+                            if (u.indexOf('ump=1') !== -1 || u.indexOf('sabr=1') !== -1 || u.indexOf('mime=text') !== -1) continue;
                             var clean = sanitizeVideoPlaybackUrl(u);
+                            if (!clean) continue;
                             if (isMuxedVideoWithSoundUrl(clean)) {
                                 progUrl = clean;
                                 break;
@@ -2589,7 +2968,29 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     return '';
                 }
 
+                function forwardSessionHints() {
+                    try {
+                        if (!window.XenoYtBridge || typeof window.XenoYtBridge.setSessionHints !== 'function') return;
+                        var vData = '';
+                        var stsVal = '';
+                        if (window.ytcfg && typeof window.ytcfg.get === 'function') {
+                            vData = String(window.ytcfg.get('VISITOR_DATA') || '');
+                            stsVal = String(window.ytcfg.get('STS') || '');
+                            if (!vData) {
+                                var innCtx = window.ytcfg.get('INNERTUBE_CONTEXT');
+                                if (innCtx && innCtx.client && innCtx.client.visitorData) {
+                                    vData = String(innCtx.client.visitorData);
+                                }
+                            }
+                        }
+                        if (vData || stsVal) {
+                            window.XenoYtBridge.setSessionHints(vData, stsVal);
+                        }
+                    } catch(e) {}
+                }
+
                 function extractActiveYouTubeMetadata() {
+                    forwardSessionHints();
                     var m = getYouTubePageMode();
                     if (m === 'shorts') {
                         return {
@@ -2615,8 +3016,17 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             pr = pEl.getPlayerResponse();
                         }
                     } catch(e) {}
+                    if ((!pr || !pr.videoDetails || (rawId && pr.videoDetails.videoId !== rawId)) && window.__xenoLatestPlayerResponse) {
+                        var lpr = window.__xenoLatestPlayerResponse;
+                        if (lpr && lpr.videoDetails && (!rawId || lpr.videoDetails.videoId === rawId)) {
+                            pr = lpr;
+                        }
+                    }
                     if (!pr && window.ytInitialPlayerResponse) {
-                        pr = window.ytInitialPlayerResponse;
+                        var ipr = window.ytInitialPlayerResponse;
+                        if (ipr && ipr.videoDetails && (!rawId || ipr.videoDetails.videoId === rawId)) {
+                            pr = ipr;
+                        }
                     }
 
                     var vDetails = (pr && pr.videoDetails) ? pr.videoDetails : null;
@@ -2684,24 +3094,27 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     }
 
                     var directStream = '';
+                    // 1. Check active <video> element currentSrc first if it is a direct HTTP(S) MP4 URL
+                    var domVid = document.querySelector('video');
+                    if (domVid) {
+                        var src = domVid.currentSrc || domVid.src || '';
+                        if ((src.indexOf('http://') === 0 || src.indexOf('https://') === 0) && src.indexOf('ump=1') === -1 && src.indexOf('sabr=1') === -1) {
+                            var cleanDomSrc = sanitizeVideoPlaybackUrl(src);
+                            if (cleanDomSrc) directStream = cleanDomSrc;
+                        }
+                    }
+                    // 2. Check playerResponse streamingData if it matches current videoId
                     try {
-                        if (pr && pr.streamingData && (!vDetails || vDetails.videoId === rawId)) {
-                            directStream = extractBestStreamFromStreamingData(pr.streamingData);
+                        if ((!directStream || !isMuxedVideoWithSoundUrl(directStream)) && pr && pr.streamingData && vDetails && vDetails.videoId === rawId) {
+                            var sdStream = extractBestStreamFromStreamingData(pr.streamingData);
+                            if (sdStream) directStream = sdStream;
                         }
                     } catch(e) {}
+                    // 3. Check performance resource entries for non-UMP MP4 streams
                     if (!directStream || !isMuxedVideoWithSoundUrl(directStream)) {
                         var perfStream = extractStreamFromPerformanceEntries();
                         if (perfStream && (isMuxedVideoWithSoundUrl(perfStream) || !directStream)) {
                             directStream = perfStream;
-                        }
-                    }
-                    if (!directStream) {
-                        var domVid = document.querySelector('video');
-                        if (domVid) {
-                            var src = domVid.currentSrc || domVid.src || '';
-                            if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
-                                directStream = sanitizeVideoPlaybackUrl(src);
-                            }
                         }
                     }
 
@@ -2740,6 +3153,42 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     return true;
                 };
 
+                function renderCircularDownloadButtonState(btn, prog, isSaved) {
+                    if (!btn) return;
+                    var stateKey = (prog >= 0) ? ('p:' + prog) : (isSaved ? 'saved' : 'idle');
+                    if (btn.getAttribute('data-xeno-dl-state') === stateKey) return;
+                    btn.setAttribute('data-xeno-dl-state', stateKey);
+                    if (prog >= 0) {
+                        btn.style.borderColor = '#FF0000';
+                        btn.style.background = 'rgba(20,20,20,0.94)';
+                        btn.title = 'Downloading ' + prog + '%';
+                        btn.setAttribute('aria-label', 'Downloading ' + prog + '%');
+                        btn.innerHTML =
+                            '<span style="font-size:10px;font-weight:700;color:#FFFFFF;line-height:1;letter-spacing:-0.3px;">' +
+                            prog + '%</span>';
+                    } else if (isSaved) {
+                        btn.style.borderColor = '#2BA640';
+                        btn.style.background = 'rgba(20,38,24,0.94)';
+                        btn.title = 'Downloaded (Tap to open Offline Videos)';
+                        btn.setAttribute('aria-label', 'Downloaded Offline');
+                        btn.innerHTML =
+                            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2BA640" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<polyline points="20 6 9 17 4 12"></polyline>' +
+                            '</svg>';
+                    } else {
+                        btn.style.borderColor = 'rgba(255,255,255,0.28)';
+                        btn.style.background = 'rgba(15,15,15,0.92)';
+                        btn.title = 'Download Video';
+                        btn.setAttribute('aria-label', 'Download Video');
+                        btn.innerHTML =
+                            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<path d="M12 3v12"></path>' +
+                            '<polyline points="7 10 12 15 17 10"></polyline>' +
+                            '<path d="M5 20h14"></path>' +
+                            '</svg>';
+                    }
+                }
+
                 function optimizeYouTubeAndShorts() {
                     var mode = getYouTubePageMode();
                     if (document.documentElement) {
@@ -2769,7 +3218,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                         window.XenoYtBridge.openOfflineDownloads();
                     }
 
-                    // Inject or update the sleek in-page Download Pill ONLY on Watch pages (strictly hidden on Shorts!)
+                    // Inject or update the small circular Download Icon Button ONLY on Watch pages (strictly hidden on Shorts!)
                     var pillId = 'xeno-yt-download-pill';
                     var existingPill = document.getElementById(pillId);
                     if (mode === 'watch') {
@@ -2778,12 +3227,12 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             existingPill.id = pillId;
                             existingPill.type = 'button';
                             existingPill.style.cssText =
-                                'position:fixed; right:12px; bottom:62px; ' +
-                                'z-index:2147483640; display:flex; align-items:center; gap:6px; ' +
-                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1px solid rgba(255,255,255,0.24); ' +
-                                'border-radius:20px; padding:7px 13px; font-family:Roboto,sans-serif; font-size:12px; ' +
-                                'font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
-                                '-webkit-tap-highlight-color:transparent;';
+                                'position:fixed; right:14px; bottom:64px; width:40px; height:40px; ' +
+                                'z-index:2147483640; display:flex; align-items:center; justify-content:center; ' +
+                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1.5px solid rgba(255,255,255,0.28); ' +
+                                'border-radius:50%; padding:0; font-family:Roboto,sans-serif; ' +
+                                'box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
+                                '-webkit-tap-highlight-color:transparent; transition:transform 0.15s ease, border-color 0.2s ease;';
                             existingPill.addEventListener('click', function(ev) {
                                 ev.stopPropagation();
                                 ev.preventDefault();
@@ -2792,14 +3241,20 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                                 if (curMeta.videoId && window.XenoYtBridge && typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curMeta.videoId)) {
                                     window.XenoYtBridge.openOfflineDownloads();
                                 } else {
+                                    renderCircularDownloadButtonState(existingPill, 1, false);
                                     window.__xenoTriggerYtDownload();
                                 }
                             });
                             document.body.appendChild(existingPill);
                         }
                         if (existingPill) {
-                            existingPill.style.bottom = '62px';
-                            existingPill.style.display = 'flex';
+                            var isFsNow = !!(window.__xenoYtIsFullscreen || document.fullscreenElement || document.webkitFullscreenElement);
+                            existingPill.style.width = '40px';
+                            existingPill.style.height = '40px';
+                            existingPill.style.borderRadius = '50%';
+                            existingPill.style.padding = '0';
+                            existingPill.style.bottom = '64px';
+                            existingPill.style.display = isFsNow ? 'none' : 'flex';
                             var curIdCheck = extractActiveYouTubeMetadata().videoId;
                             var prog = -1;
                             var isSaved = false;
@@ -2809,16 +3264,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                                     isSaved = window.XenoYtBridge.isDownloaded(curIdCheck);
                                 }
                             } catch(e) {}
-                            if (prog >= 0) {
-                                existingPill.textContent = '⬇ Downloading ' + prog + '%';
-                                existingPill.style.borderColor = '#FF0000';
-                            } else if (isSaved) {
-                                existingPill.textContent = '✓ Downloaded (Offline)';
-                                existingPill.style.borderColor = '#2BA640';
-                            } else {
-                                existingPill.textContent = '⬇ Download with Sound';
-                                existingPill.style.borderColor = 'rgba(255,255,255,0.24)';
-                            }
+                            renderCircularDownloadButtonState(existingPill, prog, isSaved);
                         }
                     } else if (existingPill) {
                         existingPill.style.display = 'none';
@@ -2827,6 +3273,16 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
 
                 window.__xenoRunYtOptimizer = optimizeYouTubeAndShorts;
                 optimizeYouTubeAndShorts();
+
+                if (!window.__xenoYtProgressTimer) {
+                    window.__xenoYtProgressTimer = setInterval(function() {
+                        try {
+                            if (getYouTubePageMode() === 'watch') {
+                                optimizeYouTubeAndShorts();
+                            }
+                        } catch(e) {}
+                    }, 1000);
+                }
 
                 if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
                     var throttleTimer = null;
@@ -2851,9 +3307,9 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
 
 /**
  * Dedicated YouTube Video-With-Sound Download & Shorts Button Guard Helper:
- * 1. Resolves complete video+audio streams (`itag=18` / `itag=22` muxed MP4 with AAC audio, or
- *    `adaptiveVideoMp4|||adaptiveAudioMp4` pair) via same-origin InnerTube player requests so
- *    downloaded videos always have sound.
+ * 1. Captures fresh `/youtubei/v1/player` responses during SPA navigation and forwards
+ *    `visitorData` / `sts` session hints to `YouTubeOfflineRepository` so native InnerTube
+ *    requests resolve muxed MP4 (`itag=18` / `itag=22`) or adaptive video+audio streams reliably.
  * 2. Strictly hides the Download Video button whenever the user is watching YouTube Shorts
  *    (`/shorts/...` or active Shorts player).
  */
@@ -2861,7 +3317,7 @@ private fun injectYouTubeDownloadWithSoundAndShortsGuardHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. CSS Guard: Force-hide the floating download button whenever on YouTube Shorts
+                // 1. CSS Guard: Force-hide the floating circular download button whenever on YouTube Shorts or Home
                 var guardStyleId = 'xeno-yt-shorts-download-guard-style';
                 var guardStyleEl = document.getElementById(guardStyleId);
                 if (!guardStyleEl && (document.head || document.documentElement)) {
@@ -2878,152 +3334,53 @@ private fun injectYouTubeDownloadWithSoundAndShortsGuardHelper(view: WebView?) {
                         '}';
                 }
 
-                // 2. Helper to check if a stream URL already includes audio (progressive itag 18/22 or video|||audio pair)
-                function hasGuaranteedSoundStream(streamStr) {
-                    if (!streamStr || typeof streamStr !== 'string') return false;
-                    if (streamStr.indexOf('|||') !== -1) return true;
-                    return streamStr.indexOf('itag=18&') !== -1 ||
-                           streamStr.indexOf('itag=22&') !== -1 ||
-                           streamStr.indexOf('itag=37&') !== -1 ||
-                           streamStr.indexOf('itag=59&') !== -1 ||
-                           streamStr.indexOf('itag=78&') !== -1 ||
-                           /([?&])itag=(18|22|37|59|78)$/.test(streamStr);
+                // 2. Hook fetch to capture fresh /youtubei/v1/player JSON during SPA video switches
+                if (!window.__xenoYtPlayerFetchHooked && window.fetch) {
+                    window.__xenoYtPlayerFetchHooked = true;
+                    var origFetch = window.fetch;
+                    window.fetch = function(input, init) {
+                        var urlStr = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
+                        var p = origFetch.apply(this, arguments);
+                        if (urlStr && urlStr.indexOf('/youtubei/v1/player') !== -1) {
+                            p.then(function(resp) {
+                                try {
+                                    var clone = resp.clone();
+                                    clone.json().then(function(data) {
+                                        if (data && data.videoDetails && data.videoDetails.videoId) {
+                                            window.__xenoLatestPlayerResponse = data;
+                                        }
+                                    }).catch(function(){});
+                                } catch(e) {}
+                            }).catch(function(){});
+                        }
+                        return p;
+                    };
                 }
 
-                function pickMuxedOrPairedStream(sd, fallbackVideoOnlyUrl) {
-                    if (!sd) return fallbackVideoOnlyUrl || '';
-                    var fmts = sd.formats || [];
-                    for (var i = 0; i < fmts.length; i++) {
-                        var f = fmts[i];
-                        if (f && f.url && f.url.indexOf('http') === 0) {
-                            if (f.itag === 18 || f.itag === 22) {
-                                return f.url;
-                            }
-                        }
-                    }
-                    if (fmts.length > 0 && fmts[0] && fmts[0].url && fmts[0].url.indexOf('http') === 0) {
-                        return fmts[0].url;
-                    }
-
-                    var adaptive = sd.adaptiveFormats || [];
-                    var bestVid = '';
-                    var bestAud = '';
-                    for (var j = 0; j < adaptive.length; j++) {
-                        var af = adaptive[j];
-                        if (!af || !af.url || af.url.indexOf('http') !== 0) continue;
-                        var mime = (af.mimeType || '').toLowerCase();
-                        if (mime.indexOf('video/mp4') === 0) {
-                            if (af.itag === 134 || af.itag === 135 || af.itag === 136 || !bestVid) {
-                                bestVid = af.url;
-                                if (af.itag === 134) break;
-                            }
-                        }
-                    }
-                    for (var k = 0; k < adaptive.length; k++) {
-                        var audF = adaptive[k];
-                        if (!audF || !audF.url || audF.url.indexOf('http') !== 0) continue;
-                        var aMime = (audF.mimeType || '').toLowerCase();
-                        if (aMime.indexOf('audio/mp4') === 0) {
-                            bestAud = audF.url;
-                            if (audF.itag === 140) break;
-                        }
-                    }
-                    var finalVid = bestVid || fallbackVideoOnlyUrl || '';
-                    if (finalVid && bestAud) {
-                        return finalVid + '|||' + bestAud;
-                    }
-                    return finalVid;
-                }
-
-                // 3. Dedicated helper function to resolve a YouTube video stream WITH sound before dispatching to Android
+                // 3. Dispatch immediately to Android's YouTubeOfflineRepository (which resolves ANDROID_VR / IOS / ANDROID / EMBEDDED streams natively)
                 window.__xenoResolveVideoWithSoundStream = function(meta) {
                     if (!meta || !meta.videoId) return false;
                     var pathNow = (window.location.pathname || '').toLowerCase();
                     if (pathNow.indexOf('/shorts') === 0 || pathNow.indexOf('/shorts/') !== -1) {
                         return false;
                     }
-
-                    // If we already have a verified progressive stream (itag 18/22) or a video|||audio pair, dispatch immediately
-                    if (hasGuaranteedSoundStream(meta.directStreamUrl)) {
-                        window.XenoYtBridge.downloadVideo(
-                            meta.videoId,
-                            meta.title,
-                            meta.author,
-                            meta.durationSec,
-                            meta.directStreamUrl
-                        );
-                        return true;
-                    }
-
-                    var dispatched = false;
-                    var finishDispatch = function(resolvedStream, resolvedTitle, resolvedAuthor, resolvedDur) {
-                        if (dispatched) return;
-                        dispatched = true;
-                        window.XenoYtBridge.downloadVideo(
-                            meta.videoId,
-                            resolvedTitle || meta.title,
-                            resolvedAuthor || meta.author,
-                            resolvedDur || meta.durationSec,
-                            resolvedStream || meta.directStreamUrl || ''
-                        );
-                    };
-
-                    var safetyTimer = setTimeout(function() {
-                        finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
-                    }, 1800);
-
                     try {
-                        fetch('/youtubei/v1/player?prettyPrint=false', {
-                            method: 'POST',
-                            credentials: 'omit',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-YouTube-Client-Name': '28',
-                                'X-YouTube-Client-Version': '1.62.27'
-                            },
-                            body: JSON.stringify({
-                                videoId: meta.videoId,
-                                context: {
-                                    client: {
-                                        clientName: 'ANDROID_VR',
-                                        clientVersion: '1.62.27',
-                                        osName: 'Android',
-                                        osVersion: '12L',
-                                        androidSdkVersion: 32,
-                                        deviceMake: 'Oculus',
-                                        deviceModel: 'Quest 3',
-                                        hl: 'en',
-                                        gl: 'US'
-                                    }
-                                },
-                                playbackContext: {
-                                    contentPlaybackContext: {
-                                        html5Preference: 'HTML5_PREF_WANTS',
-                                        signatureTimestamp: 20073
-                                    }
-                                },
-                                contentCheckOk: true,
-                                racyCheckOk: true
-                            })
-                        }).then(function(resp) {
-                            return resp.json();
-                        }).then(function(data) {
-                            clearTimeout(safetyTimer);
-                            var existingVidOnly = (meta.directStreamUrl && meta.directStreamUrl.indexOf('http') === 0) ? meta.directStreamUrl : '';
-                            var sUrl = (data && data.streamingData) ? pickMuxedOrPairedStream(data.streamingData, existingVidOnly) : existingVidOnly;
-                            var vd = (data && data.videoDetails) ? data.videoDetails : null;
-                            var rTitle = (vd && vd.title) ? vd.title : meta.title;
-                            var rAuthor = (vd && vd.author) ? vd.author : meta.author;
-                            var rDur = (vd && vd.lengthSeconds) ? String(vd.lengthSeconds) : meta.durationSec;
-                            finishDispatch(sUrl, rTitle, rAuthor, rDur);
-                        }).catch(function() {
-                            clearTimeout(safetyTimer);
-                            finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
-                        });
-                    } catch(e) {
-                        clearTimeout(safetyTimer);
-                        finishDispatch(meta.directStreamUrl, meta.title, meta.author, meta.durationSec);
-                    }
+                        if (window.XenoYtBridge && typeof window.XenoYtBridge.setSessionHints === 'function' && window.ytcfg && typeof window.ytcfg.get === 'function') {
+                            var vd = String(window.ytcfg.get('VISITOR_DATA') || '');
+                            var sts = String(window.ytcfg.get('STS') || '');
+                            if (vd || sts) {
+                                window.XenoYtBridge.setSessionHints(vd, sts);
+                            }
+                        }
+                    } catch(e) {}
+
+                    window.XenoYtBridge.downloadVideo(
+                        meta.videoId,
+                        meta.title || 'YouTube Video',
+                        meta.author || 'YouTube',
+                        meta.durationSec || '0',
+                        meta.directStreamUrl || ''
+                    );
                     return true;
                 };
 
@@ -3334,6 +3691,35 @@ fun CloneWorkspaceScreen(
         mutableStateOf(currentUrl.contains("/shorts", ignoreCase = true))
     }
 
+    // HTML5 / YouTube Fullscreen Video State
+    var customVideoView by remember(instance.instanceId) { mutableStateOf<View?>(null) }
+    var customVideoViewCallback by remember(instance.instanceId) { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+    var isWebVideoFullscreen by remember(instance.instanceId) { mutableStateOf(false) }
+
+    val applyVideoFullscreenSystemUi: (Boolean) -> Unit = remember(context) {
+        { fullscreen ->
+            val activity = context as? Activity
+            if (activity != null) {
+                activity.requestedOrientation = if (fullscreen) {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+                try {
+                    val window = activity.window
+                    val controller = WindowCompat.getInsetsController(window, window.decorView)
+                    if (fullscreen) {
+                        controller.systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        controller.hide(WindowInsetsCompat.Type.systemBars())
+                    } else {
+                        controller.show(WindowInsetsCompat.Type.systemBars())
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     LaunchedEffect(currentUrl) {
         if (isYoutube) {
             isYoutubeShortsPage = currentUrl.contains("/shorts", ignoreCase = true)
@@ -3448,6 +3834,7 @@ fun CloneWorkspaceScreen(
     // Properly release or retain WebView renderer and call audio resources when leaving CloneWorkspaceScreen
     DisposableEffect(instance.instanceId) {
         onDispose {
+            applyVideoFullscreenSystemUi(false)
             if (keepAliveInMinimizedPool) {
                 try {
                     webViewInstance?.let { wv ->
@@ -3480,7 +3867,19 @@ fun CloneWorkspaceScreen(
     }
 
     BackHandler {
-        if (isYoutube && showYoutubeOfflineLibrary && YouTubeOfflineRepository.isDeviceOnline(context)) {
+        if (customVideoView != null || isWebVideoFullscreen) {
+            try {
+                customVideoViewCallback?.onCustomViewHidden()
+            } catch (_: Exception) {}
+            customVideoView = null
+            customVideoViewCallback = null
+            isWebVideoFullscreen = false
+            applyVideoFullscreenSystemUi(false)
+            webViewInstance?.evaluateJavascript(
+                "if (window.__xenoExitYtFullscreen) window.__xenoExitYtFullscreen();",
+                null
+            )
+        } else if (isYoutube && showYoutubeOfflineLibrary && YouTubeOfflineRepository.isDeviceOnline(context)) {
             showYoutubeOfflineLibrary = false
         } else if (isWhatsapp && webViewInstance != null) {
             val wv = webViewInstance
@@ -3512,10 +3911,12 @@ fun CloneWorkspaceScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
+            .imePadding()
+            .background(if (isWebVideoFullscreen || customVideoView != null) Color.Black else MaterialTheme.colorScheme.surface)
             .testTag("clone_workspace_${instance.instanceId}")
     ) {
-        // Workspace Top Bar - Sleek, Compact & Space-Efficient
+        // Workspace Top Bar - Sleek, Compact & Space-Efficient (Hidden during fullscreen video playback)
+        if (!isWebVideoFullscreen && customVideoView == null) {
         Surface(
             tonalElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface,
@@ -3988,9 +4389,10 @@ fun CloneWorkspaceScreen(
                 }
             }
         }
+        }
 
         // Loading Progress Indicator
-        if (isLoading && loadProgress < 100) {
+        if (isLoading && loadProgress < 100 && !isWebVideoFullscreen && customVideoView == null) {
             LinearProgressIndicator(
                 progress = { loadProgress / 100f },
                 modifier = Modifier
@@ -4099,7 +4501,14 @@ fun CloneWorkspaceScreen(
                                     injectWhatsAppWebSupportEngine(existing, isWhatsAppPhoneUi)
                                 } else if (isYoutube) {
                                     injectYouTubeAndShortsSmoothHelper(existing)
+                                } else if (isInstagram) {
+                                    injectInstagramReelsAndScrollHelper(existing)
                                 }
+                                com.example.ui.components.GlobalSwipeDownTracker.attachToWebView(
+                                    existing,
+                                    disallowParentIntercept = isYoutube || isFacebook || isInstagram || isDiscord
+                                )
+                                com.example.ui.components.GlobalSwipeDownTracker.injectSwipeScrollObserver(existing)
                                 webViewInstance = existing
                                 existing
                             } else {
@@ -4108,8 +4517,8 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    // Use hardware layer for WhatsApp Web and YouTube so WebRTC video/audio codecs and HTML5 MSE work at full capability
-                                    if (useSoftwareLayer && !isYoutube && !isWhatsapp) {
+                                    // Use hardware layer for WhatsApp Web, YouTube, and Instagram so WebRTC/Reels/MSE video codecs and 60fps scroll run at full capability
+                                    if (useSoftwareLayer && !isYoutube && !isWhatsapp && !isInstagram) {
                                         setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     } else {
                                         setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -4124,16 +4533,10 @@ fun CloneWorkspaceScreen(
                                 isNestedScrollingEnabled = true
                                 isFocusable = true
                                 isFocusableInTouchMode = true
-                                if (isYoutube || isFacebook || isDiscord) {
-                                    setOnTouchListener { v, event ->
-                                        if (event.action == android.view.MotionEvent.ACTION_DOWN ||
-                                            event.action == android.view.MotionEvent.ACTION_MOVE
-                                        ) {
-                                            v.parent?.requestDisallowInterceptTouchEvent(true)
-                                        }
-                                        false
-                                    }
-                                }
+                                com.example.ui.components.GlobalSwipeDownTracker.attachToWebView(
+                                    this,
+                                    disallowParentIntercept = isYoutube || isFacebook || isInstagram || isDiscord
+                                )
                                 setBackgroundColor(
                                     when {
                                         isWhatsapp -> android.graphics.Color.parseColor("#111B21")
@@ -4247,6 +4650,10 @@ fun CloneWorkspaceScreen(
                                             },
                                             onPageModeChanged = { mode ->
                                                 isYoutubeShortsPage = (mode == "shorts")
+                                            },
+                                            onFullscreenChanged = { fullscreen ->
+                                                isWebVideoFullscreen = fullscreen
+                                                applyVideoFullscreenSystemUi(fullscreen)
                                             }
                                         ),
                                         "XenoYtBridge"
@@ -4282,6 +4689,7 @@ fun CloneWorkspaceScreen(
 
                                 webViewClient = object : WebViewClient() {
                                     private fun injectSocialAppHelpers(view: WebView?, url: String?) {
+                                        com.example.ui.components.GlobalSwipeDownTracker.injectSwipeScrollObserver(view)
                                         when {
                                             isWhatsapp -> injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
                                             isDiscord || url?.contains("discord.com", ignoreCase = true) == true || url?.contains("discord.gg", ignoreCase = true) == true ->
@@ -4666,6 +5074,40 @@ fun CloneWorkspaceScreen(
                                         return true
                                     }
 
+                                    override fun onShowCustomView(
+                                        view: View?,
+                                        callback: CustomViewCallback?
+                                    ) {
+                                        if (customVideoView != null) {
+                                            try {
+                                                callback?.onCustomViewHidden()
+                                            } catch (_: Exception) {}
+                                            return
+                                        }
+                                        customVideoView = view
+                                        customVideoViewCallback = callback
+                                        isWebVideoFullscreen = true
+                                        this@apply.keepScreenOn = true
+                                        applyVideoFullscreenSystemUi(true)
+                                    }
+
+                                    override fun onHideCustomView() {
+                                        try {
+                                            customVideoViewCallback?.onCustomViewHidden()
+                                        } catch (_: Exception) {}
+                                        customVideoView = null
+                                        customVideoViewCallback = null
+                                        isWebVideoFullscreen = false
+                                        if (!isCallActive) {
+                                            this@apply.keepScreenOn = false
+                                        }
+                                        applyVideoFullscreenSystemUi(false)
+                                        this@apply.evaluateJavascript(
+                                            "if (window.__xenoSetYtFullscreenState) window.__xenoSetYtFullscreenState(false);",
+                                            null
+                                        )
+                                    }
+
                                     override fun getDefaultVideoPoster(): Bitmap? {
                                         return try {
                                             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
@@ -4735,6 +5177,8 @@ fun CloneWorkspaceScreen(
                     onReturnToLiveYouTube = {
                         val online = YouTubeOfflineRepository.isDeviceOnline(context)
                         isYoutubeNetworkOffline = !online
+                        isWebVideoFullscreen = false
+                        applyVideoFullscreenSystemUi(false)
                         if (online) {
                             showYoutubeOfflineLibrary = false
                             webViewInstance?.reload()
@@ -4743,9 +5187,13 @@ fun CloneWorkspaceScreen(
                             webViewInstance?.reload()
                         }
                     },
+                    onFullscreenChanged = { fs ->
+                        isWebVideoFullscreen = fs
+                        applyVideoFullscreenSystemUi(fs)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
-            } else if (isLoading && loadProgress < 25 && !hasRenderCrash) {
+            } else if (isLoading && loadProgress < 25 && !hasRenderCrash && customVideoView == null && !isWebVideoFullscreen) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -4770,6 +5218,24 @@ fun CloneWorkspaceScreen(
                             fontWeight = FontWeight.Medium
                         )
                     }
+                }
+            }
+
+            // Native HTML5 Fullscreen Video CustomView Overlay (keeps WebView mounted underneath)
+            customVideoView?.let { activeCustomView ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .testTag("clone_fullscreen_video_overlay")
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = {
+                            (activeCustomView.parent as? ViewGroup)?.removeView(activeCustomView)
+                            activeCustomView
+                        }
+                    )
                 }
             }
         }

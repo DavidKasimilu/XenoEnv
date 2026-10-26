@@ -197,6 +197,7 @@ private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, c
     webView.isFocusable = true
     webView.isFocusableInTouchMode = true
     webView.isClickable = true
+    com.example.ui.components.GlobalSwipeDownTracker.attachToWebView(webView, disallowParentIntercept = false)
 
     try {
         val cm = CookieManager.getInstance()
@@ -211,6 +212,7 @@ private fun applyBrowserModeSettings(webView: WebView, isDesktopMode: Boolean, c
  * ensuring flawless GitHub menus, modal popovers, and WebRTC audio/video call compatibility.
  */
 private fun injectBrowserHelperEngine(view: WebView?, isDesktopMode: Boolean) {
+    com.example.ui.components.GlobalSwipeDownTracker.injectSwipeScrollObserver(view)
     val js = """
         (function() {
             try {
@@ -225,6 +227,55 @@ private fun injectBrowserHelperEngine(view: WebView?, isDesktopMode: Boolean) {
                 }
                 if (window.HTMLVideoElement && !HTMLVideoElement.prototype.webkitSupportsFullscreen) {
                     try { HTMLVideoElement.prototype.webkitSupportsFullscreen = true; } catch(e) {}
+                }
+                if (window.screen && window.screen.orientation) {
+                    try {
+                        window.screen.orientation.lock = function() { return Promise.resolve(); };
+                        window.screen.orientation.unlock = function() {};
+                    } catch(e) {}
+                }
+
+                // Ensure clicking the fullscreen icon on YouTube videos reliably enters/exits HTML5 fullscreen
+                if (!window.__xenoBrowserYtFsHooked && (location.hostname || '').indexOf('youtube.com') !== -1) {
+                    window.__xenoBrowserYtFsHooked = true;
+                    document.addEventListener('click', function(ev) {
+                        try {
+                            var t = ev && ev.target;
+                            if (!t || typeof t.closest !== 'function') return;
+                            var fsBtn = t.closest(
+                                '.fullscreen-icon, ' +
+                                '.ytp-fullscreen-button, ' +
+                                'button[aria-label*="Full screen" i], ' +
+                                'button[aria-label*="fullscreen" i], ' +
+                                'button[aria-label*="Exit full screen" i]'
+                            );
+                            if (!fsBtn) return;
+                            var wasFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+                            setTimeout(function() {
+                                var nowFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+                                if (!wasFs && !nowFs) {
+                                    var target = document.getElementById('movie_player') ||
+                                                 document.getElementById('player-container-id') ||
+                                                 document.querySelector('.html5-video-player') ||
+                                                 document.querySelector('video');
+                                    if (target) {
+                                        if (typeof target.requestFullscreen === 'function') {
+                                            var p = target.requestFullscreen();
+                                            if (p && typeof p.catch === 'function') p.catch(function(){});
+                                        } else if (typeof target.webkitRequestFullscreen === 'function') {
+                                            target.webkitRequestFullscreen();
+                                        }
+                                    }
+                                } else if (wasFs && nowFs) {
+                                    if (typeof document.exitFullscreen === 'function') {
+                                        document.exitFullscreen().catch(function(){});
+                                    } else if (typeof document.webkitExitFullscreen === 'function') {
+                                        document.webkitExitFullscreen();
+                                    }
+                                }
+                            }, 50);
+                        } catch(e) {}
+                    }, true);
                 }
 
                 // WebRTC Online Call helper: ensure mediaDevices & getUserMedia are exposed and functional
@@ -432,193 +483,6 @@ fun BrowserScreen(
             })();
             """.trimIndent(), null
         )
-    }
-
-    if (customView != null) {
-        val scaleX = videoScaleMode.scaleX
-        val scaleY = videoScaleMode.scaleY
-
-        BackHandler {
-            val activity = context as? android.app.Activity
-            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            onSetBrowserFullscreenVideo(false)
-            try {
-                customViewCallback?.onCustomViewHidden()
-            } catch (_: Exception) {}
-            customView = null
-            customViewCallback = null
-        }
-
-        // Auto hide overlay controls after 3.5 seconds
-        LaunchedEffect(showFullscreenControls) {
-            if (showFullscreenControls) {
-                delay(3500L)
-                showFullscreenControls = false
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    showFullscreenControls = !showFullscreenControls
-                }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scaleX,
-                        scaleY = scaleY,
-                        clip = true
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                AndroidView(
-                    factory = { customView!! },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            // Top Control Overlay Bar
-            AnimatedVisibility(
-                visible = showFullscreenControls,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter)
-            ) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.75f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    val activity = context as? android.app.Activity
-                                    activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                    onSetBrowserFullscreenVideo(false)
-                                    try {
-                                        customViewCallback?.onCustomViewHidden()
-                                    } catch (_: Exception) {}
-                                    customView = null
-                                    customViewCallback = null
-                                },
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(Color.White.copy(alpha = 0.2f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Exit Fullscreen",
-                                    tint = Color.White
-                                )
-                            }
-
-                            Text(
-                                text = "Landscape Video",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(
-                                    text = videoScaleMode.label,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Aspect Ratio Mode Button (Fit vs Fill No Black Bars vs Stretch)
-                            Button(
-                                onClick = {
-                                    videoScaleMode = when (videoScaleMode) {
-                                        BrowserVideoScaleMode.FIT -> BrowserVideoScaleMode.FILL_ZOOM
-                                        BrowserVideoScaleMode.FILL_ZOOM -> BrowserVideoScaleMode.STRETCH
-                                        BrowserVideoScaleMode.STRETCH -> BrowserVideoScaleMode.FIT
-                                    }
-                                    val modeStr = videoScaleMode.name
-                                    activeWebView?.evaluateJavascript(
-                                        """
-                                        (function() {
-                                            var v = document.querySelector('video');
-                                            if (v) {
-                                                v.style.objectFit = '$modeStr' === 'FILL_ZOOM' ? 'cover' : ('$modeStr' === 'STRETCH' ? 'fill' : 'contain');
-                                            }
-                                        })();
-                                        """.trimIndent(), null
-                                    )
-                                },
-                                shape = RoundedCornerShape(20.dp),
-                                modifier = Modifier.height(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (videoScaleMode == BrowserVideoScaleMode.FILL_ZOOM) Icons.Filled.CropFree else Icons.Filled.FitScreen,
-                                    contentDescription = "Aspect Ratio",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = when (videoScaleMode) {
-                                        BrowserVideoScaleMode.FIT -> "No Black Bars"
-                                        BrowserVideoScaleMode.FILL_ZOOM -> "Stretch"
-                                        BrowserVideoScaleMode.STRETCH -> "Fit 16:9"
-                                    },
-                                    fontSize = 12.sp
-                                )
-                            }
-
-                            // Orientation Sensor / Lock Toggle
-                            IconButton(
-                                onClick = {
-                                    val activity = context as? android.app.Activity
-                                    isLandscapeLocked = !isLandscapeLocked
-                                    activity?.requestedOrientation = if (isLandscapeLocked) {
-                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                                    } else {
-                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(Color.White.copy(alpha = 0.2f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ScreenRotation,
-                                    contentDescription = "Rotate Screen",
-                                    tint = if (isLandscapeLocked) MaterialTheme.colorScheme.primary else Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return
     }
 
     Box(
@@ -1716,6 +1580,193 @@ fun BrowserScreen(
             },
             onDismiss = { onSetShowPasswordManager(false) }
         )
+    }
+
+    // Fullscreen Video CustomView Overlay (rendered inside Box so WebView stays attached underneath)
+    customView?.let { activeCustomView ->
+        val scaleX = videoScaleMode.scaleX
+        val scaleY = videoScaleMode.scaleY
+
+        BackHandler {
+            val activity = context as? android.app.Activity
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            onSetBrowserFullscreenVideo(false)
+            try {
+                customViewCallback?.onCustomViewHidden()
+            } catch (_: Exception) {}
+            customView = null
+            customViewCallback = null
+        }
+
+        LaunchedEffect(showFullscreenControls) {
+            if (showFullscreenControls) {
+                delay(3500L)
+                showFullscreenControls = false
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    showFullscreenControls = !showFullscreenControls
+                }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scaleX,
+                        scaleY = scaleY,
+                        clip = true
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = {
+                        (activeCustomView.parent as? android.view.ViewGroup)?.removeView(activeCustomView)
+                        activeCustomView
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // Top Control Overlay Bar
+            AnimatedVisibility(
+                visible = showFullscreenControls,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val activity = context as? android.app.Activity
+                                    activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                    onSetBrowserFullscreenVideo(false)
+                                    try {
+                                        customViewCallback?.onCustomViewHidden()
+                                    } catch (_: Exception) {}
+                                    customView = null
+                                    customViewCallback = null
+                                },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Exit Fullscreen",
+                                    tint = Color.White
+                                )
+                            }
+
+                            Text(
+                                text = "Landscape Video",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = videoScaleMode.label,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    videoScaleMode = when (videoScaleMode) {
+                                        BrowserVideoScaleMode.FIT -> BrowserVideoScaleMode.FILL_ZOOM
+                                        BrowserVideoScaleMode.FILL_ZOOM -> BrowserVideoScaleMode.STRETCH
+                                        BrowserVideoScaleMode.STRETCH -> BrowserVideoScaleMode.FIT
+                                    }
+                                    val modeStr = videoScaleMode.name
+                                    activeWebView?.evaluateJavascript(
+                                        """
+                                        (function() {
+                                            var v = document.querySelector('video');
+                                            if (v) {
+                                                v.style.objectFit = '$modeStr' === 'FILL_ZOOM' ? 'cover' : ('$modeStr' === 'STRETCH' ? 'fill' : 'contain');
+                                            }
+                                        })();
+                                        """.trimIndent(), null
+                                    )
+                                },
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (videoScaleMode == BrowserVideoScaleMode.FILL_ZOOM) Icons.Filled.CropFree else Icons.Filled.FitScreen,
+                                    contentDescription = "Aspect Ratio",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = when (videoScaleMode) {
+                                        BrowserVideoScaleMode.FIT -> "No Black Bars"
+                                        BrowserVideoScaleMode.FILL_ZOOM -> "Stretch"
+                                        BrowserVideoScaleMode.STRETCH -> "Fit 16:9"
+                                    },
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    val activity = context as? android.app.Activity
+                                    isLandscapeLocked = !isLandscapeLocked
+                                    activity?.requestedOrientation = if (isLandscapeLocked) {
+                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                    } else {
+                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ScreenRotation,
+                                    contentDescription = "Rotate Screen",
+                                    tint = if (isLandscapeLocked) MaterialTheme.colorScheme.primary else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 }

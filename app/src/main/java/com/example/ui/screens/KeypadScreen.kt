@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.models.ContactItem
+import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
 import com.example.ui.components.ContactAvatar
@@ -112,8 +113,9 @@ fun KeypadScreen(
     fun placeCall(number: String, name: String? = null) {
         val clean = number.trim()
         val isUssd = TelecomHelper.isUssdCode(clean)
+        val isPriority = PriorityContactManager.isPriorityNumber(clean, context)
         val sims = TelecomHelper.getAvailableSimCards(context)
-        if (sims.size > 1 && !isUssd && callNumberTarget == null) {
+        if (sims.size > 1 && !isUssd && !isPriority && callNumberTarget == null) {
             availableSims = sims
             callNumberTarget = clean
             return

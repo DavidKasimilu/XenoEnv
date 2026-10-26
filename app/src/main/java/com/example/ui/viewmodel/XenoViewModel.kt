@@ -157,6 +157,7 @@ data class XenoUiState(
     // Notification state
     val deviceNotifications: List<DeviceNotification> = emptyList(),
     val hasNotificationAccess: Boolean = false,
+    val isAppAlertsDrawerOpen: Boolean = false,
     val isBrowserHeaderHidden: Boolean = false,
     val isBrowserFullscreenVideo: Boolean = false,
 
@@ -1135,6 +1136,15 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun setMessagesSubTab(subTab: MessagesSubTab) {
         _uiState.value = _uiState.value.copy(messagesSubTab = subTab)
         checkNotificationAccess()
+    }
+
+    fun setAppAlertsDrawerOpen(open: Boolean) {
+        if (_uiState.value.isAppAlertsDrawerOpen != open) {
+            _uiState.value = _uiState.value.copy(isAppAlertsDrawerOpen = open)
+            if (open) {
+                checkNotificationAccess()
+            }
+        }
     }
 
     fun checkNotificationAccess() {

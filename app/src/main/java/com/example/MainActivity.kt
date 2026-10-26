@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,6 +59,12 @@ import com.example.ui.screens.DocsManagerScreen
 import com.example.ui.screens.FileManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.example.ui.components.GlobalSwipeDownTracker
+import com.example.ui.screens.AppAlertsDrawerOverlay
 import com.example.ui.screens.MessagesScreen
 import com.example.ui.screens.MinimizedCloneFloatingOverlay
 import com.example.ui.screens.MusicPlayerScreen
@@ -136,6 +143,77 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         isAppInForeground = false
+    }
+
+    private var swipeTouchDownX = 0f
+    private var swipeTouchDownY = 0f
+    private var swipeTriggeredInGesture = false
+    private var swipeIsMultiTouch = false
+    private var swipeDisallowedByHorizontalOrUp = false
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeTouchDownX = ev.rawX
+                swipeTouchDownY = ev.rawY
+                swipeTriggeredInGesture = false
+                swipeIsMultiTouch = false
+                swipeDisallowedByHorizontalOrUp = false
+                GlobalSwipeDownTracker.onGestureStart()
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                swipeIsMultiTouch = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val handled = super.dispatchTouchEvent(ev)
+                if (!GlobalSwipeDownTracker.isDrawerOpen &&
+                    GlobalSwipeDownTracker.isSwipeEnabled &&
+                    !swipeTriggeredInGesture &&
+                    !swipeIsMultiTouch
+                ) {
+                    val dx = ev.rawX - swipeTouchDownX
+                    val dy = ev.rawY - swipeTouchDownY
+                    val absDx = kotlin.math.abs(dx)
+                    val absDy = kotlin.math.abs(dy)
+                    val density = resources.displayMetrics.density
+
+                    if (dy < -12f * density || (absDx > 16f * density && absDx > absDy)) {
+                        swipeDisallowedByHorizontalOrUp = true
+                    }
+
+                    if (!swipeDisallowedByHorizontalOrUp && dy > 0f && dy > absDx * 1.35f) {
+                        val topZoneMaxY = 165f * density
+                        val topZoneThresholdPx = 36f * density
+                        val generalThresholdPx = 46f * density
+
+                        val shouldOpen = if (swipeTouchDownY <= topZoneMaxY) {
+                            dy >= topZoneThresholdPx
+                        } else if (dy >= generalThresholdPx) {
+                            if (GlobalSwipeDownTracker.isWebViewScreenActive) {
+                                !GlobalSwipeDownTracker.activeWebViewCanScrollUp
+                            } else {
+                                !GlobalSwipeDownTracker.didComposeChildScroll
+                            }
+                        } else {
+                            false
+                        }
+
+                        if (shouldOpen) {
+                            swipeTriggeredInGesture = true
+                            val cancelEvent = MotionEvent.obtain(ev).apply {
+                                action = MotionEvent.ACTION_CANCEL
+                            }
+                            super.dispatchTouchEvent(cancelEvent)
+                            cancelEvent.recycle()
+                            GlobalSwipeDownTracker.openDrawer()
+                            return true
+                        }
+                    }
+                }
+                return handled
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -360,6 +438,47 @@ fun XenoApp(
         uiState.smsThreads.sumOf { it.unreadCount }
     }
 
+    val isCloneWebViewOpen = (uiState.currentTab == XenoTab.BROWSER || uiState.currentTab == XenoTab.CLONE_SPACE) &&
+        uiState.browserDualTab == com.example.ui.viewmodel.BrowserDualTab.SPACE &&
+        uiState.activeSpaceInstance != null &&
+        uiState.activeSpaceInstance!!.targetUrl.isNotBlank()
+    val isBrowserWebViewOpen = (uiState.currentTab == XenoTab.BROWSER || uiState.currentTab == XenoTab.CLONE_SPACE) &&
+        uiState.browserDualTab == com.example.ui.viewmodel.BrowserDualTab.BROWSER &&
+        uiState.activeBrowserTab?.url?.isNotBlank() == true
+
+    GlobalSwipeDownTracker.isDrawerOpen = uiState.isAppAlertsDrawerOpen
+    GlobalSwipeDownTracker.isSwipeEnabled = uiState.activeCallState == null &&
+        !uiState.showNewChatDialog &&
+        !uiState.showAddCloneDialog &&
+        uiState.selectedCloneForEdit == null &&
+        !uiState.showHistoryDialog &&
+        !uiState.showTabSwitcher &&
+        !uiState.showPasswordManager
+    GlobalSwipeDownTracker.isWebViewScreenActive = (isCloneWebViewOpen || isBrowserWebViewOpen) &&
+        !uiState.showMediaManager &&
+        !uiState.showDocsManager &&
+        !uiState.showMusicPlayer &&
+        uiState.selectedVideoItem == null &&
+        uiState.activeChatThread == null
+    GlobalSwipeDownTracker.onOpenDrawer = {
+        viewModel.setAppAlertsDrawerOpen(true)
+    }
+
+    val rootNestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (kotlin.math.abs(consumed.y) > 0.5f) {
+                    GlobalSwipeDownTracker.didComposeChildScroll = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -367,7 +486,10 @@ fun XenoApp(
             if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
-                    onTabSelected = { viewModel.selectTab(it) },
+                    onTabSelected = {
+                        viewModel.setAppAlertsDrawerOpen(false)
+                        viewModel.selectTab(it)
+                    },
                     missedCallsCount = missedCount,
                     unreadMessagesCount = unreadSmsCount
                 )
@@ -380,6 +502,7 @@ fun XenoApp(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(effectivePadding)
+                .nestedScroll(rootNestedScrollConnection)
         ) {
             if (uiState.selectedVideoItem != null) {
                 VideoPlayerModal(
@@ -645,6 +768,27 @@ fun XenoApp(
                 )
             }
 
+            // Global Swipe-Down App Alerts Drawer Overlay (works across all tabs and inside cloned apps)
+            AppAlertsDrawerOverlay(
+                isOpen = uiState.isAppAlertsDrawerOpen && uiState.activeCallState == null,
+                onCloseDrawer = { viewModel.setAppAlertsDrawerOpen(false) },
+                notifications = uiState.deviceNotifications,
+                hasNotificationAccess = uiState.hasNotificationAccess,
+                onRequestNotificationAccess = {
+                    XenoNotificationListenerService.openNotificationSettings(context)
+                },
+                onDismissNotification = { viewModel.dismissNotification(it) },
+                onClearAllNotifications = { viewModel.clearAllNotifications() },
+                onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
+                onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
+                onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
+                onSimulateSms = { viewModel.simulateIncomingSms() },
+                onSimulateCall = { viewModel.simulateIncomingCall() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(25f)
+            )
+
             // Top In-App Incoming Call & SMS Notification Popup Overlay
             InAppNotificationOverlay(
                 incomingSms = uiState.incomingSmsPopup,
@@ -658,7 +802,7 @@ fun XenoApp(
                 onExpandCall = { viewModel.expandCallPopupToFullScreen(it) },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .zIndex(20f)
+                    .zIndex(30f)
             )
     }
 

@@ -7,6 +7,7 @@ import android.provider.ContactsContract
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.data.models.ContactItem
+import com.example.telecom.PriorityContactManager
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,6 +52,13 @@ class ContactsRepository(private val context: Context) {
         }
     }
 
+    init {
+        // Pre-seed in-memory fast lookup with the 5 priority numbers so they resolve in 0ms
+        PriorityContactManager.DEFAULT_PRIORITY_NUMBERS.forEachIndexed { idx, num ->
+            indexContactNumber(num, "Priority VIP ${idx + 1}")
+        }
+    }
+
     /**
      * Synchronous O(1) in-memory contact name lookup.
      * Avoids ContentResolver Binder IPC overhead when enriching Call History and SMS Threads.
@@ -66,11 +74,50 @@ class ContactsRepository(private val context: Context) {
             if (digits.length >= 10) {
                 phoneToNameCache[digits.takeLast(10)]?.let { return it }
             }
+            if (digits.length >= 9) {
+                phoneToNameCache[digits.takeLast(9)]?.let { return it }
+            }
             if (digits.length >= 7) {
                 phoneToNameCache[digits.takeLast(7)]?.let { return it }
             }
         }
+        if (com.example.telecom.PriorityContactManager.isPriorityNumber(trimmed, context)) {
+            return com.example.telecom.PriorityContactManager.getFallbackPriorityLabel(trimmed)
+        }
         return null
+    }
+
+    private fun mergePriorityContactsWithDeviceContacts(deviceContacts: List<ContactItem>): List<ContactItem> {
+        val priorityNumbers = com.example.telecom.PriorityContactManager.getAllPriorityNumbers(context)
+        val mutableList = deviceContacts.toMutableList()
+
+        priorityNumbers.forEachIndexed { idx, pNum ->
+            val pCore = com.example.telecom.PriorityContactManager.extractCore9(pNum)
+            val alreadyPresent = mutableList.any { contact ->
+                com.example.telecom.PriorityContactManager.extractCore9(contact.primaryNumber) == pCore ||
+                    contact.allNumbers.any { com.example.telecom.PriorityContactManager.extractCore9(it) == pCore }
+            }
+            if (!alreadyPresent) {
+                val label = "Priority VIP ${idx + 1}"
+                indexContactNumber(pNum, label)
+                mutableList.add(
+                    ContactItem(
+                        id = -1000L - idx,
+                        lookupKey = "priority_vip_${idx + 1}",
+                        displayName = label,
+                        primaryNumber = pNum,
+                        allNumbers = listOf(pNum),
+                        photoUri = null
+                    )
+                )
+            }
+        }
+
+        return mutableList.sortedWith(
+            compareByDescending<ContactItem> {
+                com.example.telecom.PriorityContactManager.isPriorityContact(it.primaryNumber, it.allNumbers, context)
+            }.thenBy { it.displayName.lowercase() }
+        )
     }
 
     suspend fun getContacts(forceRefresh: Boolean = false): List<ContactItem> = withContext(Dispatchers.IO) {
@@ -85,8 +132,13 @@ class ContactsRepository(private val context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
-            return@withContext cachedContacts
+            val seededOnly = mergePriorityContactsWithDeviceContacts(emptyList())
+            cachedContacts = seededOnly
+            return@withContext seededOnly
         }
+
+        // Sync the 5 priority numbers into Android OS Starred Contacts (STARRED = 1) for system DND bypass
+        com.example.telecom.PriorityContactManager.syncPriorityContactsToOs(context)
 
         val contactsMap = mutableMapOf<Long, ContactItem>()
         val projection = arrayOf(
@@ -143,10 +195,10 @@ class ContactsRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("ContactsRepository", "Failed to query contacts", e)
-            return@withContext cachedContacts
+            return@withContext mergePriorityContactsWithDeviceContacts(cachedContacts)
         }
 
-        val result = contactsMap.values.sortedBy { it.displayName.lowercase() }
+        val result = mergePriorityContactsWithDeviceContacts(contactsMap.values.toList())
         cachedContacts = result
         lastContactsLoadTimeMs = System.currentTimeMillis()
         return@withContext result

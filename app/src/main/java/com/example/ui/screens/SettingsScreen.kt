@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.telecom.PriorityContactManager
 import com.example.telecom.TelecomHelper
 import com.example.ui.theme.SuccessGreen
 
@@ -284,6 +285,134 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("Set as Default SMS App")
+                    }
+                }
+            }
+        }
+
+        // Priority VIP Contacts & OS Bypass Card
+        val priorityNumbers = remember { PriorityContactManager.getAllPriorityNumbers(context) }
+        val hasDndPolicyAccess = PriorityContactManager.isDndBypassAccessGranted(context)
+        val hasBatteryExemption = PriorityContactManager.isBatteryOptimizationIgnored(context)
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            modifier = Modifier.fillMaxWidth().testTag("priority_vip_contacts_card")
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PhoneInTalk,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Priority VIP Contacts (OS Bypass)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${priorityNumbers.size} Priority Numbers Active • DND, Silent, Lock & SIM Bypass",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SuccessGreen,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "These numbers are synced to Android OS Starred Contacts (STARRED=1) and automatically bypass Do Not Disturb, Silent/Vibrate mode (100% max ring/alarm volume), Lock Screen sleep, and Dual-SIM prompts when receiving or placing calls and messages:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+                priorityNumbers.forEachIndexed { idx, num ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "★ Priority VIP #${idx + 1}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = num,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Text(
+                                text = "BYPASS ACTIVE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                if (!hasDndPolicyAccess || !hasBatteryExemption) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (!hasDndPolicyAccess) {
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        context.startActivity(PriorityContactManager.createDndPolicyAccessIntent(context))
+                                    } catch (_: Exception) {}
+                                },
+                                modifier = Modifier.weight(1f).testTag("grant_dnd_bypass_btn"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Allow DND Override", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        if (!hasBatteryExemption) {
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        context.startActivity(PriorityContactManager.createBatteryOptimizationExemptionIntent(context))
+                                    } catch (_: Exception) {}
+                                },
+                                modifier = Modifier.weight(1f).testTag("grant_battery_bypass_btn"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Unrestricted Battery", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
                     }
                 }
             }

@@ -24,6 +24,8 @@ import java.util.Locale
 object XenoNotificationHelper {
     const val CHANNEL_SMS_ID = "xeno_sms_channel_v2"
     const val CHANNEL_CALL_ID = "xeno_call_channel_v2"
+    const val CHANNEL_PRIORITY_SMS_ID = "xeno_priority_vip_sms_channel"
+    const val CHANNEL_PRIORITY_CALL_ID = "xeno_priority_vip_call_channel"
 
     @Volatile
     private var lastSmsSignature: String = ""
@@ -167,6 +169,53 @@ object XenoNotificationHelper {
 
             notificationManager.createNotificationChannel(smsChannel)
             notificationManager.createNotificationChannel(callChannel)
+
+            val alarmAudioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            val smsUri = try {
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            } catch (_: Exception) {
+                null
+            }
+
+            val prioritySmsChannel = NotificationChannel(
+                CHANNEL_PRIORITY_SMS_ID,
+                "Priority VIP Messages (Bypass DND)",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "High-priority SMS notifications that bypass Do Not Disturb and Silent restrictions"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 350, 120, 350, 120, 500)
+                enableLights(true)
+                setShowBadge(true)
+                setBypassDnd(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                if (smsUri != null) {
+                    setSound(smsUri, alarmAudioAttributes)
+                }
+            }
+
+            val priorityCallChannel = NotificationChannel(
+                CHANNEL_PRIORITY_CALL_ID,
+                "Priority VIP Calls (Bypass DND)",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Critical incoming calls from Priority VIP numbers that bypass Do Not Disturb and Lock Screen"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 600, 200, 600, 200, 800)
+                enableLights(true)
+                setShowBadge(true)
+                setBypassDnd(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                if (ringtoneUri != null) {
+                    setSound(ringtoneUri, alarmAudioAttributes)
+                }
+            }
+
+            notificationManager.createNotificationChannel(prioritySmsChannel)
+            notificationManager.createNotificationChannel(priorityCallChannel)
         }
     }
 
@@ -184,19 +233,26 @@ object XenoNotificationHelper {
 
         createNotificationChannels(context)
 
+        val isPriority = PriorityContactManager.isPriorityNumber(senderNumber, context)
+        if (isPriority) {
+            PriorityContactManager.enforceIncomingPriorityBypass(context, isCall = false)
+        }
+
         val resolvedName = if (senderName.isBlank() || senderName == senderNumber) {
-            resolveContactNameQuick(context, senderNumber) ?: senderName.ifBlank { senderNumber }
+            resolveContactNameQuick(context, senderNumber)
+                ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(senderNumber) else senderName.ifBlank { senderNumber }
         } else {
             senderName
         }
 
         val initials = extractInitials(resolvedName, senderNumber)
         val formattedTime = formatNotificationTime()
-        val displaySubtitle = if (resolvedName != senderNumber && senderNumber.isNotBlank()) {
+        val baseSubtitle = if (resolvedName != senderNumber && senderNumber.isNotBlank()) {
             senderNumber
         } else {
             "Direct SMS Message"
         }
+        val displaySubtitle = if (isPriority) "★ PRIORITY VIP • $baseSubtitle" else baseSubtitle
 
         val notificationId = getSmsNotificationId(senderNumber, threadId)
 
@@ -240,14 +296,14 @@ object XenoNotificationHelper {
 
         val smsCollapsedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms_collapsed).apply {
             setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, resolvedName)
+            setTextViewText(R.id.notif_sms_sender, if (isPriority) "★ $resolvedName" else resolvedName)
             setTextViewText(R.id.notif_sms_time, formattedTime)
             setTextViewText(R.id.notif_sms_body, body)
         }
 
         val smsExpandedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
             setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, resolvedName)
+            setTextViewText(R.id.notif_sms_sender, if (isPriority) "★ $resolvedName" else resolvedName)
             setTextViewText(R.id.notif_sms_number, displaySubtitle)
             setTextViewText(R.id.notif_sms_time, formattedTime)
             setTextViewText(R.id.notif_sms_body, body)
@@ -256,22 +312,23 @@ object XenoNotificationHelper {
             setOnClickPendingIntent(R.id.btn_sms_reply, replyPendingIntent)
         }
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_SMS_ID)
+        val targetChannel = if (isPriority) CHANNEL_PRIORITY_SMS_ID else CHANNEL_SMS_ID
+        val notification = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_chat)
-            .setContentTitle(resolvedName)
+            .setContentTitle(if (isPriority) "★ $resolvedName" else resolvedName)
             .setContentText(body)
-            .setSubText("SMS • $formattedTime")
+            .setSubText(if (isPriority) "PRIORITY VIP SMS • $formattedTime" else "SMS • $formattedTime")
             .setCustomContentView(smsCollapsedRemoteViews)
             .setCustomBigContentView(smsExpandedRemoteViews)
             .setCustomHeadsUpContentView(smsExpandedRemoteViews)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setCategory(if (isPriority) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
+            .setOnlyAlertOnce(!isPriority)
             .setContentIntent(pendingIntent)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVibrate(longArrayOf(0, 220, 120, 220))
+            .setVibrate(if (isPriority) longArrayOf(0, 350, 120, 350, 120, 500) else longArrayOf(0, 220, 120, 220))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
@@ -285,8 +342,7 @@ object XenoNotificationHelper {
         } catch (_: SecurityException) {
         } catch (_: Exception) {}
 
-        // Only show floating overlay if system notifications are disabled, avoiding double popups
-        if (!notifiedSystem) {
+        if (!notifiedSystem || (isPriority && !MainActivity.isAppInForeground)) {
             XenoOverlayService.showSmsOverlay(context, resolvedName, senderNumber, body, threadId)
         }
     }
@@ -307,17 +363,20 @@ object XenoNotificationHelper {
 
         createNotificationChannels(context)
 
+        val isPriority = PriorityContactManager.isPriorityNumber(callerNumber, context)
         val resolvedName = if (!callerName.isNullOrBlank()) {
             callerName
         } else {
-            resolveContactNameQuick(context, callerNumber) ?: callerNumber
+            resolveContactNameQuick(context, callerNumber)
+                ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(callerNumber) else callerNumber
         }
         val initials = extractInitials(resolvedName, callerNumber)
-        val subtitleText = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
+        val baseSubtitle = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
             "Incoming Voice Call • $callerNumber"
         } else {
             "Incoming Voice Call"
         }
+        val subtitleText = if (isPriority) "★ PRIORITY VIP • $baseSubtitle" else baseSubtitle
 
         val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -361,9 +420,11 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val displayTitle = if (isPriority && !resolvedName.startsWith("★")) "★ $resolvedName" else resolvedName
+
         val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)
-            setTextViewText(R.id.notif_caller_name, resolvedName)
+            setTextViewText(R.id.notif_caller_name, displayTitle)
             setTextViewText(R.id.notif_caller_number, subtitleText)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
@@ -372,16 +433,17 @@ object XenoNotificationHelper {
 
         val callExpandedViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)
-            setTextViewText(R.id.notif_caller_name, resolvedName)
+            setTextViewText(R.id.notif_caller_name, displayTitle)
             setTextViewText(R.id.notif_caller_number, subtitleText)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
             setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)
         }
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_CALL_ID)
+        val targetChannel = if (isPriority) CHANNEL_PRIORITY_CALL_ID else CHANNEL_CALL_ID
+        val notification = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_call)
-            .setContentTitle(resolvedName)
+            .setContentTitle(displayTitle)
             .setContentText(subtitleText)
             .setCustomContentView(callCollapsedViews)
             .setCustomBigContentView(callExpandedViews)
@@ -395,7 +457,7 @@ object XenoNotificationHelper {
             .setContentIntent(fullScreenPendingIntent)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOngoing(true)
-            .setVibrate(longArrayOf(0, 500, 250, 500, 250, 500))
+            .setVibrate(if (isPriority) longArrayOf(0, 600, 200, 600, 200, 800) else longArrayOf(0, 500, 250, 500, 250, 500))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 

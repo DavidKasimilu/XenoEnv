@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -65,7 +66,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.models.CallLogEntry
+import com.example.data.models.CallLogGroup
 import com.example.data.models.CallType
+import com.example.data.models.groupConsecutiveCalls
+import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
 import com.example.ui.components.ContactAvatar
@@ -93,7 +97,7 @@ fun CallsScreen(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    var selectedEntry by remember { mutableStateOf<CallLogEntry?>(null) }
+    var selectedGroup by remember { mutableStateOf<CallLogGroup?>(null) }
     var showClearDialog by remember { mutableStateOf(false) }
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
     var callNameTarget by remember { mutableStateOf<String?>(null) }
@@ -108,6 +112,14 @@ fun CallsScreen(
         if (clean.isBlank()) return
         if (TelecomHelper.isUssdCode(clean)) {
             onStartCallWithSim(clean, name, null)
+            return
+        }
+        // Priority VIP Contacts bypass Dual-SIM selection prompt for immediate zero-delay dialing
+        if (PriorityContactManager.isPriorityNumber(clean, context)) {
+            val resolvedName = name?.takeIf { it.isNotBlank() && it != clean }
+                ?: PriorityContactManager.getFallbackPriorityLabel(clean)
+            val preferredSim = TelecomHelper.getPreferredSimForPriorityCall(context)
+            onStartCallWithSim(clean, resolvedName, preferredSim)
             return
         }
         val sims = TelecomHelper.getSimChoicesForCall(context)
@@ -130,6 +142,11 @@ fun CallsScreen(
             CallFilter.INCOMING -> callLogs.filter { it.type == CallType.INCOMING }
             CallFilter.OUTGOING -> callLogs.filter { it.type == CallType.OUTGOING }
         }
+    }
+
+    // Bundle consecutive calls to the same person/number within a 3-hour window
+    val groupedLogs = remember(filteredLogs) {
+        groupConsecutiveCalls(filteredLogs)
     }
 
     val (missedCount, incomingCount, outgoingCount) = remember(callLogs) {
@@ -170,7 +187,11 @@ fun CallsScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "${filteredLogs.size} recorded calls",
+                    text = if (groupedLogs.size != filteredLogs.size) {
+                        "${groupedLogs.size} entries (${filteredLogs.size} recorded calls)"
+                    } else {
+                        "${filteredLogs.size} recorded calls"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -245,7 +266,7 @@ fun CallsScreen(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        if (filteredLogs.isEmpty()) {
+        if (groupedLogs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -279,13 +300,19 @@ fun CallsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 itemsIndexed(
-                    items = filteredLogs,
-                    key = { index, entry -> "call_log_${entry.id}_${entry.number}_$index" },
+                    items = groupedLogs,
+                    key = { index, group ->
+                        val head = group.latestEntry
+                        "call_group_${head.id}_${head.number}_${group.count}_$index"
+                    },
                     contentType = { _, _ -> "call_log_row" }
-                ) { _, entry ->
+                ) { _, group ->
+                    val entry = group.latestEntry
                     CallLogItem(
                         entry = entry,
-                        onClick = { selectedEntry = entry },
+                        callCount = group.count,
+                        oldestTimeOfDay = if (group.count > 1) group.oldestEntry.formattedTimeOfDay else null,
+                        onClick = { selectedGroup = group },
                         onCallClick = { placeCall(entry.number, entry.displayName) }
                     )
                 }
@@ -293,17 +320,18 @@ fun CallsScreen(
         }
     }
 
-    // Call Details Bottom Sheet
-    selectedEntry?.let { entry ->
+    // Call Details Bottom Sheet (shows individual call times when tapped)
+    selectedGroup?.let { group ->
+        val entry = group.latestEntry
         ModalBottomSheet(
-            onDismissRequest = { selectedEntry = null },
-            sheetState = rememberModalBottomSheetState(),
+            onDismissRequest = { selectedGroup = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.surface
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp)
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -312,7 +340,7 @@ fun CallsScreen(
                     ContactAvatar(nameOrNumber = entry.displayName, size = 56.dp)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = entry.displayName,
+                            text = if (group.count > 1) "${entry.displayName} (${group.count})" else entry.displayName,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -322,14 +350,18 @@ fun CallsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "${entry.formattedDate} • ${entry.formattedDuration}",
+                            text = if (group.count > 1) {
+                                "${group.count} consecutive calls • ${group.oldestEntry.formattedTimeOfDay} – ${entry.formattedTimeOfDay}"
+                            } else {
+                                "${entry.formattedDayLabel}, ${entry.formattedTimeOfDay} • ${entry.formattedDuration}"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -348,7 +380,7 @@ fun CallsScreen(
                                 .clickable {
                                     val num = entry.number
                                     val name = entry.displayName
-                                    selectedEntry = null
+                                    selectedGroup = null
                                     placeCall(num, name)
                                 }
                                 .testTag("sheet_call_choose_sim_btn")
@@ -374,7 +406,7 @@ fun CallsScreen(
                                 .size(50.dp)
                                 .clickable {
                                     onStartSms(entry.number, entry.cachedName)
-                                    selectedEntry = null
+                                    selectedGroup = null
                                 }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -398,7 +430,7 @@ fun CallsScreen(
                                 .size(50.dp)
                                 .clickable {
                                     clipboardManager.setText(AnnotatedString(entry.number))
-                                    selectedEntry = null
+                                    selectedGroup = null
                                 }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -413,7 +445,7 @@ fun CallsScreen(
                         Text("Copy", style = MaterialTheme.typography.labelSmall)
                     }
 
-                    // Delete Call Record
+                    // Delete Call Record(s)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Surface(
                             shape = CircleShape,
@@ -421,8 +453,10 @@ fun CallsScreen(
                             modifier = Modifier
                                 .size(50.dp)
                                 .clickable {
-                                    onDeleteCall(entry)
-                                    selectedEntry = null
+                                    group.entries.forEach { callToDelete ->
+                                        onDeleteCall(callToDelete)
+                                    }
+                                    selectedGroup = null
                                 }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -434,7 +468,10 @@ fun CallsScreen(
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("Delete", style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            text = if (group.count > 1) "Delete (${group.count})" else "Delete",
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
 
@@ -455,7 +492,7 @@ fun CallsScreen(
                                 .clickable {
                                     val num = entry.number
                                     val name = entry.displayName
-                                    selectedEntry = null
+                                    selectedGroup = null
                                     placeCallWithSpecificSim(num, name, sim)
                                 }
                                 .testTag("sheet_quick_sim_${idx + 1}")
@@ -485,7 +522,135 @@ fun CallsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(18.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Individual Call Times Breakdown
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (group.count > 1) "Call Times (${group.count})" else "Call Time",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (group.count > 1) {
+                        Text(
+                            text = "Consecutive within 3h window",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(
+                        items = group.entries,
+                        key = { idx, item -> "sheet_call_time_${item.id}_${item.date}_$idx" }
+                    ) { idx, callItem ->
+                        val (typeIcon, typeTint) = when (callItem.type) {
+                            CallType.INCOMING -> Icons.Filled.CallReceived to SuccessGreen
+                            CallType.OUTGOING -> Icons.Filled.CallMade to MaterialTheme.colorScheme.primary
+                            CallType.MISSED, CallType.REJECTED -> Icons.Filled.CallMissed to MissedRed
+                            else -> Icons.Filled.Call to MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("call_time_row_$idx")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = typeTint.copy(alpha = 0.14f),
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = typeIcon,
+                                            contentDescription = callItem.typeLabel,
+                                            tint = typeTint,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = callItem.formattedTimeOfDay,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (callItem.type == CallType.MISSED) {
+                                                MissedRed
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            }
+                                        )
+                                        Text(
+                                            text = "• ${callItem.formattedDayLabel}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        text = "${callItem.typeLabel} • ${callItem.formattedDuration}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                if (group.count > 1) {
+                                    IconButton(
+                                        onClick = {
+                                            onDeleteCall(callItem)
+                                            val remaining = group.entries.filterNot {
+                                                it.id == callItem.id && it.date == callItem.date
+                                            }
+                                            selectedGroup = if (remaining.isEmpty()) {
+                                                null
+                                            } else {
+                                                CallLogGroup(remaining)
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = "Delete single call record",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
     }
@@ -573,6 +738,8 @@ fun CallsScreen(
 @Composable
 fun CallLogItem(
     entry: CallLogEntry,
+    callCount: Int = 1,
+    oldestTimeOfDay: String? = null,
     onClick: () -> Unit,
     onCallClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -598,14 +765,45 @@ fun CallLogItem(
             ContactAvatar(nameOrNumber = entry.displayName, size = 44.dp)
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (entry.type == CallType.MISSED) MissedRed else MaterialTheme.colorScheme.onSurface
-                )
+                val isPriority = remember(entry.number) { PriorityContactManager.isPriorityNumber(entry.number) }
+                val titleColor = if (entry.type == CallType.MISSED) MissedRed else MaterialTheme.colorScheme.onSurface
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = entry.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = titleColor,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (callCount > 1) {
+                        Text(
+                            text = "($callCount)",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = titleColor,
+                            modifier = Modifier.testTag("call_count_badge_${entry.id}")
+                        )
+                    }
+                    if (isPriority) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "★ VIP BYPASS",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -624,9 +822,15 @@ fun CallLogItem(
                         tint = tint
                     )
                     Text(
-                        text = "${entry.formattedDate} • ${entry.formattedDuration}",
+                        text = if (callCount > 1 && oldestTimeOfDay != null && oldestTimeOfDay != entry.formattedTimeOfDay) {
+                            "${entry.formattedDate} ($oldestTimeOfDay – ${entry.formattedTimeOfDay}) • ${entry.formattedDuration}"
+                        } else {
+                            "${entry.formattedDate} • ${entry.formattedDuration}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

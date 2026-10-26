@@ -251,10 +251,16 @@ object OngoingCallHelper {
         showPopup: Boolean = true
     ): IncomingCallPopup {
         val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
+        val isPriority = PriorityContactManager.isPriorityNumber(cleanNumber, context)
+        if (isPriority) {
+            PriorityContactManager.enforceIncomingPriorityBypass(context, isCall = true)
+        }
+
         val resolvedName = contactName?.takeIf { it.isNotBlank() }
             ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
+            ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(cleanNumber) else null
 
-        val wakeForFullScreen = !showPopup || isScreenOffOrLocked(context)
+        val wakeForFullScreen = !showPopup || isScreenOffOrLocked(context) || (isPriority && !MainActivity.isAppInForeground)
         val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground
 
         startIncomingSession(
@@ -465,6 +471,7 @@ object OngoingCallHelper {
 
             Call.STATE_ACTIVE -> {
                 // Call is now connected! Dismiss any incoming popup and open full-screen call screen with timer at 00:00
+                PriorityContactManager.stopPriorityAlertSound()
                 _incomingPopupFlow.value = null
                 val now = System.currentTimeMillis()
                 val telecomConnectMs = call?.details?.connectTimeMillis?.takeIf { it > 0L && (now - it) in 0..3600_000L }
@@ -497,6 +504,7 @@ object OngoingCallHelper {
             }
 
             Call.STATE_DISCONNECTED, Call.STATE_DISCONNECTING -> {
+                PriorityContactManager.stopPriorityAlertSound()
                 releaseIncomingWakeLock()
                 _incomingPopupFlow.value = null
                 val finalDuration = getCurrentDurationSeconds()
@@ -624,6 +632,7 @@ object OngoingCallHelper {
     }
 
     fun silenceIncomingRinger(context: Context) {
+        PriorityContactManager.stopPriorityAlertSound()
         try {
             val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
             telecomManager?.silenceRinger()

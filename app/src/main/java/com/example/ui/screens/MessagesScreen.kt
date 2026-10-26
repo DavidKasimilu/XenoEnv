@@ -1,17 +1,19 @@
 package com.example.ui.screens
 
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +44,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -53,18 +53,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,20 +69,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.models.DeviceNotification
 import com.example.data.models.SmsThread
 import com.example.ui.components.ContactAvatar
 import com.example.ui.components.QuickTogglesPanel
 import com.example.ui.viewmodel.MessagesSubTab
+import kotlinx.coroutines.launch
 
 @Composable
 fun MessagesScreen(
@@ -97,13 +92,13 @@ fun MessagesScreen(
     onOpenThread: (SmsThread) -> Unit,
     onDeleteThread: (SmsThread) -> Unit,
     onStartNewChat: () -> Unit,
-    subTab: MessagesSubTab,
-    onSubTabChange: (MessagesSubTab) -> Unit,
-    notifications: List<DeviceNotification>,
-    hasNotificationAccess: Boolean,
-    onRequestNotificationAccess: () -> Unit,
-    onDismissNotification: (String) -> Unit,
-    onClearAllNotifications: () -> Unit,
+    subTab: MessagesSubTab = MessagesSubTab.SMS,
+    onSubTabChange: (MessagesSubTab) -> Unit = {},
+    notifications: List<DeviceNotification> = emptyList(),
+    hasNotificationAccess: Boolean = false,
+    onRequestNotificationAccess: () -> Unit = {},
+    onDismissNotification: (String) -> Unit = {},
+    onClearAllNotifications: () -> Unit = {},
     onAddSampleAlerts: () -> Unit = {},
     onSimulateAlert: (String) -> Unit = {},
     onOpenAppDetailsSettings: () -> Unit = {},
@@ -114,20 +109,14 @@ fun MessagesScreen(
 ) {
     var threadToDelete by remember { mutableStateOf<SmsThread?>(null) }
 
-    val postNotificationLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) {
-        // updated
-    }
-
     val filteredThreads = remember(threads, searchQuery) {
         if (searchQuery.isBlank()) threads
         else {
             val q = searchQuery.trim().lowercase()
             threads.filter {
                 it.displayName.lowercase().contains(q) ||
-                        it.address.contains(q) ||
-                        it.snippet.lowercase().contains(q)
+                    it.address.contains(q) ||
+                    it.snippet.lowercase().contains(q)
             }
         }
     }
@@ -137,215 +126,105 @@ fun MessagesScreen(
             .fillMaxSize()
             .testTag("messages_screen")
     ) {
-        // Section Header Tabs: [SMS Messages] | [Device Notifications]
-        Surface(
-            tonalElevation = 1.dp,
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // SMS Messages Sub-Tab
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = if (subTab == MessagesSubTab.SMS) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        // Default SMS Messages Content (Swipe down anywhere to open the App Alerts Drawer)
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Search Bar
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
                     modifier = Modifier
-                        .weight(1f)
-                        .clickable { onSubTabChange(MessagesSubTab.SMS) }
-                        .testTag("subtab_sms")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .testTag("search_sms_input"),
+                    placeholder = { Text("Search messages or senders...") },
+                    leadingIcon = {
                         Icon(
-                            imageVector = Icons.Filled.Message,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = if (subTab == MessagesSubTab.SMS) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "SMS Messages",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (subTab == MessagesSubTab.SMS) FontWeight.Bold else FontWeight.Medium,
-                            color = if (subTab == MessagesSubTab.SMS) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                // Device Notifications Sub-Tab
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = if (subTab == MessagesSubTab.NOTIFICATIONS) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { onSubTabChange(MessagesSubTab.NOTIFICATIONS) }
-                        .testTag("subtab_notifications")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        BadgedBox(
-                            badge = {
-                                if (notifications.isNotEmpty()) {
-                                    Badge(
-                                        containerColor = MaterialTheme.colorScheme.primary
-                                    ) {
-                                        Text(text = notifications.size.toString())
-                                    }
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = if (subTab == MessagesSubTab.NOTIFICATIONS) Icons.Filled.NotificationsActive else Icons.Outlined.Notifications,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = if (subTab == MessagesSubTab.NOTIFICATIONS) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "App Alerts",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (subTab == MessagesSubTab.NOTIFICATIONS) FontWeight.Bold else FontWeight.Medium,
-                            color = if (subTab == MessagesSubTab.NOTIFICATIONS) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-
-        // Content Area based on selected subTab
-        if (subTab == MessagesSubTab.SMS) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Search Bar
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchQueryChange,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                            .testTag("search_sms_input"),
-                        placeholder = { Text("Search messages or senders...") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Filled.Search,
-                                contentDescription = "Search",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { onSearchQueryChange("") }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Clear,
-                                        contentDescription = "Clear search"
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    if (filteredThreads.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { onSearchQueryChange("") }) {
                                 Icon(
-                                    imageVector = Icons.Filled.Message,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(56.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = if (searchQuery.isBlank()) "No SMS conversations on device" else "No matching messages",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Tap the compose button below to start a new chat",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                    imageVector = Icons.Filled.Clear,
+                                    contentDescription = "Clear search"
                                 )
                             }
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            itemsIndexed(
-                                items = filteredThreads,
-                                key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
-                                contentType = { _, _ -> "sms_thread_row" }
-                            ) { _, thread ->
-                                SmsThreadItem(
-                                    thread = thread,
-                                    onClick = { onOpenThread(thread) },
-                                    onDeleteClick = { threadToDelete = thread }
-                                )
-                            }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (filteredThreads.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Filled.Message,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (searchQuery.isBlank()) "No SMS conversations on device" else "No matching messages",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Tap the compose button below to start a new chat",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
                         }
                     }
-                }
-
-                // Start Chat FAB
-                FloatingActionButton(
-                    onClick = onStartNewChat,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(20.dp)
-                        .testTag("start_chat_fab"),
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = "Start new chat"
-                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(
+                            items = filteredThreads,
+                            key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
+                            contentType = { _, _ -> "sms_thread_row" }
+                        ) { _, thread ->
+                            SmsThreadItem(
+                                thread = thread,
+                                onClick = { onOpenThread(thread) },
+                                onDeleteClick = { threadToDelete = thread }
+                            )
+                        }
+                    }
                 }
             }
-        } else {
-            // Device Notifications Window
-            DeviceNotificationsWindow(
-                notifications = notifications,
-                hasNotificationAccess = hasNotificationAccess,
-                onRequestNotificationAccess = onRequestNotificationAccess,
-                onRequestPostNotification = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        postNotificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                },
-                onDismissNotification = onDismissNotification,
-                onClearAll = onClearAllNotifications,
-                onAddSampleAlerts = onAddSampleAlerts,
-                onSimulateAlert = onSimulateAlert,
-                onOpenAppDetailsSettings = onOpenAppDetailsSettings,
-                onSimulateSms = onSimulateSms,
-                onSimulateCall = onSimulateCall,
-                onReplyNotification = onReplyNotification,
+
+            // Start Chat FAB
+            FloatingActionButton(
+                onClick = onStartNewChat,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            )
+                    .align(Alignment.BottomEnd)
+                    .padding(20.dp)
+                    .testTag("start_chat_fab"),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Edit,
+                    contentDescription = "Start new chat"
+                )
+            }
         }
     }
 
@@ -376,6 +255,213 @@ fun MessagesScreen(
     }
 }
 
+/**
+ * Global Swipe-Down App Alerts Drawer that can be pulled down from any screen in the app
+ * (Messages, Calls, Dialer, Contacts, Clone Space, Browser, Settings, and inside any Cloned App)
+ * and closed via the small 'X' button.
+ */
+@Composable
+fun AppAlertsDrawerOverlay(
+    isOpen: Boolean,
+    onCloseDrawer: () -> Unit,
+    notifications: List<DeviceNotification>,
+    hasNotificationAccess: Boolean,
+    onRequestNotificationAccess: () -> Unit,
+    onDismissNotification: (String) -> Unit,
+    onClearAllNotifications: () -> Unit,
+    onAddSampleAlerts: () -> Unit = {},
+    onSimulateAlert: (String) -> Unit = {},
+    onOpenAppDetailsSettings: () -> Unit = {},
+    onSimulateSms: () -> Unit = {},
+    onSimulateCall: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val postNotificationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {}
+
+    AnimatedVisibility(
+        visible = isOpen,
+        enter = slideInVertically(
+            initialOffsetY = { fullHeight -> -fullHeight },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        ) + fadeIn(),
+        exit = slideOutVertically(
+            targetOffsetY = { fullHeight -> -fullHeight },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        ) + fadeOut(),
+        modifier = modifier.fillMaxSize()
+    ) {
+        BackHandler(enabled = isOpen) {
+            onCloseDrawer()
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("app_alerts_drawer_overlay"),
+            color = MaterialTheme.colorScheme.background,
+            tonalElevation = 3.dp
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Top Drawer Bar with Title and Small 'X' Button to Draw Back
+                Surface(
+                    tonalElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            var totalDy = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = { totalDy = 0f },
+                                onVerticalDrag = { _, dragAmount ->
+                                    totalDy += dragAmount
+                                    if (totalDy < -28.dp.toPx()) {
+                                        onCloseDrawer()
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    if (notifications.isNotEmpty()) {
+                                        Badge(containerColor = MaterialTheme.colorScheme.primary) {
+                                            Text(text = notifications.size.toString())
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Text(
+                                text = "App Alerts",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        // Small 'X' button to draw the App Alerts drawer back up
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .clickable { onCloseDrawer() }
+                                .testTag("close_app_alerts_drawer_btn")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Close App Alerts drawer",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                // Existing App Alerts Drawer Body (Quick Toggles + Device & App Notifications)
+                DeviceNotificationsWindow(
+                    notifications = notifications,
+                    hasNotificationAccess = hasNotificationAccess,
+                    onRequestNotificationAccess = onRequestNotificationAccess,
+                    onRequestPostNotification = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            postNotificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                    onDismissNotification = onDismissNotification,
+                    onClearAll = onClearAllNotifications,
+                    onAddSampleAlerts = onAddSampleAlerts,
+                    onSimulateAlert = onSimulateAlert,
+                    onOpenAppDetailsSettings = onOpenAppDetailsSettings,
+                    onSimulateSms = onSimulateSms,
+                    onSimulateCall = onSimulateCall,
+                    onCloseDrawer = onCloseDrawer,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+
+                // Compact Bottom Handle Bar with Small 'X' to Draw Back from Bottom as well
+                Surface(
+                    tonalElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            var totalDy = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = { totalDy = 0f },
+                                onVerticalDrag = { _, dragAmount ->
+                                    totalDy += dragAmount
+                                    if (totalDy < -24.dp.toPx()) {
+                                        onCloseDrawer()
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable { onCloseDrawer() }
+                                .testTag("close_app_alerts_drawer_bottom_btn")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Draw back App Alerts",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun DeviceNotificationsWindow(
     notifications: List<DeviceNotification>,
@@ -389,7 +475,7 @@ fun DeviceNotificationsWindow(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
-    onReplyNotification: (DeviceNotification, String) -> Unit = { _, _ -> },
+    onCloseDrawer: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -572,9 +658,6 @@ fun DeviceNotificationsWindow(
                     NotificationCard(
                         notification = notif,
                         onDismiss = { onDismissNotification(notif.key) },
-                        onReply = { notifItem, replyMsg ->
-                            onReplyNotification(notifItem, replyMsg)
-                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -649,11 +732,8 @@ fun DeviceNotificationsWindow(
 fun NotificationCard(
     notification: DeviceNotification,
     onDismiss: () -> Unit,
-    onReply: (DeviceNotification, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    var isReplying by remember { mutableStateOf(false) }
-    var replyText by remember { mutableStateOf("") }
     val appColor = remember(notification.appColorHex) {
         com.example.ui.components.parseHexColor(notification.appColorHex)
     }
@@ -743,85 +823,6 @@ fun NotificationCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            var lastReplySent by remember { mutableStateOf<String?>(null) }
-
-            if (lastReplySent != null) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                ) {
-                    Text(
-                        text = "✓ Replied: \"$lastReplySent\"",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-
-            val canReply = notification.isCommunicationOrSocial || notification.title.isNotBlank() || notification.text.isNotBlank()
-            if (canReply) {
-                if (!isReplying) {
-                    OutlinedButton(
-                        onClick = { isReplying = true },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.testTag("reply_notif_btn_${notification.key}")
-                    ) {
-                        Icon(imageVector = Icons.Filled.Message, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Reply", style = MaterialTheme.typography.labelSmall)
-                    }
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = replyText,
-                            onValueChange = { replyText = it },
-                            placeholder = { Text("Type reply...") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("reply_notif_input_${notification.key}")
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = { isReplying = false }) {
-                                Text("Cancel")
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Button(
-                                onClick = {
-                                    if (replyText.isNotBlank()) {
-                                        val sentMsg = replyText
-                                        onReply(notification, sentMsg)
-                                        lastReplySent = sentMsg
-                                        replyText = ""
-                                        isReplying = false
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.testTag("send_reply_btn_${notification.key}")
-                            ) {
-                                Text("Send")
-                            }
-                        }
-                    }
-                }
             }
         }
     }

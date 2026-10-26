@@ -80,6 +80,11 @@ object TelecomHelper {
         val cleanedNumber = phoneNumber.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
         if (cleanedNumber.isBlank()) return
 
+        val isPriority = PriorityContactManager.isPriorityNumber(cleanedNumber, context)
+        if (isPriority) {
+            PriorityContactManager.enforceOutgoingPriorityBypass(context)
+        }
+
         val targetUri = getCallUri(cleanedNumber)
         val hasCallPermission = ContextCompat.checkSelfPermission(
             context,
@@ -109,10 +114,27 @@ object TelecomHelper {
             } catch (_: Exception) {}
         }
 
+        // For priority numbers, auto-resolve the preferred/first SIM account handle to bypass OS Dual-SIM prompts
+        val priorityHandle = if (isPriority) {
+            try {
+                val prefs = context.getSharedPreferences("xeno_telecom_prefs", Context.MODE_PRIVATE)
+                val preferredSlot = prefs.getInt("preferred_sim_slot", 0)
+                val sims = getAvailableSimCards(context)
+                (sims.find { it.subscriptionId == preferredSlot } ?: sims.firstOrNull())?.phoneAccountHandle
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
         // 2. TelecomManager placeCall (only if default dialer & permission granted)
         if (isDefaultDialer(context) && telecomManager != null && hasCallPermission) {
             try {
-                telecomManager.placeCall(targetUri, android.os.Bundle())
+                val extras = android.os.Bundle().apply {
+                    if (priorityHandle != null) {
+                        putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, priorityHandle)
+                    }
+                }
+                telecomManager.placeCall(targetUri, extras)
                 return
             } catch (e: Exception) {
                 android.util.Log.w("TelecomHelper", "telecomManager.placeCall failed: ${e.message}")
@@ -124,6 +146,9 @@ object TelecomHelper {
             try {
                 val intent = Intent(Intent.ACTION_CALL, targetUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (priorityHandle != null) {
+                        putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, priorityHandle)
+                    }
                 }
                 context.startActivity(intent)
                 return
@@ -152,6 +177,10 @@ object TelecomHelper {
     ) {
         val cleanedNumber = phoneNumber.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
         if (cleanedNumber.isBlank()) return
+
+        if (PriorityContactManager.isPriorityNumber(cleanedNumber, context)) {
+            PriorityContactManager.enforceOutgoingPriorityBypass(context)
+        }
 
         val isUssd = isUssdCode(cleanedNumber)
         val targetUri = getCallUri(cleanedNumber)
@@ -214,6 +243,13 @@ object TelecomHelper {
         }
 
         makeCall(context, phoneNumber)
+    }
+
+    fun getPreferredSimForPriorityCall(context: Context): SimCardInfo? {
+        val prefs = context.getSharedPreferences("xeno_telecom_prefs", Context.MODE_PRIVATE)
+        val preferredSlot = prefs.getInt("preferred_sim_slot", 0)
+        val sims = getAvailableSimCards(context)
+        return sims.find { it.subscriptionId == preferredSlot } ?: sims.firstOrNull()
     }
 
     @android.annotation.SuppressLint("MissingPermission")

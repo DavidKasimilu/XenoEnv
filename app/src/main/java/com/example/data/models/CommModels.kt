@@ -85,6 +85,32 @@ data class CallLogEntry(
             return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
         }
 
+    val formattedTimeOfDay: String
+        get() = FastDateFormatter.formatTime(date)
+
+    val formattedDayLabel: String
+        get() {
+            val now = System.currentTimeMillis()
+            val diff = now - date
+            val oneDay = 24 * 60 * 60 * 1000L
+            return when {
+                diff < oneDay -> "Today"
+                diff < 2 * oneDay -> "Yesterday"
+                else -> FastDateFormatter.formatDayShortDate(date)
+            }
+        }
+
+    val typeLabel: String
+        get() = when (type) {
+            CallType.INCOMING -> "Incoming"
+            CallType.OUTGOING -> "Outgoing"
+            CallType.MISSED -> "Missed"
+            CallType.REJECTED -> "Rejected"
+            CallType.VOICEMAIL -> "Voicemail"
+            CallType.BLOCKED -> "Blocked"
+            CallType.UNKNOWN -> "Call"
+        }
+
     val formattedDate: String
         get() {
             val now = System.currentTimeMillis()
@@ -92,11 +118,88 @@ data class CallLogEntry(
             val oneDay = 24 * 60 * 60 * 1000L
             return when {
                 diff < oneDay -> FastDateFormatter.formatTime(date)
-                diff < 2 * oneDay -> "Yesterday"
+                diff < 2 * oneDay -> "Yesterday, ${FastDateFormatter.formatTime(date)}"
                 diff < 7 * oneDay -> FastDateFormatter.formatDayTime(date)
                 else -> FastDateFormatter.formatFullDate(date)
             }
         }
+}
+
+/**
+ * Represents a group of consecutive calls to/from the same number within a 3-hour window.
+ */
+data class CallLogGroup(
+    val entries: List<CallLogEntry>
+) {
+    init {
+        require(entries.isNotEmpty()) { "CallLogGroup must contain at least one CallLogEntry" }
+    }
+
+    val latestEntry: CallLogEntry
+        get() = entries.first()
+
+    val oldestEntry: CallLogEntry
+        get() = entries.last()
+
+    val count: Int
+        get() = entries.size
+}
+
+private const val CONSECUTIVE_CALL_WINDOW_MS = 3 * 60 * 60 * 1000L // 3 hours
+
+private fun normalizeCallerIdentity(entry: CallLogEntry): String {
+    val raw = entry.number.trim()
+    if (raw.isEmpty()) return "name:${entry.displayName.lowercase(Locale.ROOT)}"
+    // Keep USSD / short codes distinct
+    if (raw.contains("*") || raw.contains("#")) return raw.lowercase(Locale.ROOT)
+    val digits = buildString(raw.length) {
+        for (ch in raw) {
+            if (ch in '0'..'9') append(ch)
+        }
+    }
+    return when {
+        digits.length >= 9 -> digits.takeLast(9)
+        digits.length >= 7 -> digits.takeLast(7)
+        digits.isNotEmpty() -> digits
+        else -> raw.lowercase(Locale.ROOT)
+    }
+}
+
+/**
+ * Bundles consecutive call records to/from the same phone number when adjacent calls in the
+ * consecutive sequence occur within [maxWindowMs] (default 3 hours) of each other.
+ */
+fun groupConsecutiveCalls(
+    logs: List<CallLogEntry>,
+    maxWindowMs: Long = CONSECUTIVE_CALL_WINDOW_MS
+): List<CallLogGroup> {
+    if (logs.isEmpty()) return emptyList()
+    val groups = ArrayList<CallLogGroup>(logs.size)
+    var currentBucket = ArrayList<CallLogEntry>(4)
+    var currentIdentity = ""
+
+    for (entry in logs) {
+        val identity = normalizeCallerIdentity(entry)
+        if (currentBucket.isEmpty()) {
+            currentBucket.add(entry)
+            currentIdentity = identity
+        } else {
+            val previousInRun = currentBucket.last()
+            val timeGap = kotlin.math.abs(previousInRun.date - entry.date)
+            if (identity == currentIdentity && timeGap <= maxWindowMs) {
+                currentBucket.add(entry)
+            } else {
+                groups.add(CallLogGroup(currentBucket))
+                currentBucket = ArrayList(4)
+                currentBucket.add(entry)
+                currentIdentity = identity
+            }
+        }
+    }
+    if (currentBucket.isNotEmpty()) {
+        groups.add(CallLogGroup(currentBucket))
+    }
+    return groups
 }
 
 data class ContactItem(

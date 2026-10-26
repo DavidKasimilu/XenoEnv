@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.models.ContactItem
+import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
 import com.example.ui.components.ContactAvatar
@@ -441,17 +442,40 @@ fun ContactItemRow(
             ContactAvatar(nameOrNumber = contact.displayName, size = 44.dp)
 
             Column(modifier = Modifier.weight(1f)) {
+                val isPriority = remember(contact.primaryNumber, contact.allNumbers) {
+                    PriorityContactManager.isPriorityContact(contact.primaryNumber, contact.allNumbers)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = contact.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isPriority) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "★ PRIORITY BYPASS",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Text(
-                    text = contact.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = contact.primaryNumber,
+                    text = if (isPriority) "${contact.primaryNumber} • DND & Lock Bypass Active" else contact.primaryNumber,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isPriority) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
