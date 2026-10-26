@@ -235,6 +235,48 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Dual Space: Receives "clone / remove" requests from the main profile.
+             Disabled by default; only enabled inside the work profile. -->
+        <activity
+            android:name="com.example.dualspace.CloneActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="com.example.dualspace.action.CLONE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Dual Space: Required by the system during work-profile provisioning (Android 10+/12+) -->
+        <activity
+            android:name="com.example.dualspace.ProvisioningActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Dual Space: Work Profile DeviceAdminReceiver -->
+        <receiver
+            android:name="com.example.dualspace.AdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

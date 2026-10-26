@@ -53,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,6 +95,16 @@ fun SpaceSandboxScreen(
     onBackToBrowser: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var showAccountsScreen by rememberSaveable { mutableStateOf(false) }
+
+    if (showAccountsScreen) {
+        AccountsScreen(
+            onBack = { showAccountsScreen = false },
+            modifier = modifier
+        )
+        return
+    }
+
     BackHandler {
         onBackToBrowser()
     }
@@ -175,6 +186,10 @@ fun SpaceSandboxScreen(
 
             MusicShortcutIconItem(
                 onClick = onOpenMusic
+            )
+
+            AccountsShortcutIconItem(
+                onClick = { showAccountsScreen = true }
             )
         }
 

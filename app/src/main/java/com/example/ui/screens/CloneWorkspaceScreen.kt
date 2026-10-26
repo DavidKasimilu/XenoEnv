@@ -11,16 +11,21 @@ import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
+import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -1391,12 +1396,41 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                 ariaLabel.indexOf('video call') !== -1;
 
                             if (isVoiceBtn || isVideoBtn) {
-                                window.__xenoExtractActiveChatContact();
+                                var contactInfo = window.__xenoExtractActiveChatContact();
                                 window.__xenoLastChatContact.isVideo = isVideoBtn;
                                 window.__xenoLastCallTapTime = Date.now();
+                                if (window.XenoCallBridge && typeof window.XenoCallBridge.requestNativeCallPermissions === 'function') {
+                                    window.XenoCallBridge.requestNativeCallPermissions(true, isVideoBtn);
+                                }
+                                setTimeout(function() {
+                                    if (!window.__xenoCallOverlayActive && !window.__xenoInterceptUnsupportedCallDialog()) {
+                                        var nativeCallUi = document.querySelector('[data-testid*="call"], [data-icon*="call-end"], [aria-label*="End call"], [aria-label*="Leave call"]');
+                                        if (!nativeCallUi) {
+                                            window.__xenoStartWhatsAppCallOverlay(contactInfo.name, contactInfo.avatar, isVideoBtn);
+                                        }
+                                    }
+                                }, 320);
                             }
                         } catch(e) {}
                     }, true);
+
+                    // Intercept window.open for detached WhatsApp Web Voice/Video Call windows so calls never fail or get blocked
+                    if (typeof window.open === 'function' && !window.__xenoWindowOpenPatched) {
+                        window.__xenoWindowOpenPatched = true;
+                        var origWindowOpen = window.open.bind(window);
+                        window.open = function(url, target, features) {
+                            var urlStr = String(url || '').trim();
+                            var targetStr = String(target || '').toLowerCase();
+                            var isCallPopup = (!urlStr || urlStr === 'about:blank' || targetStr.indexOf('call') !== -1 || targetStr.indexOf('voip') !== -1) &&
+                                (window.__xenoLastCallTapTime && (Date.now() - window.__xenoLastCallTapTime < 5000));
+                            if (isCallPopup) {
+                                var contact = window.__xenoExtractActiveChatContact();
+                                window.__xenoStartWhatsAppCallOverlay(contact.name, contact.avatar, Boolean(contact.isVideo));
+                                return window;
+                            }
+                            return origWindowOpen(url, target, features);
+                        };
+                    }
 
                     // Intercept & suppress any "Browser does not support calls" / "Calling isn't supported on this browser" modal
                     window.__xenoInterceptUnsupportedCallDialog = function() {
@@ -3346,16 +3380,26 @@ fun CloneWorkspaceScreen(
         // Complete any pending WebView WebRTC PermissionRequest immediately once Android OS permissions resolve
         pendingWebPermissionRequest?.let { req ->
             try {
-                val res = req.resources ?: emptyArray()
-                val wantsAudio = res.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
-                val wantsVideo = res.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                val requested = req.resources ?: emptyArray()
+                val granted = mutableListOf<String>()
+                for (r in requested) {
+                    if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE && hasMicPermission) granted.add(r)
+                    else if (r == PermissionRequest.RESOURCE_VIDEO_CAPTURE && hasCameraPermission) granted.add(r)
+                    else if (r == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID || r == PermissionRequest.RESOURCE_MIDI_SYSEX) granted.add(r)
+                }
+                val wantsAudio = requested.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                val wantsVideo = requested.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
                 if (wantsAudio || wantsVideo) {
                     isCallActive = true
                     isVideoCallActive = wantsVideo
                     audioFocusRequest = setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
                     webViewInstance?.keepScreenOn = true
                 }
-                req.grant(res)
+                if (granted.isNotEmpty()) {
+                    req.grant(granted.toTypedArray())
+                } else {
+                    req.grant(requested)
+                }
             } catch (_: Exception) {}
             pendingWebPermissionRequest = null
         }
@@ -3365,6 +3409,31 @@ fun CloneWorkspaceScreen(
         } else if (isDiscord) {
             injectDiscordStabilityAndLoginHelper(webViewInstance, instance.isDesktopMode)
         }
+    }
+
+    var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uris = if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            if (data?.clipData != null) {
+                val count = data.clipData!!.itemCount
+                val list = mutableListOf<Uri>()
+                for (i in 0 until count) {
+                    list.add(data.clipData!!.getItemAt(i).uri)
+                }
+                list.toTypedArray()
+            } else if (data?.data != null) {
+                arrayOf(data.data!!)
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+        fileChooserCallback?.onReceiveValue(uris)
+        fileChooserCallback = null
     }
 
     // Proactively request Microphone, Camera, Bluetooth & Notification permissions when opening WhatsApp Web
@@ -4089,13 +4158,17 @@ fun CloneWorkspaceScreen(
                                     mediaPlaybackRequiresUserGesture = false
                                     cacheMode = WebSettings.LOAD_DEFAULT
                                     javaScriptCanOpenWindowsAutomatically = true
-                                    setSupportMultipleWindows(false)
+                                    setSupportMultipleWindows(true)
+                                    setGeolocationEnabled(true)
                                     allowFileAccess = true
                                     allowContentAccess = true
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                         offscreenPreRaster = true
                                     }
-                                    // Discord web client (/app & /login) requires a desktop Chrome User-Agent to serve the full React web app instead of the mobile download splash screen
+                                    @Suppress("DEPRECATION")
+                                    setRenderPriority(WebSettings.RenderPriority.HIGH)
+                                    defaultTextEncodingName = "UTF-8"
+                                    // Discord web client (/app & /login) and WhatsApp Web require a desktop Chrome User-Agent to serve full calling and web app features
                                     userAgentString = if (isWhatsapp || isDiscord || instance.isDesktopMode) {
                                         DESKTOP_USER_AGENT
                                     } else {
@@ -4499,6 +4572,98 @@ fun CloneWorkspaceScreen(
                                         if (pendingWebPermissionRequest == request) {
                                             pendingWebPermissionRequest = null
                                         }
+                                    }
+
+                                    override fun onGeolocationPermissionsShowPrompt(
+                                        origin: String?,
+                                        callback: GeolocationPermissions.Callback?
+                                    ) {
+                                        callback?.invoke(origin, true, false)
+                                    }
+
+                                    override fun onJsAlert(
+                                        view: WebView?,
+                                        url: String?,
+                                        message: String?,
+                                        result: JsResult?
+                                    ): Boolean {
+                                        try {
+                                            if (!message.isNullOrBlank()) {
+                                                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+                                            }
+                                        } catch (_: Exception) {}
+                                        result?.confirm()
+                                        return true
+                                    }
+
+                                    override fun onJsConfirm(
+                                        view: WebView?,
+                                        url: String?,
+                                        message: String?,
+                                        result: JsResult?
+                                    ): Boolean {
+                                        result?.confirm()
+                                        return true
+                                    }
+
+                                    override fun onShowFileChooser(
+                                        webView: WebView?,
+                                        filePathCallback: ValueCallback<Array<Uri>>?,
+                                        fileChooserParams: FileChooserParams?
+                                    ): Boolean {
+                                        fileChooserCallback?.onReceiveValue(null)
+                                        fileChooserCallback = filePathCallback
+                                        val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                                            type = "*/*"
+                                            addCategory(Intent.CATEGORY_OPENABLE)
+                                        }
+                                        return try {
+                                            fileChooserLauncher.launch(intent)
+                                            true
+                                        } catch (_: Exception) {
+                                            fileChooserCallback?.onReceiveValue(null)
+                                            fileChooserCallback = null
+                                            false
+                                        }
+                                    }
+
+                                    override fun onCreateWindow(
+                                        view: WebView?,
+                                        isDialog: Boolean,
+                                        isUserGesture: Boolean,
+                                        resultMsg: Message?
+                                    ): Boolean {
+                                        val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                                        val parentWebView = view ?: return false
+                                        val tempWebView = WebView(parentWebView.context).apply {
+                                            settings.javaScriptEnabled = true
+                                            settings.domStorageEnabled = true
+                                            settings.userAgentString = parentWebView.settings.userAgentString
+                                            webViewClient = object : WebViewClient() {
+                                                override fun shouldOverrideUrlLoading(
+                                                    childView: WebView?,
+                                                    request: WebResourceRequest?
+                                                ): Boolean {
+                                                    val targetUrl = request?.url?.toString() ?: return false
+                                                    if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
+                                                        if (isWhatsapp && (targetUrl.contains("whatsapp.com/download") || targetUrl.contains("whatsapp.com/android"))) {
+                                                            return true
+                                                        }
+                                                        parentWebView.loadUrl(
+                                                            targetUrl,
+                                                            if (isWhatsapp) WHATSAPP_WEB_HEADERS else emptyMap()
+                                                        )
+                                                    }
+                                                    try {
+                                                        childView?.destroy()
+                                                    } catch (_: Exception) {}
+                                                    return true
+                                                }
+                                            }
+                                        }
+                                        transport.webView = tempWebView
+                                        resultMsg.sendToTarget()
+                                        return true
                                     }
 
                                     override fun getDefaultVideoPoster(): Bitmap? {
