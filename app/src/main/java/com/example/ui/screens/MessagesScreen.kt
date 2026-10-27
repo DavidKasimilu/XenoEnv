@@ -340,22 +340,12 @@ fun AppAlertsDrawerOverlay(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            BadgedBox(
-                                badge = {
-                                    if (notifications.isNotEmpty()) {
-                                        Badge(containerColor = MaterialTheme.colorScheme.primary) {
-                                            Text(text = notifications.size.toString())
-                                        }
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Filled.NotificationsActive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
                             Text(
                                 text = "App Alerts",
                                 style = MaterialTheme.typography.titleMedium,

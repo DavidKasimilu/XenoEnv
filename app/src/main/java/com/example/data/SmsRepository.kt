@@ -54,7 +54,29 @@ class SmsRepository(
     private var cachedThreads: List<SmsThread> = emptyList()
 
     init {
+        if (!fastSmsPrefs.contains("last_seen_sms_baseline_ts")) {
+            fastSmsPrefs.edit().putLong("last_seen_sms_baseline_ts", System.currentTimeMillis()).apply()
+        }
         registerDeliveryReceivers()
+    }
+
+    private fun normalizeAddressKey(address: String): String {
+        val digits = address.filter { it.isDigit() }
+        return if (digits.length >= 7) digits.takeLast(10) else address.trim().lowercase()
+    }
+
+    private fun isMessageMarkedReadLocally(threadId: Long, address: String, date: Long, providerRead: Boolean): Boolean {
+        if (providerRead) return true
+        val baselineTs = fastSmsPrefs.getLong("last_seen_sms_baseline_ts", 0L)
+        if (baselineTs > 0L && date <= baselineTs) return true
+        val threadReadTs = fastSmsPrefs.getLong("read_thread_$threadId", 0L)
+        if (threadReadTs > 0L && date <= threadReadTs) return true
+        val addrKey = normalizeAddressKey(address)
+        if (addrKey.isNotEmpty()) {
+            val addrReadTs = fastSmsPrefs.getLong("read_addr_$addrKey", 0L)
+            if (addrReadTs > 0L && date <= addrReadTs) return true
+        }
+        return false
     }
 
     /**
@@ -236,7 +258,7 @@ class SmsRepository(
                         val address = if (addressIdx != -1) cursor.getString(addressIdx) ?: "" else ""
                         val body = if (bodyIdx != -1) cursor.getString(bodyIdx) ?: "" else ""
                         val date = if (dateIdx != -1) cursor.getLong(dateIdx) else System.currentTimeMillis()
-                        val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
+                        val providerRead = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                         val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
 
                         val effectiveThreadId = when {
@@ -249,6 +271,7 @@ class SmsRepository(
                             type == Telephony.Sms.MESSAGE_TYPE_OUTBOX ||
                             type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
                             type == Telephony.Sms.MESSAGE_TYPE_FAILED
+                        val read = isSentMsg || isMessageMarkedReadLocally(effectiveThreadId, address, date, providerRead)
                         val resolvedStatus = deliveryStatusMap[effectiveId] ?: when (type) {
                             Telephony.Sms.MESSAGE_TYPE_OUTBOX, Telephony.Sms.MESSAGE_TYPE_QUEUED -> SmsDeliveryStatus.SENDING
                             Telephony.Sms.MESSAGE_TYPE_FAILED -> SmsDeliveryStatus.FAILED
@@ -443,7 +466,7 @@ class SmsRepository(
                     val addr = if (addressIdx != -1) cursor.getString(addressIdx) ?: address else address
                     val body = if (bodyIdx != -1) cursor.getString(bodyIdx) ?: "" else ""
                     val date = if (dateIdx != -1) cursor.getLong(dateIdx) else System.currentTimeMillis()
-                    val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
+                    val providerRead = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                     val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
                     val statusCol = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
 
@@ -451,6 +474,7 @@ class SmsRepository(
                         type == Telephony.Sms.MESSAGE_TYPE_OUTBOX ||
                         type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
                         type == Telephony.Sms.MESSAGE_TYPE_FAILED
+                    val read = isSentMsg || isMessageMarkedReadLocally(tId, addr, date, providerRead)
                     val deliveryStatus = deliveryStatusMap[id] ?: when {
                         type == Telephony.Sms.MESSAGE_TYPE_FAILED || statusCol == Telephony.Sms.STATUS_FAILED -> SmsDeliveryStatus.FAILED
                         type == Telephony.Sms.MESSAGE_TYPE_OUTBOX || type == Telephony.Sms.MESSAGE_TYPE_QUEUED || statusCol == Telephony.Sms.STATUS_PENDING -> SmsDeliveryStatus.SENDING
@@ -653,6 +677,15 @@ class SmsRepository(
     }
 
     suspend fun markThreadAsRead(threadId: Long, address: String): Boolean = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val addrKey = normalizeAddressKey(address)
+        fastSmsPrefs.edit().apply {
+            putLong("read_thread_$threadId", now)
+            if (addrKey.isNotEmpty()) {
+                putLong("read_addr_$addrKey", now)
+            }
+        }.apply()
+
         // Update in-memory message states
         synchronized(inMemoryMessages) {
             inMemoryMessages.forEachIndexed { idx, msg ->

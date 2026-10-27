@@ -613,64 +613,7 @@ fun ChatScreen(
                 }
             }
 
-            // Quick-Paste Clipboard Chip above Composer when clipboard has content
-            val activeClip = clipboardPreviewText?.takeIf {
-                it.isNotBlank() && it != dismissedClipboardPreview && it != inputText
-            }
-            AnimatedVisibility(visible = activeClip != null) {
-                activeClip?.let { clipText ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("clipboard_quick_paste_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    inputText = if (inputText.isBlank()) clipText else "$inputText $clipText"
-                                }
-                                .padding(horizontal = 14.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ContentPaste,
-                                    contentDescription = "Paste from clipboard",
-                                    modifier = Modifier.size(15.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Tap to paste: \"${clipText.replace("\n", " ")}\"",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(
-                                onClick = { dismissedClipboardPreview = clipText },
-                                modifier = Modifier.size(20.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Dismiss clipboard suggestion",
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Bottom Composer Bar with Clipboard Paste & Send
+            // Bottom Composer Bar
             Surface(
                 tonalElevation = 2.dp,
                 color = MaterialTheme.colorScheme.surface
@@ -682,28 +625,6 @@ fun ChatScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Dedicated Clipboard Paste Button in SMS Chat Composer
-                    IconButton(
-                        onClick = {
-                            val clip = readClipboardText()
-                            if (!clip.isNullOrBlank()) {
-                                inputText = if (inputText.isBlank()) clip else "$inputText $clip"
-                                clipboardFeedbackText = "Pasted from clipboard"
-                            } else {
-                                clipboardFeedbackText = "Clipboard is empty"
-                            }
-                        },
-                        modifier = Modifier
-                            .size(44.dp)
-                            .testTag("chat_paste_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.ContentPaste,
-                            contentDescription = "Paste from clipboard",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
@@ -711,23 +632,6 @@ fun ChatScreen(
                             .weight(1f)
                             .testTag("chat_input_field"),
                         placeholder = { Text("Text message (SMS)...") },
-                        trailingIcon = {
-                            if (inputText.isNotEmpty()) {
-                                IconButton(
-                                    onClick = {
-                                        copyToClipboard("Draft message", inputText)
-                                    },
-                                    modifier = Modifier.testTag("chat_copy_draft_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.ContentCopy,
-                                        contentDescription = "Copy draft text",
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        },
                         shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,

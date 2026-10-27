@@ -2,13 +2,19 @@ package com.example.ui.components
 
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,8 +51,8 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +68,146 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Process-wide persistent Torch controller that keeps the flashlight ON across
+ * App Alerts drawer open/close, screen navigation, and screen-off states until
+ * the user explicitly turns the flashlight OFF.
+ */
+object PersistentTorchController {
+    private val _isTorchOn = MutableStateFlow(false)
+    val isTorchOn: StateFlow<Boolean> = _isTorchOn.asStateFlow()
+
+    @Volatile
+    private var userRequestedOn: Boolean = false
+
+    @Volatile
+    private var initialized: Boolean = false
+
+    private var appContext: Context? = null
+    private var cameraManager: CameraManager? = null
+    private var torchCameraId: String? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    fun ensureInitialized(context: Context) {
+        if (initialized) return
+        synchronized(this) {
+            if (initialized) return
+            val app = context.applicationContext
+            appContext = app
+            val cm = app.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            cameraManager = cm
+            torchCameraId = try {
+                cm?.cameraIdList?.firstOrNull { id ->
+                    val chars = cm.getCameraCharacteristics(id)
+                    chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                }
+            } catch (_: Exception) {
+                null
+            }
+
+            try {
+                cm?.registerTorchCallback(
+                    object : CameraManager.TorchCallback() {
+                        override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                            if (cameraId == torchCameraId) {
+                                if (userRequestedOn && !enabled) {
+                                    // Re-assert torch if system turned it off (e.g., on screen lock/off)
+                                    mainHandler.postDelayed({
+                                        if (userRequestedOn) {
+                                            try {
+                                                cm.setTorchMode(cameraId, true)
+                                            } catch (_: Exception) {}
+                                        }
+                                    }, 60L)
+                                } else {
+                                    _isTorchOn.value = userRequestedOn || enabled
+                                }
+                            }
+                        }
+                    },
+                    mainHandler
+                )
+            } catch (_: Exception) {}
+
+            try {
+                val filter = IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_USER_PRESENT)
+                }
+                val receiver = object : BroadcastReceiver() {
+                    override fun onReceive(ctx: Context?, intent: Intent?) {
+                        if (userRequestedOn) {
+                            reassertTorch()
+                            mainHandler.postDelayed({ if (userRequestedOn) reassertTorch() }, 150L)
+                            mainHandler.postDelayed({ if (userRequestedOn) reassertTorch() }, 400L)
+                        }
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    app.registerReceiver(receiver, filter)
+                }
+            } catch (_: Exception) {}
+
+            initialized = true
+        }
+    }
+
+    private fun reassertTorch() {
+        val cm = cameraManager ?: return
+        val camId = torchCameraId ?: return
+        try {
+            cm.setTorchMode(camId, true)
+        } catch (_: Exception) {}
+    }
+
+    private fun updateWakeLock(enable: Boolean) {
+        val app = appContext ?: return
+        try {
+            if (enable) {
+                if (wakeLock == null) {
+                    val pm = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                    wakeLock = pm?.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "xeno:PersistentTorchWakeLock"
+                    )?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire()
+                }
+            } else {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun toggleTorch(context: Context) {
+        ensureInitialized(context)
+        val nextState = !userRequestedOn
+        userRequestedOn = nextState
+        _isTorchOn.value = nextState
+        updateWakeLock(nextState)
+
+        val cm = cameraManager
+        val camId = torchCameraId
+        if (cm != null && camId != null) {
+            try {
+                cm.setTorchMode(camId, nextState)
+            } catch (_: Exception) {}
+        }
+    }
+}
 
 @Composable
 fun QuickTogglesPanel(
@@ -70,42 +216,14 @@ fun QuickTogglesPanel(
     val context = LocalContext.current
     val activity = context as? Activity
 
-    // 1. Torch State
-    var isTorchOn by remember { mutableStateOf(false) }
-    val cameraManager = remember { context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager }
-    val cameraId = remember(cameraManager) {
-        try {
-            cameraManager?.cameraIdList?.firstOrNull { id ->
-                val chars = cameraManager.getCameraCharacteristics(id)
-                chars.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-            }
-        } catch (_: Exception) {
-            null
-        }
+    // 1. Persistent Torch State (stays ON across navigation & screen off until explicitly toggled off)
+    LaunchedEffect(Unit) {
+        PersistentTorchController.ensureInitialized(context)
     }
+    val isTorchOn by PersistentTorchController.isTorchOn.collectAsState()
 
     fun toggleTorch() {
-        if (cameraId != null && cameraManager != null) {
-            try {
-                val nextState = !isTorchOn
-                cameraManager.setTorchMode(cameraId, nextState)
-                isTorchOn = nextState
-            } catch (_: Exception) {
-                isTorchOn = !isTorchOn
-            }
-        } else {
-            isTorchOn = !isTorchOn
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            if (isTorchOn && cameraId != null && cameraManager != null) {
-                try {
-                    cameraManager.setTorchMode(cameraId, false)
-                } catch (_: Exception) {}
-            }
-        }
+        PersistentTorchController.toggleTorch(context)
     }
 
     // 2. Wi-Fi State
