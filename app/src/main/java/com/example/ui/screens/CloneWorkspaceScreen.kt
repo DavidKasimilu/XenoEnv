@@ -352,8 +352,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                         } catch(e) {}
                     };
 
-                    defineNavProp('userAgent', function() { return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'; });
-                    defineNavProp('appVersion', function() { return '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'; });
                     defineNavProp('userAgentData', function() { return desktopUaData; });
                     defineNavProp('platform', function() { return 'Win32'; });
                     defineNavProp('vendor', function() { return 'Google Inc.'; });
@@ -364,13 +362,9 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     try {
                         Object.defineProperty(window, 'isSecureContext', { get: function() { return true; }, configurable: true });
-                        Object.defineProperty(window, 'crossOriginIsolated', { get: function() { return true; }, configurable: true });
-                        if (typeof window.SharedArrayBuffer === 'undefined') {
-                            window.SharedArrayBuffer = ArrayBuffer;
-                        }
                     } catch(e) {}
 
-                    // Polyfill MediaCapabilities & AudioWorklet required by WhatsApp Web VoIP capability checks
+                    // Polyfill MediaCapabilities required by WhatsApp Web VoIP capability checks
                     try {
                         if (!navigator.mediaCapabilities) {
                             navigator.mediaCapabilities = {};
@@ -380,30 +374,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                         };
                         navigator.mediaCapabilities.decodingInfo = capOk;
                         navigator.mediaCapabilities.encodingInfo = capOk;
-                        if (typeof window.AudioWorklet === 'undefined') {
-                            window.AudioWorklet = function() {};
-                        }
-                        if (typeof window.AudioWorkletNode === 'undefined') {
-                            window.AudioWorkletNode = function() {};
-                        }
                     } catch(e) {}
-
-                    // Spoof desktop pointer/hover media queries so WhatsApp Web never flags the browser as a mobile touch WebView
-                    if (typeof window.matchMedia === 'function' && !window.__xenoMatchMediaPatched) {
-                        window.__xenoMatchMediaPatched = true;
-                        var origMatchMedia = window.matchMedia.bind(window);
-                        window.matchMedia = function(query) {
-                            var q = String(query || '').toLowerCase();
-                            var res = origMatchMedia(query);
-                            if (q.indexOf('pointer: coarse') !== -1 || q.indexOf('hover: none') !== -1) {
-                                return Object.assign({}, res, { matches: false, media: query, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} });
-                            }
-                            if (q.indexOf('pointer: fine') !== -1 || q.indexOf('hover: hover') !== -1) {
-                                return Object.assign({}, res, { matches: true, media: query, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} });
-                            }
-                            return res;
-                        };
-                    }
 
                     // 3. Desktop Notification API (Required for Incoming & Outgoing Call Alerts)
                     if (typeof window.Notification === 'undefined' || window.Notification.permission !== 'granted') {
@@ -939,112 +910,44 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                         window.RTCRtpTransceiver.prototype.setCodecPreferences = function() {};
                     }
 
-                    // 10. Hook WhatsApp Web's internal module loaders (window.__d, window.require, importDefault, importNamespace, ABProp)
-                    var callCapKeyRegex = /(^is(voice|video|group|web|voip|browser)?call(ing|s)?(supported|enabled|allowed|available)$)|(^supports?(voice|video|group|web)?call(ing|s)?$)|(^isbrowsersupported)|(^canstartcall$)|(^hascallingsupport$)|(^voipsupported$)|(^webrtcsupported$)/i;
-                    var patchWhatsAppCallingModuleExports = function(mod) {
-                        if (!mod || (typeof mod !== 'object' && typeof mod !== 'function')) return mod;
-                        var explicitKeys = [
-                            'isCallingSupported', 'isVoiceCallSupported', 'isVideoCallSupported', 'isGroupCallSupported',
-                            'supportsCalling', 'supportsVoiceCall', 'supportsVideoCall', 'isWebCallingSupported',
-                            'isWebCallingEnabled', 'isVoipSupported', 'isBrowserSupportedForCalling', 'canStartCall',
-                            'isCallSupported', 'isCallEnabled', 'hasCallingSupport', 'isCallingEnabled',
-                            'callingSupported', 'voiceCallSupported', 'videoCallSupported', 'browserSupportsCalling'
-                        ];
-                        for (var i = 0; i < explicitKeys.length; i++) {
-                            var key = explicitKeys[i];
-                            try {
-                                if (key in mod) {
-                                    if (typeof mod[key] === 'function' && !mod[key].__xenoPatched) {
-                                        var fn = function() { return true; };
-                                        fn.__xenoPatched = true;
-                                        mod[key] = fn;
-                                    } else if (typeof mod[key] === 'boolean') {
-                                        mod[key] = true;
-                                    }
-                                }
-                            } catch(e) {}
-                        }
-                        try {
-                            var keys = Object.keys(mod);
-                            for (var k = 0; k < keys.length; k++) {
-                                var prop = keys[k];
-                                if (callCapKeyRegex.test(prop)) {
-                                    if (typeof mod[prop] === 'function' && !mod[prop].__xenoPatched) {
-                                        var pFn = function() { return true; };
-                                        pFn.__xenoPatched = true;
-                                        mod[prop] = pFn;
-                                    } else if (typeof mod[prop] === 'boolean') {
-                                        mod[prop] = true;
-                                    }
-                                } else if ((prop === 'getABPropConfigValue' || prop === 'getConfigValue') && typeof mod[prop] === 'function' && !mod[prop].__xenoAbPatched) {
-                                    var origAb = mod[prop];
-                                    var wrappedAb = function(abKey) {
-                                        var ks = String(abKey || '').toLowerCase();
-                                        if (ks.indexOf('call') !== -1 || ks.indexOf('voip') !== -1 || ks.indexOf('webrtc') !== -1) {
-                                            if (ks.indexOf('disable') !== -1 || ks.indexOf('killswitch') !== -1 || ks.indexOf('block') !== -1) {
-                                                return false;
-                                            }
-                                            var origVal = origAb.apply(this, arguments);
-                                            if (typeof origVal === 'boolean') return true;
-                                            return origVal;
-                                        }
-                                        return origAb.apply(this, arguments);
-                                    };
-                                    wrappedAb.__xenoAbPatched = true;
-                                    mod[prop] = wrappedAb;
-                                }
-                            }
-                        } catch(e) {}
-                        return mod;
-                    };
-
-                    var wrapImportFn = function(fn) {
-                        if (typeof fn !== 'function' || fn.__xenoWrappedImport) return fn;
-                        var wrapped = function(id) {
-                            var res = fn.apply(this, arguments);
-                            try { patchWhatsAppCallingModuleExports(res); } catch(e) {}
-                            return res;
-                        };
-                        wrapped.__xenoWrappedImport = true;
-                        Object.keys(fn).forEach(function(k) {
-                            try { wrapped[k] = fn[k]; } catch(e) {}
-                        });
-                        return wrapped;
-                    };
-
+                    // 10. Hook WhatsApp Web's internal module loader (window.require) when calling capability modules load
                     var hookWhatsAppRequire = function() {
                         if (typeof window.require === 'function' && !window.require.__xenoHooked) {
                             var origReq = window.require;
-                            var wrappedReq = wrapImportFn(origReq);
-                            wrappedReq.__xenoHooked = true;
-                            window.require = wrappedReq;
-                        }
-                        if (typeof window.__d === 'function' && !window.__d.__xenoHooked) {
-                            var origD = window.__d;
-                            var wrappedD = function(factory, moduleId, depMap) {
-                                if (typeof factory === 'function' && !factory.__xenoWrappedFactory) {
-                                    var origFactory = factory;
-                                    factory = function(global, req, importDefault, importNamespace, module, exports, deps) {
-                                        var wReq = wrapImportFn(req);
-                                        var wDef = wrapImportFn(importDefault);
-                                        var wNs = wrapImportFn(importNamespace);
-                                        var ret = origFactory.call(this, global, wReq, wDef, wNs, module, exports, deps);
-                                        try {
-                                            if (exports) patchWhatsAppCallingModuleExports(exports);
-                                            if (module && module.exports) patchWhatsAppCallingModuleExports(module.exports);
-                                        } catch(e) {}
-                                        return ret;
-                                    };
-                                    factory.__xenoWrappedFactory = true;
-                                }
-                                return origD.call(this, factory, moduleId, depMap);
+                            var wrappedReq = function(id) {
+                                var mod = origReq.apply(this, arguments);
+                                try {
+                                    if (mod && typeof mod === 'object') {
+                                        var idStr = String(id || '');
+                                        if (idStr.indexOf('Call') !== -1 || idStr.indexOf('Voip') !== -1 || idStr.indexOf('Webrtc') !== -1 || idStr.indexOf('Browser') !== -1 || idStr.indexOf('Capabilit') !== -1) {
+                                            var keys = [
+                                                'isCallingSupported', 'isVoiceCallSupported', 'isVideoCallSupported', 'isGroupCallSupported',
+                                                'supportsCalling', 'supportsVoiceCall', 'supportsVideoCall', 'isWebCallingSupported',
+                                                'isWebCallingEnabled', 'isVoipSupported', 'isBrowserSupportedForCalling', 'canStartCall',
+                                                'isCallSupported', 'isCallEnabled', 'hasCallingSupport', 'isCallingEnabled'
+                                            ];
+                                            for (var i = 0; i < keys.length; i++) {
+                                                var key = keys[i];
+                                                if (typeof mod[key] === 'function') {
+                                                    mod[key] = function() { return true; };
+                                                } else if (typeof mod[key] === 'boolean') {
+                                                    mod[key] = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch(e) {}
+                                return mod;
                             };
-                            wrappedD.__xenoHooked = true;
-                            window.__d = wrappedD;
+                            wrappedReq.__xenoHooked = true;
+                            Object.keys(origReq).forEach(function(k) {
+                                try { wrappedReq[k] = origReq[k]; } catch(e) {}
+                            });
+                            window.require = wrappedReq;
                         }
                     };
                     hookWhatsAppRequire();
-                    setInterval(hookWhatsAppRequire, 600);
+                    setInterval(hookWhatsAppRequire, 1000);
 
                     // 11. Built-in WhatsApp Web Live Voice & Video Call UI (Phone-Screen Responsive)
                     window.__xenoExtractActiveChatContact = function() {
@@ -1483,9 +1386,11 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                     // Actively unlock disabled call buttons in #main header & menus so they never show "Browser does not support calls"
                     window.__xenoUnlockWhatsAppCallButtons = function() {
                         try {
+                            var mainEl = document.getElementById('main');
+                            if (!mainEl) return;
                             var scope = document.getElementById('app') || document.body;
                             if (!scope) return;
-                            var candidates = scope.querySelectorAll('#main header button, #main header [role="button"], #main header [data-icon], #main header [title], #main header [aria-label], [role="menu"] [role="button"], [role="menu"] button, [role="menu"] li, [role="dialog"] button, [role="dialog"] [role="button"], [data-animate-dropdown-item="true"], [title*="support" i], [aria-label*="support" i]');
+                            var candidates = scope.querySelectorAll('#main header button, #main header [role="button"], #main header [data-icon], #main header [title], #main header [aria-label], [role="menu"] [role="button"], [role="menu"] button, [role="menu"] li, [role="dialog"] button, [role="dialog"] [role="button"], [data-animate-dropdown-item="true"]');
                             for (var i = 0; i < candidates.length; i++) {
                                 var el = candidates[i];
                                 if (!el || el.id === 'xeno-wa-back-to-chats-btn') continue;
@@ -1718,6 +1623,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                     // Intercept & suppress any "Browser does not support calls" / "Calling isn't supported on this browser" modal, tooltip, dropdown, or toast
                     window.__xenoInterceptUnsupportedCallDialog = function() {
                         try {
+                            if (!document.getElementById('main') && !document.getElementById('pane-side')) return false;
                             window.__xenoUnlockWhatsAppCallButtons();
                             var foundUnsupported = false;
                             var containers = document.querySelectorAll('[role="dialog"], [role="tooltip"], [role="alert"], [role="menu"], [data-animate-modal-popup="true"], [data-animate-modal-body="true"], [data-animate-dropdown-item="true"], .overlay, [data-testid*="popup"], [data-testid*="modal"], [data-testid*="toast"]');
@@ -1737,26 +1643,6 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                     var okBtns = dlg.querySelectorAll('button, [role="button"]');
                                     for (var b = 0; b < okBtns.length; b++) {
                                         try { okBtns[b].click(); } catch(e) {}
-                                    }
-                                }
-                            }
-
-                            // Also scan any floating popup/tooltip/span outside #pane-side and #main messages that directly renders "Browser does not support calls"
-                            var allSpansAndDivs = document.body ? document.body.querySelectorAll('span, div') : [];
-                            for (var s = 0; s < allSpansAndDivs.length; s++) {
-                                var node = allSpansAndDivs[s];
-                                if (!node || node.children.length > 3 || node.id === 'xeno-wa-live-call-overlay') continue;
-                                var nodeTxt = (node.textContent || '').trim();
-                                if (nodeTxt.length > 10 && nodeTxt.length < 180 && window.__xenoIsUnsupportedCallText(nodeTxt)) {
-                                    if (!node.closest('#pane-side') && !node.closest('[data-testid="conversation-panel-messages"]')) {
-                                        foundUnsupported = true;
-                                        var popupRoot = node.closest('[role="dialog"], [role="tooltip"], [role="alert"], .overlay, [data-animate-modal-popup="true"]') || node.parentElement || node;
-                                        if (popupRoot && popupRoot !== document.body && popupRoot.id !== 'app' && popupRoot.id !== 'main') {
-                                            popupRoot.style.setProperty('display', 'none', 'important');
-                                            popupRoot.style.setProperty('visibility', 'hidden', 'important');
-                                        } else {
-                                            node.style.setProperty('display', 'none', 'important');
-                                        }
                                     }
                                 }
                             }
@@ -2125,15 +2011,15 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                 if (!window.__xenoWaCallDomObserver && window.MutationObserver && document.body) {
                     var layoutSyncScheduled = false;
                     window.__xenoWaCallDomObserver = new MutationObserver(function(mutations) {
-                        if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
-                            window.__xenoInterceptUnsupportedCallDialog();
-                        }
                         if (!layoutSyncScheduled) {
                             layoutSyncScheduled = true;
                             requestAnimationFrame(function() {
                                 layoutSyncScheduled = false;
                                 if (typeof window.__xenoSyncWaMobileLayout === 'function') {
                                     window.__xenoSyncWaMobileLayout();
+                                }
+                                if (typeof window.__xenoInterceptUnsupportedCallDialog === 'function') {
+                                    window.__xenoInterceptUnsupportedCallDialog();
                                 }
                             });
                         }
@@ -2430,44 +2316,12 @@ private fun injectWhatsAppFastAndSmoothHelper(view: WebView?) {
     val js = """
         (function() {
             try {
-                // 1. Passive Scroll & Wheel Listener Optimization for 60/120fps Chat & Message Scrolling
-                if (!window.__xenoWaFastPassivePatched) {
-                    window.__xenoWaFastPassivePatched = true;
-                    var origAddEvent = EventTarget.prototype.addEventListener;
-                    EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'wheel' || type === 'mousewheel' || type === 'scroll') {
-                            var newOpts = options;
-                            if (typeof options === 'boolean') {
-                                newOpts = { capture: options, passive: true };
-                            } else if (typeof options === 'object' && options !== null) {
-                                if (typeof options.passive === 'undefined') {
-                                    newOpts = Object.assign({}, options, { passive: true });
-                                }
-                            } else if (typeof options === 'undefined') {
-                                newOpts = { passive: true };
-                            }
-                            return origAddEvent.call(this, type, listener, newOpts);
-                        }
-                        return origAddEvent.call(this, type, listener, options);
-                    };
+                // Only apply once WhatsApp Web has loaded past the initial loading screen (#pane-side or #main exists)
+                if (!document.getElementById('pane-side') && !document.getElementById('main')) {
+                    return;
                 }
 
-                // 2. Short-circuit background crashlog & telemetry spam so CPU/network stay fast for chats & calls
-                if (!window.__xenoWaTelemetryPatched) {
-                    window.__xenoWaTelemetryPatched = true;
-                    if (typeof navigator.sendBeacon === 'function') {
-                        var origBeacon = navigator.sendBeacon.bind(navigator);
-                        navigator.sendBeacon = function(url, data) {
-                            var u = String(url || '').toLowerCase();
-                            if (u.indexOf('crashlogs.whatsapp.net') !== -1 || u.indexOf('graph.whatsapp.com') !== -1) {
-                                return true;
-                            }
-                            return origBeacon(url, data);
-                        };
-                    }
-                }
-
-                // 3. Strictly Non-Layout GPU Compositing & Momentum Scroll Acceleration Stylesheet
+                // 1. Strictly Non-Layout GPU Compositing & Momentum Scroll Acceleration Stylesheet
                 if (document.head) {
                     var fastStyleId = 'xeno-wa-fast-smooth-style';
                     var existingFastStyle = document.getElementById(fastStyleId);
@@ -2489,9 +2343,9 @@ private fun injectWhatsAppFastAndSmoothHelper(view: WebView?) {
                     }
                 }
 
-                // 4. Async Image Decoding for Contact Avatars, Stickers & Media Thumbnails (throttled)
+                // 2. Async Image Decoding for Contact Avatars, Stickers & Media Thumbnails (throttled)
                 var now = Date.now();
-                if (!window.__xenoWaLastImgOptMs || (now - window.__xenoWaLastImgOptMs > 1500)) {
+                if (!window.__xenoWaLastImgOptMs || (now - window.__xenoWaLastImgOptMs > 2000)) {
                     window.__xenoWaLastImgOptMs = now;
                     var imgs = document.querySelectorAll('#pane-side img:not([data-xeno-fast="1"]), #main img:not([data-xeno-fast="1"])');
                     for (var i = 0; i < imgs.length; i++) {
@@ -5152,9 +5006,7 @@ fun CloneWorkspaceScreen(
                                                 url.startsWith("blob:") ||
                                                 url.startsWith("data:")
                                             )
-                                            val nowMs = android.os.SystemClock.elapsedRealtime()
-                                            if (!isMediaAsset && (nowMs - lastWhatsAppResourceInjectMs > 1200L)) {
-                                                lastWhatsAppResourceInjectMs = nowMs
+                                            if (!isMediaAsset) {
                                                 injectWhatsAppWebSupportEngine(view, isWhatsAppPhoneUi)
                                             }
                                         } else if (isYoutube && url != null && url.contains("googlevideo.com/videoplayback")) {
