@@ -182,21 +182,12 @@ class MainActivity : ComponentActivity() {
                     }
 
                     if (!swipeDisallowedByHorizontalOrUp && dy > 0f && dy > absDx * 1.35f) {
-                        val topZoneMaxY = 165f * density
+                        val screenHeight = window.decorView.height.takeIf { it > 0 }
+                            ?: resources.displayMetrics.heightPixels
+                        val topQuarterMaxY = screenHeight * 0.25f
                         val topZoneThresholdPx = 36f * density
-                        val generalThresholdPx = 46f * density
 
-                        val shouldOpen = if (swipeTouchDownY <= topZoneMaxY) {
-                            dy >= topZoneThresholdPx
-                        } else if (dy >= generalThresholdPx) {
-                            if (GlobalSwipeDownTracker.isWebViewScreenActive) {
-                                !GlobalSwipeDownTracker.activeWebViewCanScrollUp
-                            } else {
-                                !GlobalSwipeDownTracker.didComposeChildScroll
-                            }
-                        } else {
-                            false
-                        }
+                        val shouldOpen = swipeTouchDownY <= topQuarterMaxY && dy >= topZoneThresholdPx
 
                         if (shouldOpen) {
                             swipeTriggeredInGesture = true
