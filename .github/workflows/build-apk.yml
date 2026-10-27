@@ -38,8 +38,13 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Ensure debug.keystore exists
+      - name: Ensure debug.keystore and .env.example exist
         run: |
+          if [ ! -f "./.env.example" ]; then
+            echo "# Environment variables placeholder" > ./.env.example
+          else
+            sed -i '/^[A-Za-z0-9_]*=[[:space:]]*$/d' ./.env.example
+          fi
           if [ ! -f "./debug.keystore" ]; then
             echo "Generating debug.keystore..."
             keytool -genkey -v -keystore ./debug.keystore \
