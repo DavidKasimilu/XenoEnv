@@ -236,30 +236,37 @@ object OngoingCallHelper {
     }
 
     /**
-     * Helper function to handle an incoming call across all 3 device states:
+     * Helper function to handle an incoming call across all 3 device states (for both VIP Priority and regular contacts):
      * 1. Screen is OFF or device is locked -> Wakes the display (`wakeDeviceScreenForIncomingCall`)
      *    and immediately opens the full-screen Incoming Call Screen (`ActiveCallScreen`).
      * 2. User is in the app (Screen ON) -> Shows the interactive in-app Incoming Call Popup banner
-     *    at the top of the app + system notification with Accept and Decline buttons.
+     *    at the top of the app + system notification with Answer and Decline buttons.
      * 3. User is in another app (Screen ON) -> Shows the system heads-up Incoming Call Notification
-     *    AND floating overlay call popup (`XenoOverlayService.showCallOverlay`) with Accept and Decline buttons.
+     *    AND floating overlay call popup (`XenoOverlayService.showCallOverlay`) with Answer and Decline buttons.
      */
     fun handleIncomingCallEvent(
         context: Context,
         phoneNumber: String,
         contactName: String? = null,
-        showPopup: Boolean = true
+        showPopup: Boolean = true,
+        forceScreenOffState: Boolean? = null
     ): IncomingCallPopup {
         val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
+        // Capture screen-off/locked state BEFORE waking the screen during priority bypass
+        val wasScreenOffOrLocked = forceScreenOffState ?: isScreenOffOrLocked(context)
         val isPriority = PriorityContactManager.isPriorityNumber(cleanNumber, context)
         if (isPriority) {
-            PriorityContactManager.enforceIncomingPriorityBypass(context, isCall = true)
+            PriorityContactManager.enforceIncomingPriorityBypass(
+                context = context,
+                isCall = true,
+                wakeScreen = wasScreenOffOrLocked
+            )
         }
 
         val resolvedName = contactName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) }
             ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
 
-        val wakeForFullScreen = !showPopup || isScreenOffOrLocked(context) || (isPriority && !MainActivity.isAppInForeground)
+        val wakeForFullScreen = !showPopup || wasScreenOffOrLocked
         val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground
 
         startIncomingSession(
@@ -277,12 +284,14 @@ object OngoingCallHelper {
             _incomingPopupFlow.value = popup
         } else {
             _incomingPopupFlow.value = null
+            XenoOverlayService.dismissCallOverlay(context)
         }
 
         XenoNotificationHelper.showCallNotification(
             context = context,
             callerName = resolvedName,
-            callerNumber = cleanNumber
+            callerNumber = cleanNumber,
+            useFullScreenIntent = wakeForFullScreen
         )
 
         if (wakeForFullScreen) {
@@ -297,6 +306,8 @@ object OngoingCallHelper {
                 callerName = resolvedName,
                 callerNumber = cleanNumber
             )
+        } else {
+            XenoOverlayService.dismissCallOverlay(context)
         }
 
         return popup

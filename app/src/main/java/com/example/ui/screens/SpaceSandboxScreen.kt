@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -67,7 +66,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,7 +73,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.data.models.ClonedAppInstance
 import com.example.ui.components.AppIconImage
 import com.example.ui.components.parseHexColor
@@ -95,7 +92,6 @@ fun SpaceSandboxScreen(
     onOpenMedia: () -> Unit = {},
     onOpenDocs: () -> Unit = {},
     onOpenMusic: () -> Unit = {},
-    onOpenVine: () -> Unit = {},
     onBackToBrowser: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -180,10 +176,6 @@ fun SpaceSandboxScreen(
 
             MusicShortcutIconItem(
                 onClick = onOpenMusic
-            )
-
-            VineShortcutIconItem(
-                onClick = onOpenVine
             )
         }
 
@@ -349,51 +341,6 @@ private fun MusicShortcutIconItem(
 
         Text(
             text = "Music",
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun VineShortcutIconItem(
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .width(96.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp, horizontal = 4.dp)
-            .testTag("clone_space_vine_shortcut")
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(68.dp)
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF01310A))
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_vineos_foreground),
-                    contentDescription = "Vine",
-                    modifier = Modifier.size(64.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Vine",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,

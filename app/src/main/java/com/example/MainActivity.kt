@@ -133,16 +133,30 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         isAppInForeground = true
+        com.example.telecom.XenoOverlayService.dismissCallOverlay(this)
     }
 
     override fun onResume() {
         super.onResume()
         isAppInForeground = true
+        com.example.telecom.XenoOverlayService.dismissCallOverlay(this)
     }
 
     override fun onStop() {
         super.onStop()
         isAppInForeground = false
+        val session = com.example.telecom.OngoingCallHelper.sessionFlow.value
+        if (session.phase == com.example.telecom.CallPhase.INCOMING_RINGING && session.phoneNumber.isNotBlank()) {
+            if (com.example.telecom.OngoingCallHelper.isScreenOffOrLocked(this)) {
+                com.example.telecom.OngoingCallHelper.expandIncomingCallToFullScreen(this)
+            } else {
+                com.example.telecom.XenoOverlayService.showCallOverlay(
+                    context = this,
+                    callerName = session.contactName,
+                    callerNumber = session.phoneNumber
+                )
+            }
+        }
     }
 
     private var swipeTouchDownX = 0f
@@ -449,7 +463,6 @@ fun XenoApp(
         !uiState.showMediaManager &&
         !uiState.showDocsManager &&
         !uiState.showMusicPlayer &&
-        !uiState.showVineOS &&
         uiState.selectedVideoItem == null &&
         uiState.activeChatThread == null
     GlobalSwipeDownTracker.onOpenDrawer = {
@@ -475,7 +488,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && !uiState.showVineOS && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = {
@@ -534,11 +547,6 @@ fun XenoApp(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-            } else if (uiState.showVineOS) {
-                com.hexadecinull.vineos.VineEmbeddedScreen(
-                    onClose = { viewModel.setShowVineOS(false) },
-                    modifier = Modifier.fillMaxSize()
-                )
             } else if (uiState.showMediaManager) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -719,7 +727,6 @@ fun XenoApp(
                                 onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
                                 onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
                                 onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
-                                onSetShowVineOS = { viewModel.setShowVineOS(it) },
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },

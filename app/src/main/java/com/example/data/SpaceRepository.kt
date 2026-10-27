@@ -184,8 +184,12 @@ class SpaceRepository(private val context: Context) {
                         origName.contains("termux", ignoreCase = true) ||
                         dispName.contains("termux", ignoreCase = true) ||
                         rawTarget.startsWith("termux://", ignoreCase = true)
+                val isVine = pkg.contains("vine", ignoreCase = true) ||
+                        origName.contains("vine", ignoreCase = true) ||
+                        dispName.contains("vine", ignoreCase = true) ||
+                        rawTarget.contains("vine", ignoreCase = true)
 
-                if (isTiktok || isTermux) {
+                if (isTiktok || isTermux || isVine) {
                     needsResave = true
                     continue
                 }

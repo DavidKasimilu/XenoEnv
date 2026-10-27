@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notif_call_collapsed_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_notif_sms_card"
@@ -12,13 +13,14 @@
 
     <TextView
         android:id="@+id/notif_call_avatar_text"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
         android:background="@drawable/bg_notif_call_avatar"
         android:gravity="center"
+        android:includeFontPadding="false"
         android:text="C"
         android:textColor="#FFFFFF"
-        android:textSize="16sp"
+        android:textSize="15sp"
         android:textStyle="bold" />
 
     <LinearLayout
@@ -34,6 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:text="Caller Name"
             android:textColor="#F8FAFC"
@@ -44,35 +47,47 @@
             android:id="@+id/notif_caller_number"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
             android:ellipsize="end"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:text="Incoming Call"
             android:textColor="#6EE7B7"
             android:textSize="12sp" />
     </LinearLayout>
 
-    <Button
+    <TextView
         android:id="@+id/btn_call_decline"
-        android:layout_width="68dp"
+        android:layout_width="wrap_content"
         android:layout_height="34dp"
         android:layout_marginEnd="6dp"
         android:background="@drawable/bg_notif_call_decline"
-        android:stateListAnimator="@null"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:minWidth="68dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:text="Decline"
-        android:textAllCaps="false"
         android:textColor="#FFFFFF"
-        android:textSize="11sp"
+        android:textSize="12sp"
         android:textStyle="bold" />
 
-    <Button
+    <TextView
         android:id="@+id/btn_call_answer"
-        android:layout_width="68dp"
+        android:layout_width="wrap_content"
         android:layout_height="34dp"
         android:background="@drawable/bg_notif_call_accept"
-        android:stateListAnimator="@null"
-        android:text="Accept"
-        android:textAllCaps="false"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:minWidth="68dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:text="Answer"
         android:textColor="#FFFFFF"
-        android:textSize="11sp"
+        android:textSize="12sp"
         android:textStyle="bold" />
 </LinearLayout>

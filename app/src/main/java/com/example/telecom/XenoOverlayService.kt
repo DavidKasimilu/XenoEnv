@@ -59,20 +59,28 @@ object XenoOverlayService {
             val overlayView = inflater.inflate(R.layout.notification_custom_call, container, false)
             container.addView(overlayView)
 
+            val badgeTv = overlayView.findViewById<TextView>(R.id.notif_call_badge)
             val avatarTv = overlayView.findViewById<TextView>(R.id.notif_call_avatar_text)
             val nameTv = overlayView.findViewById<TextView>(R.id.notif_caller_name)
             val numberTv = overlayView.findViewById<TextView>(R.id.notif_caller_number)
-            val btnDecline = overlayView.findViewById<Button>(R.id.btn_call_decline)
-            val btnAnswer = overlayView.findViewById<Button>(R.id.btn_call_answer)
+            val btnDecline = overlayView.findViewById<View>(R.id.btn_call_decline)
+            val btnAnswer = overlayView.findViewById<View>(R.id.btn_call_answer)
 
-            val displayName = if (!callerName.isNullOrBlank()) callerName else callerNumber
-            val initials = XenoNotificationHelper.extractInitials(displayName, callerNumber)
-            val subtitle = if (displayName != callerNumber && callerNumber.isNotBlank()) {
+            val isPriority = PriorityContactManager.isPriorityNumber(callerNumber, appContext)
+            val rawName = if (!callerName.isNullOrBlank()) {
+                callerName
+            } else {
+                XenoNotificationHelper.resolveContactNameQuick(appContext, callerNumber) ?: callerNumber
+            }
+            val displayName = if (isPriority && !rawName.startsWith("★")) "★ $rawName" else rawName
+            val initials = XenoNotificationHelper.extractInitials(rawName, callerNumber)
+            val subtitle = if (rawName != callerNumber && callerNumber.isNotBlank()) {
                 "Incoming Voice Call • $callerNumber"
             } else {
                 "Incoming Voice Call"
             }
 
+            badgeTv?.text = if (isPriority) "★ VIP PRIORITY CALL" else "INCOMING VOICE CALL"
             avatarTv?.text = initials
             nameTv?.text = displayName
             numberTv?.text = subtitle
@@ -86,7 +94,7 @@ object XenoOverlayService {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
-                    putExtra("caller_name", callerName)
+                    putExtra("caller_name", rawName)
                     putExtra("open_full_screen_call", true)
                 }
                 appContext.startActivity(intent)
@@ -100,7 +108,7 @@ object XenoOverlayService {
                 OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
                     context = appContext,
                     phoneNumber = callerNumber,
-                    contactName = callerName
+                    contactName = rawName
                 )
 
                 val intent = Intent(appContext, MainActivity::class.java).apply {
@@ -109,7 +117,7 @@ object XenoOverlayService {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
-                    putExtra("caller_name", callerName)
+                    putExtra("caller_name", rawName)
                     putExtra("auto_answer", true)
                 }
                 appContext.startActivity(intent)
@@ -133,7 +141,7 @@ object XenoOverlayService {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = dpToPx(appContext, 16)
+                y = dpToPx(appContext, 12)
             }
 
             windowManager.addView(container, params)

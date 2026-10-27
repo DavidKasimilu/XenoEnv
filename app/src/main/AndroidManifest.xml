@@ -202,7 +202,7 @@
         <!-- Notification Action BroadcastReceiver -->
         <receiver
             android:name="com.example.telecom.XenoNotificationActionReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.example.telecom.ACTION_ANSWER_CALL" />
                 <action android:name="com.example.telecom.ACTION_DECLINE_CALL" />
@@ -237,33 +237,6 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
-
-        <!-- VineOS VM Activity -->
-        <activity
-            android:name="com.hexadecinull.vineos.MainActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.VineOS.Splash" />
-
-        <!-- VineOS VM Foreground Service -->
-        <service
-            android:name="com.hexadecinull.vineos.service.VineService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Virtual Machine runtime service for VineOS guest instances" />
-        </service>
-
-        <!-- Shizuku Provider for VineOS -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
 

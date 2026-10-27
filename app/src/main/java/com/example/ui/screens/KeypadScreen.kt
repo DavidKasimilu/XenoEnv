@@ -112,6 +112,7 @@ fun KeypadScreen(
 
     fun placeCall(number: String, name: String? = null) {
         val clean = number.trim()
+        if (clean.isBlank()) return
         val isUssd = TelecomHelper.isUssdCode(clean)
         val isPriority = PriorityContactManager.isPriorityNumber(clean, context)
         val sims = TelecomHelper.getAvailableSimCards(context)
@@ -120,16 +121,10 @@ fun KeypadScreen(
             callNumberTarget = clean
             return
         }
-        val selectedSim = sims.find { it.subscriptionId == selectedSimSlot } ?: sims.firstOrNull()
-        if (selectedSim?.phoneAccountHandle != null) {
-            TelecomHelper.makeCallWithSim(context, clean, selectedSim.phoneAccountHandle)
-        } else {
-            TelecomHelper.makeCall(context, clean)
-        }
-        if (!isUssd) {
-            val resolvedName = name ?: matchedContact?.displayName ?: contacts.find { it.primaryNumber.filter { c -> c.isDigit() } == number.filter { c -> c.isDigit() } }?.displayName
-            onStartCall(number, resolvedName)
-        }
+        val resolvedName = name
+            ?: matchedContact?.displayName
+            ?: contacts.find { it.primaryNumber.filter { c -> c.isDigit() } == clean.filter { c -> c.isDigit() } }?.displayName
+        onStartCall(clean, resolvedName)
     }
 
     fun triggerVibration() {
@@ -420,7 +415,13 @@ fun KeypadScreen(
             simCards = availableSims,
             onSimSelected = { sim ->
                 callNumberTarget = null
-                TelecomHelper.makeCallWithSim(context, num, sim.phoneAccountHandle)
+                selectedSimSlot = sim.subscriptionId
+                val label = if (sim.carrierName.length > 12) "SIM ${sim.subscriptionId + 1}" else sim.carrierName
+                selectedSimName = label
+                prefs.edit()
+                    .putInt("preferred_sim_slot", sim.subscriptionId)
+                    .putString("preferred_sim_name", label)
+                    .apply()
                 val resolvedName = matchedContact?.displayName ?: contacts.find { it.primaryNumber.filter { c -> c.isDigit() } == num.filter { c -> c.isDigit() } }?.displayName
                 onStartCall(num, resolvedName)
             },

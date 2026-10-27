@@ -153,7 +153,6 @@ data class XenoUiState(
     val showMusicPlayer: Boolean = false,
     val musicTracks: List<MusicTrackItem> = emptyList(),
     val isLoadingMusic: Boolean = false,
-    val showVineOS: Boolean = false,
 
     // Notification state
     val deviceNotifications: List<DeviceNotification> = emptyList(),
@@ -1072,10 +1071,6 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setShowVineOS(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showVineOS = show)
-    }
-
     fun refreshMusicTracks() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingMusic = true)
@@ -1333,7 +1328,6 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             showDocsManager = false,
             showMediaManager = false,
             showMusicPlayer = false,
-            showVineOS = false,
             activeChatThread = null
         )
     }
@@ -1520,19 +1514,30 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val clean = number.trim()
         if (clean.isBlank()) return
-        startActiveCall(phoneNumber = clean, contactName = name, isIncoming = false)
+        val isPriority = com.example.telecom.PriorityContactManager.isPriorityNumber(clean, getApplication())
+        if (isPriority) {
+            com.example.telecom.PriorityContactManager.enforceOutgoingPriorityBypass(getApplication())
+        }
+        val resolvedName = name?.takeIf { it.isNotBlank() }
+            ?: XenoNotificationHelper.resolveContactNameQuick(getApplication(), clean)
+        val effectiveSim = simCard ?: if (isPriority) {
+            TelecomHelper.getPreferredSimForPriorityCall(getApplication())
+        } else {
+            null
+        }
+        startActiveCall(phoneNumber = clean, contactName = resolvedName, isIncoming = false)
         if (isUssdCode(clean)) {
             _uiState.value = _uiState.value.copy(
                 userNotice = "Executing USSD code $clean..."
             )
             if (!skipSystemCall) {
                 try {
-                    if (simCard != null) {
+                    if (effectiveSim != null) {
                         TelecomHelper.makeCallWithSim(
                             getApplication(),
                             clean,
-                            simCard.phoneAccountHandle,
-                            simCard.subscriptionId
+                            effectiveSim.phoneAccountHandle,
+                            effectiveSim.subscriptionId
                         )
                     } else {
                         TelecomHelper.makeCall(getApplication(), clean)
@@ -1543,25 +1548,25 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (simCard != null) {
+        if (effectiveSim != null) {
             val prefs = getApplication<Application>().getSharedPreferences("xeno_telecom_prefs", Context.MODE_PRIVATE)
-            val label = if (simCard.carrierName.length > 14) "SIM ${simCard.subscriptionId + 1}" else simCard.carrierName
+            val label = if (effectiveSim.carrierName.length > 14) "SIM ${effectiveSim.subscriptionId + 1}" else effectiveSim.carrierName
             prefs.edit()
-                .putInt("preferred_sim_slot", simCard.subscriptionId)
+                .putInt("preferred_sim_slot", effectiveSim.subscriptionId)
                 .putString("preferred_sim_name", label)
                 .apply()
             _uiState.value = _uiState.value.copy(
-                userNotice = "Calling ${name ?: clean} via ${simCard.carrierName} (SIM ${simCard.subscriptionId + 1})"
+                userNotice = "Calling ${resolvedName ?: clean} via ${effectiveSim.carrierName} (SIM ${effectiveSim.subscriptionId + 1})"
             )
         }
         if (!skipSystemCall) {
             try {
-                if (simCard != null) {
+                if (effectiveSim != null) {
                     TelecomHelper.makeCallWithSim(
                         getApplication(),
                         clean,
-                        simCard.phoneAccountHandle,
-                        simCard.subscriptionId
+                        effectiveSim.phoneAccountHandle,
+                        effectiveSim.subscriptionId
                     )
                 } else {
                     TelecomHelper.makeCall(getApplication(), clean)
@@ -1624,14 +1629,42 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             val contactName = contactsRepo.resolveContactName(number)
             OngoingCallHelper.updateContactNameIfMissing(number, contactName)
 
-            val shouldShowFullScreen = OngoingCallHelper.isScreenOffOrLocked(getApplication()) ||
-                OngoingCallHelper.sessionFlow.value.isFullScreenCallVisible
+            val currentSession = OngoingCallHelper.sessionFlow.value
+            val normIncoming = number.filter { it.isDigit() }.takeLast(9).ifEmpty { number.trim() }
+            val normSession = currentSession.phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { currentSession.phoneNumber.trim() }
+            val alreadyHandledByHelper = (currentSession.phase == CallPhase.INCOMING_RINGING || currentSession.phase == CallPhase.ACTIVE) &&
+                normIncoming.isNotEmpty() && normIncoming == normSession
 
+            if (alreadyHandledByHelper) {
+                if (currentSession.isFullScreenCallVisible) {
+                    _uiState.value = _uiState.value.copy(
+                        incomingCallPopup = null,
+                        activeCallState = ActiveCallState(
+                            phoneNumber = currentSession.phoneNumber.ifBlank { number },
+                            contactName = contactName ?: currentSession.contactName,
+                            isIncoming = true
+                        )
+                    )
+                } else {
+                    val activePopup = OngoingCallHelper.incomingPopupFlow.value ?: IncomingCallPopup(
+                        callerName = contactName ?: currentSession.contactName,
+                        callerNumber = number
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        incomingCallPopup = activePopup,
+                        activeCallState = null
+                    )
+                }
+                return@launch
+            }
+
+            val shouldShowFullScreen = OngoingCallHelper.isScreenOffOrLocked(getApplication())
             val popup = OngoingCallHelper.handleIncomingCallEvent(
                 context = getApplication(),
                 phoneNumber = number,
                 contactName = contactName,
-                showPopup = !shouldShowFullScreen
+                showPopup = !shouldShowFullScreen,
+                forceScreenOffState = shouldShowFullScreen
             )
 
             if (shouldShowFullScreen) {
@@ -1873,20 +1906,35 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         callerNumber: String? = null,
         callerName: String? = null
     ) {
-        val number = callerNumber ?: "+1 (555) 014-4921"
-        val name = callerName ?: "Alice Smith"
+        val number = callerNumber ?: "+254712901245"
+        val name = callerName
+            ?: XenoNotificationHelper.resolveContactNameQuick(getApplication(), number)
+            ?: "VIP Contact"
+        val isScreenOff = OngoingCallHelper.isScreenOffOrLocked(getApplication())
 
         val popup = OngoingCallHelper.handleIncomingCallEvent(
             context = getApplication(),
             phoneNumber = number,
             contactName = name,
-            showPopup = true
+            showPopup = !isScreenOff,
+            forceScreenOffState = isScreenOff
         )
 
-        _uiState.value = _uiState.value.copy(
-            incomingCallPopup = popup,
-            activeCallState = null
-        )
+        if (isScreenOff) {
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = null,
+                activeCallState = ActiveCallState(
+                    phoneNumber = number,
+                    contactName = name,
+                    isIncoming = true
+                )
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = popup,
+                activeCallState = null
+            )
+        }
     }
 
     fun loadInstalledGames(context: android.content.Context) {

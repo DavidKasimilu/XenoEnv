@@ -232,11 +232,17 @@ object PriorityContactManager {
      * 4. Wakes the screen immediately via bright WakeLock.
      * 5. For calls, plays an alarm-channel fallback ringtone + priority vibration so it is always heard.
      */
-    fun enforceIncomingPriorityBypass(context: Context, isCall: Boolean) {
-        Log.d(TAG, "Enforcing High-Priority OS Bypass (isCall=$isCall)")
+    fun enforceIncomingPriorityBypass(
+        context: Context,
+        isCall: Boolean,
+        wakeScreen: Boolean = OngoingCallHelper.isScreenOffOrLocked(context)
+    ) {
+        Log.d(TAG, "Enforcing High-Priority OS Bypass (isCall=$isCall, wakeScreen=$wakeScreen)")
 
-        // 1. Wake screen immediately
-        OngoingCallHelper.wakeDeviceScreenForIncomingCall(context)
+        // 1. Wake screen immediately if screen is off or locked
+        if (wakeScreen) {
+            OngoingCallHelper.wakeDeviceScreenForIncomingCall(context)
+        }
 
         // 2. Lift System Do Not Disturb (DND) filter if permitted
         try {

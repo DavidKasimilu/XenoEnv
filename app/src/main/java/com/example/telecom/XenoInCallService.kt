@@ -134,13 +134,14 @@ class XenoInCallService : InCallService() {
 
         if (state == Call.STATE_RINGING) {
             if (handle.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(handle)) {
-                val resolvedName = XenoNotificationHelper.resolveContactNameQuick(applicationContext, handle)
                 val shouldWakeFullScreen = OngoingCallHelper.isScreenOffOrLocked(applicationContext)
+                val resolvedName = XenoNotificationHelper.resolveContactNameQuick(applicationContext, handle)
                 OngoingCallHelper.handleIncomingCallEvent(
                     context = applicationContext,
                     phoneNumber = handle,
                     contactName = resolvedName,
-                    showPopup = !shouldWakeFullScreen
+                    showPopup = !shouldWakeFullScreen,
+                    forceScreenOffState = shouldWakeFullScreen
                 )
 
                 onIncomingCallListener?.invoke(handle)

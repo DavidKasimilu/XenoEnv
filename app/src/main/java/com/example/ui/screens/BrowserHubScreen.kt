@@ -101,7 +101,6 @@ fun BrowserHubScreen(
     onSetShowMediaManager: (Boolean) -> Unit = {},
     onSetShowDocsManager: (Boolean) -> Unit = {},
     onSetShowMusicPlayer: (Boolean) -> Unit = {},
-    onSetShowVineOS: (Boolean) -> Unit = {},
     onSavePassword: (domain: String, title: String, username: String, pass: String) -> Unit = { _, _, _, _ -> },
     onDeletePassword: (Long) -> Unit = {},
     onPlayVideo: (MediaItem) -> Unit = {},
@@ -179,7 +178,6 @@ fun BrowserHubScreen(
                         onOpenMedia = { onSetShowMediaManager(true) },
                         onOpenDocs = { onSetShowDocsManager(true) },
                         onOpenMusic = { onSetShowMusicPlayer(true) },
-                        onOpenVine = { onSetShowVineOS(true) },
                         onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) }
                     )
                 }

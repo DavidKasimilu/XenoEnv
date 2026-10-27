@@ -355,11 +355,12 @@ object XenoNotificationHelper {
     fun showCallNotification(
         context: Context,
         callerName: String?,
-        callerNumber: String
+        callerNumber: String,
+        useFullScreenIntent: Boolean = OngoingCallHelper.isScreenOffOrLocked(context)
     ) {
         val normCaller = normalizePhoneKey(callerNumber)
         val now = System.currentTimeMillis()
-        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 3_000L) {
+        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 2_000L) {
             return
         }
         lastCallNotificationNumber = normCaller
@@ -423,6 +424,7 @@ object XenoNotificationHelper {
         )
 
         val displayTitle = if (isPriority && !resolvedName.startsWith("★")) "★ $resolvedName" else resolvedName
+        val badgeText = if (isPriority) "★ VIP PRIORITY CALL" else "INCOMING VOICE CALL"
 
         val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)
@@ -434,6 +436,7 @@ object XenoNotificationHelper {
         }
 
         val callExpandedViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
+            setTextViewText(R.id.notif_call_badge, badgeText)
             setTextViewText(R.id.notif_call_avatar_text, initials)
             setTextViewText(R.id.notif_caller_name, displayTitle)
             setTextViewText(R.id.notif_caller_number, subtitleText)
@@ -443,17 +446,15 @@ object XenoNotificationHelper {
         }
 
         val targetChannel = if (isPriority) CHANNEL_PRIORITY_CALL_ID else CHANNEL_CALL_ID
-        val notification = NotificationCompat.Builder(context, targetChannel)
+        val builder = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(displayTitle)
             .setContentText(subtitleText)
             .setCustomContentView(callCollapsedViews)
             .setCustomBigContentView(callExpandedViews)
             .setCustomHeadsUpContentView(callExpandedViews)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(false)
             .setContentIntent(fullScreenPendingIntent)
@@ -461,10 +462,15 @@ object XenoNotificationHelper {
             .setOngoing(true)
             .setVibrate(if (isPriority) longArrayOf(0, 600, 200, 600, 200, 800) else longArrayOf(0, 500, 250, 500, 250, 500))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
+            .addAction(android.R.drawable.sym_action_call, "Answer", answerPendingIntent)
+
+        if (useFullScreenIntent) {
+            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        }
 
         try {
-            NotificationManagerCompat.from(context).notify(8888, notification)
+            NotificationManagerCompat.from(context).notify(8888, builder.build())
         } catch (_: SecurityException) {
         } catch (_: Exception) {}
     }
