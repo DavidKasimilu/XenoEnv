@@ -442,30 +442,13 @@ fun ContactItemRow(
             ContactAvatar(nameOrNumber = contact.displayName, size = 44.dp)
 
             Column(modifier = Modifier.weight(1f)) {
-                val isPriority = remember(contact.primaryNumber, contact.allNumbers) {
-                    PriorityContactManager.isPriorityContact(contact.primaryNumber, contact.allNumbers)
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Text(
-                        text = contact.displayName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (isPriority) {
-                        Text(
-                            text = "★",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
+                Text(
+                    text = contact.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     text = contact.primaryNumber,
                     style = MaterialTheme.typography.bodySmall,

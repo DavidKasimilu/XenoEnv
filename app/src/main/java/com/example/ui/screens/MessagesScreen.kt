@@ -836,36 +836,19 @@ fun SmsThreadItem(
             ContactAvatar(nameOrNumber = thread.displayName, size = 46.dp)
 
             Column(modifier = Modifier.weight(1f)) {
-                val isPriority = remember(thread.address) {
-                    com.example.telecom.PriorityContactManager.isPriorityNumber(thread.address)
-                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    Text(
+                        text = thread.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (!thread.read) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = thread.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (!thread.read) FontWeight.Bold else FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        if (isPriority) {
-                            Text(
-                                text = "★",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+                    )
                     Text(
                         text = thread.formattedDate,
                         style = MaterialTheme.typography.bodySmall,

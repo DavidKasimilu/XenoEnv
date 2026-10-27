@@ -311,10 +311,6 @@ fun InAppCallPopupCard(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val isPriority = androidx.compose.runtime.remember(popup.callerNumber) {
-        com.example.telecom.PriorityContactManager.isPriorityNumber(popup.callerNumber, context)
-    }
     val infiniteTransition = rememberInfiniteTransition(label = "ringing_pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.94f,
@@ -326,9 +322,9 @@ fun InAppCallPopupCard(
         label = "pulse_scale"
     )
 
-    val accentColor = if (isPriority) Color(0xFFF59E0B) else Color(0xFF10B981)
-    val badgeBgColor = if (isPriority) Color(0xFFF59E0B).copy(alpha = 0.18f) else Color(0xFF10B981).copy(alpha = 0.18f)
-    val badgeText = if (isPriority) "★ VIP PRIORITY CALL" else "INCOMING VOICE CALL"
+    val accentColor = Color(0xFF10B981)
+    val badgeBgColor = Color(0xFF10B981).copy(alpha = 0.18f)
+    val badgeText = "INCOMING VOICE CALL"
 
     Card(
         shape = RoundedCornerShape(22.dp),
@@ -425,7 +421,7 @@ fun InAppCallPopupCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 val rawName = popup.callerName?.takeIf { it.isNotBlank() } ?: popup.callerNumber
-                val displayName = if (isPriority && !rawName.startsWith("★")) "★ $rawName" else rawName
+                val displayName = rawName
                 ContactAvatar(
                     nameOrNumber = rawName,
                     size = 46.dp

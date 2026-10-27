@@ -109,11 +109,7 @@ class ContactsRepository(private val context: Context) {
             }
         }
 
-        return mutableList.sortedWith(
-            compareByDescending<ContactItem> {
-                com.example.telecom.PriorityContactManager.isPriorityContact(it.primaryNumber, it.allNumbers, context)
-            }.thenBy { it.displayName.lowercase() }
-        )
+        return mutableList.sortedBy { it.displayName.lowercase() }
     }
 
     suspend fun getContacts(forceRefresh: Boolean = false): List<ContactItem> = withContext(Dispatchers.IO) {

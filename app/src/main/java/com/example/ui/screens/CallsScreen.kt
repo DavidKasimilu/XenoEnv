@@ -759,7 +759,6 @@ fun CallLogItem(
             ContactAvatar(nameOrNumber = entry.displayName, size = 44.dp)
 
             Column(modifier = Modifier.weight(1f)) {
-                val isPriority = remember(entry.number) { PriorityContactManager.isPriorityNumber(entry.number) }
                 val titleColor = if (entry.type == CallType.MISSED) MissedRed else MaterialTheme.colorScheme.onSurface
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -781,14 +780,6 @@ fun CallLogItem(
                             fontWeight = FontWeight.Bold,
                             color = titleColor,
                             modifier = Modifier.testTag("call_count_badge_${entry.id}")
-                        )
-                    }
-                    if (isPriority) {
-                        Text(
-                            text = "★",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }

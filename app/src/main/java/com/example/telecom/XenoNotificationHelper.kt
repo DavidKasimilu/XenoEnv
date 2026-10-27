@@ -300,14 +300,14 @@ object XenoNotificationHelper {
 
         val smsCollapsedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms_collapsed).apply {
             setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, if (isPriority) "★ $resolvedName" else resolvedName)
+            setTextViewText(R.id.notif_sms_sender, resolvedName)
             setTextViewText(R.id.notif_sms_time, formattedTime)
             setTextViewText(R.id.notif_sms_body, body)
         }
 
         val smsExpandedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
             setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, if (isPriority) "★ $resolvedName" else resolvedName)
+            setTextViewText(R.id.notif_sms_sender, resolvedName)
             setTextViewText(R.id.notif_sms_number, displaySubtitle)
             setTextViewText(R.id.notif_sms_time, formattedTime)
             setTextViewText(R.id.notif_sms_body, body)
@@ -319,9 +319,9 @@ object XenoNotificationHelper {
         val targetChannel = if (isPriority) CHANNEL_PRIORITY_SMS_ID else CHANNEL_SMS_ID
         val notification = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_chat)
-            .setContentTitle(if (isPriority) "★ $resolvedName" else resolvedName)
+            .setContentTitle(resolvedName)
             .setContentText(body)
-            .setSubText(if (isPriority) "★ SMS • $formattedTime" else "SMS • $formattedTime")
+            .setSubText("SMS • $formattedTime")
             .setCustomContentView(smsCollapsedRemoteViews)
             .setCustomBigContentView(smsExpandedRemoteViews)
             .setCustomHeadsUpContentView(smsExpandedRemoteViews)
@@ -423,8 +423,8 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val displayTitle = if (isPriority && !resolvedName.startsWith("★")) "★ $resolvedName" else resolvedName
-        val badgeText = if (isPriority) "★ VIP PRIORITY CALL" else "INCOMING VOICE CALL"
+        val displayTitle = resolvedName
+        val badgeText = "INCOMING VOICE CALL"
 
         val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)

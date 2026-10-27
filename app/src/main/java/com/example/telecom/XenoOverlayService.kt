@@ -66,13 +66,12 @@ object XenoOverlayService {
             val btnDecline = overlayView.findViewById<View>(R.id.btn_call_decline)
             val btnAnswer = overlayView.findViewById<View>(R.id.btn_call_answer)
 
-            val isPriority = PriorityContactManager.isPriorityNumber(callerNumber, appContext)
             val rawName = if (!callerName.isNullOrBlank()) {
                 callerName
             } else {
                 XenoNotificationHelper.resolveContactNameQuick(appContext, callerNumber) ?: callerNumber
             }
-            val displayName = if (isPriority && !rawName.startsWith("★")) "★ $rawName" else rawName
+            val displayName = rawName
             val initials = XenoNotificationHelper.extractInitials(rawName, callerNumber)
             val subtitle = if (rawName != callerNumber && callerNumber.isNotBlank()) {
                 "Incoming Voice Call • $callerNumber"
@@ -80,7 +79,7 @@ object XenoOverlayService {
                 "Incoming Voice Call"
             }
 
-            badgeTv?.text = if (isPriority) "★ VIP PRIORITY CALL" else "INCOMING VOICE CALL"
+            badgeTv?.text = "INCOMING VOICE CALL"
             avatarTv?.text = initials
             nameTv?.text = displayName
             numberTv?.text = subtitle
