@@ -458,6 +458,7 @@ fun XenoApp(
         !uiState.showMediaManager &&
         !uiState.showDocsManager &&
         !uiState.showMusicPlayer &&
+        !uiState.showVineOS &&
         uiState.selectedVideoItem == null &&
         uiState.activeChatThread == null
     GlobalSwipeDownTracker.onOpenDrawer = {
@@ -483,7 +484,7 @@ fun XenoApp(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
+            if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && !uiState.showVineOS && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && uiState.activeCallState == null && !uiState.isBrowserFullscreenVideo) {
                 XenoBottomBar(
                     currentTab = uiState.currentTab,
                     onTabSelected = {
@@ -542,6 +543,11 @@ fun XenoApp(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+            } else if (uiState.showVineOS) {
+                com.hexadecinull.vineos.VineEmbeddedScreen(
+                    onClose = { viewModel.setShowVineOS(false) },
+                    modifier = Modifier.fillMaxSize()
+                )
             } else if (uiState.showMediaManager) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -722,6 +728,7 @@ fun XenoApp(
                                 onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
                                 onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
                                 onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
+                                onSetShowVineOS = { viewModel.setShowVineOS(it) },
                                 onSavePassword = { domain, title, username, pass ->
                                     viewModel.savePassword(domain, title, username, pass)
                                 },

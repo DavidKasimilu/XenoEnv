@@ -256,9 +256,8 @@ object OngoingCallHelper {
             PriorityContactManager.enforceIncomingPriorityBypass(context, isCall = true)
         }
 
-        val resolvedName = contactName?.takeIf { it.isNotBlank() }
+        val resolvedName = contactName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) }
             ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
-            ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(cleanNumber) else null
 
         val wakeForFullScreen = !showPopup || isScreenOffOrLocked(context) || (isPriority && !MainActivity.isAppInForeground)
         val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground

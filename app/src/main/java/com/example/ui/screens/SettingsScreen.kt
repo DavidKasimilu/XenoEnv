@@ -345,7 +345,10 @@ fun SettingsScreen(
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-                priorityNumbers.forEachIndexed { idx, num ->
+                priorityNumbers.forEach { num ->
+                    val savedName = remember(num) {
+                        com.example.telecom.XenoNotificationHelper.resolveContactNameQuick(context, num)
+                    }
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -359,24 +362,30 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
-                                Text(
-                                    text = "★ Priority VIP #${idx + 1}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = num,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = savedName ?: num,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "★",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                if (savedName != null && savedName != num) {
+                                    Text(
+                                        text = num,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
-                            Text(
-                                text = "BYPASS ACTIVE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuccessGreen,
-                                fontWeight = FontWeight.Bold
-                            )
                         }
                     }
                 }

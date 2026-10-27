@@ -114,10 +114,11 @@ fun CallsScreen(
             onStartCallWithSim(clean, name, null)
             return
         }
-        // Priority VIP Contacts bypass Dual-SIM selection prompt for immediate zero-delay dialing
+        // Priority Contacts bypass Dual-SIM selection prompt for immediate zero-delay dialing
         if (PriorityContactManager.isPriorityNumber(clean, context)) {
-            val resolvedName = name?.takeIf { it.isNotBlank() && it != clean }
-                ?: PriorityContactManager.getFallbackPriorityLabel(clean)
+            val resolvedName = name?.takeIf {
+                it.isNotBlank() && it != clean && !PriorityContactManager.isSyntheticPriorityName(it)
+            }
             val preferredSim = TelecomHelper.getPreferredSimForPriorityCall(context)
             onStartCallWithSim(clean, resolvedName, preferredSim)
             return
@@ -537,13 +538,6 @@ fun CallsScreen(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    if (group.count > 1) {
-                        Text(
-                            text = "Consecutive within 3h window",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -790,18 +784,12 @@ fun CallLogItem(
                         )
                     }
                     if (isPriority) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = "★ VIP BYPASS",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
+                        Text(
+                            text = "★",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
 

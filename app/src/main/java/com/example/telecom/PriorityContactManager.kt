@@ -165,16 +165,19 @@ object PriorityContactManager {
     }
 
     /**
-     * Returns a friendly label for a priority number if the user hasn't saved a custom contact name yet.
+     * Checks if a contact name was previously generated as a synthetic "Priority VIP" label.
+     */
+    fun isSyntheticPriorityName(name: String?): Boolean {
+        if (name.isNullOrBlank()) return false
+        val trimmed = name.trim().removePrefix("★").trim()
+        return trimmed.startsWith("Priority VIP", ignoreCase = true)
+    }
+
+    /**
+     * Returns the raw phone number when no saved contact name exists on the phone.
      */
     fun getFallbackPriorityLabel(phoneNumber: String): String {
-        val core9 = extractCore9(phoneNumber)
-        val index = DEFAULT_PRIORITY_NUMBERS.indexOfFirst { extractCore9(it) == core9 }
-        return if (index >= 0) {
-            "Priority VIP #${index + 1}"
-        } else {
-            "Priority VIP Contact"
-        }
+        return phoneNumber.trim()
     }
 
     fun isDndBypassAccessGranted(context: Context): Boolean {
@@ -390,12 +393,12 @@ object PriorityContactManager {
 
         try {
             val resolver = context.contentResolver
-            val priorityNumbers = getAllPriorityNumbers(context)
-            val matchedCoresInOs = mutableSetOf<String>()
             val contactIdsToStar = mutableSetOf<Long>()
+            val syntheticContactIdsToDelete = mutableSetOf<Long>()
 
             val projection = arrayOf(
                 ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 ContactsContract.CommonDataKinds.Phone.NUMBER
             )
 
@@ -407,17 +410,36 @@ object PriorityContactManager {
                 null
             )?.use { cursor ->
                 val idIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                 val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
                 while (cursor.moveToNext()) {
                     val contactId = if (idIdx != -1) cursor.getLong(idIdx) else 0L
+                    val displayName = if (nameIdx != -1) cursor.getString(nameIdx).orEmpty() else ""
                     val rawNumber = if (numIdx != -1) cursor.getString(numIdx).orEmpty() else ""
-                    if (contactId > 0L && isPriorityNumber(rawNumber, context)) {
-                        contactIdsToStar.add(contactId)
-                        matchedCoresInOs.add(extractCore9(rawNumber))
+                    if (contactId > 0L) {
+                        if (isSyntheticPriorityName(displayName)) {
+                            syntheticContactIdsToDelete.add(contactId)
+                        } else if (isPriorityNumber(rawNumber, context)) {
+                            contactIdsToStar.add(contactId)
+                        }
                     }
                 }
             }
 
+            // Remove any synthetic "Priority VIP ..." contacts that were previously inserted
+            for (syntheticId in syntheticContactIdsToDelete) {
+                try {
+                    resolver.delete(
+                        ContactsContract.RawContacts.CONTENT_URI,
+                        "${ContactsContract.RawContacts.CONTACT_ID} = ?",
+                        arrayOf(syntheticId.toString())
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to delete synthetic contact $syntheticId: ${e.message}")
+                }
+            }
+
+            // Star user's real saved priority contacts in the OS so DND allows them through
             for (contactId in contactIdsToStar) {
                 try {
                     val values = ContentValues().apply {
@@ -432,55 +454,6 @@ object PriorityContactManager {
                     )
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to star contactId $contactId: ${e.message}")
-                }
-            }
-
-            priorityNumbers.forEachIndexed { idx, priorityNum ->
-                val core = extractCore9(priorityNum)
-                if (core.isNotEmpty() && !matchedCoresInOs.contains(core)) {
-                    try {
-                        val displayName = "Priority VIP ${idx + 1} ($priorityNum)"
-                        val ops = ArrayList<ContentProviderOperation>()
-                        ops.add(
-                            ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
-                                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
-                                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
-                                .withValue(ContactsContract.RawContacts.STARRED, 1)
-                                .withValue(ContactsContract.RawContacts.SEND_TO_VOICEMAIL, 0)
-                                .build()
-                        )
-                        ops.add(
-                            ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
-                                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                                .withValue(
-                                    ContactsContract.Data.MIMETYPE,
-                                    ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE
-                                )
-                                .withValue(
-                                    ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME,
-                                    displayName
-                                )
-                                .build()
-                        )
-                        ops.add(
-                            ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
-                                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                                .withValue(
-                                    ContactsContract.Data.MIMETYPE,
-                                    ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE
-                                )
-                                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, priorityNum)
-                                .withValue(
-                                    ContactsContract.CommonDataKinds.Phone.TYPE,
-                                    ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE
-                                )
-                                .build()
-                        )
-                        resolver.applyBatch(ContactsContract.AUTHORITY, ops)
-                        matchedCoresInOs.add(core)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to insert starred priority contact $priorityNum: ${e.message}")
-                    }
                 }
             }
         } catch (e: Exception) {

@@ -114,10 +114,16 @@ object XenoNotificationHelper {
                 null,
                 null
             )?.use { cursor ->
-                if (cursor.moveToFirst()) {
+                while (cursor.moveToNext()) {
                     val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (idx != -1) cursor.getString(idx)?.takeIf { it.isNotBlank() } else null
-                } else null
+                    if (idx != -1) {
+                        val name = cursor.getString(idx)?.takeIf {
+                            it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
+                        }
+                        if (name != null) return name
+                    }
+                }
+                null
             }
         } catch (_: Exception) {
             null
@@ -238,21 +244,19 @@ object XenoNotificationHelper {
             PriorityContactManager.enforceIncomingPriorityBypass(context, isCall = false)
         }
 
-        val resolvedName = if (senderName.isBlank() || senderName == senderNumber) {
-            resolveContactNameQuick(context, senderNumber)
-                ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(senderNumber) else senderName.ifBlank { senderNumber }
+        val resolvedName = if (senderName.isBlank() || senderName == senderNumber || PriorityContactManager.isSyntheticPriorityName(senderName)) {
+            resolveContactNameQuick(context, senderNumber) ?: senderNumber
         } else {
             senderName
         }
 
         val initials = extractInitials(resolvedName, senderNumber)
         val formattedTime = formatNotificationTime()
-        val baseSubtitle = if (resolvedName != senderNumber && senderNumber.isNotBlank()) {
+        val displaySubtitle = if (resolvedName != senderNumber && senderNumber.isNotBlank()) {
             senderNumber
         } else {
             "Direct SMS Message"
         }
-        val displaySubtitle = if (isPriority) "★ PRIORITY VIP • $baseSubtitle" else baseSubtitle
 
         val notificationId = getSmsNotificationId(senderNumber, threadId)
 
@@ -317,7 +321,7 @@ object XenoNotificationHelper {
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(if (isPriority) "★ $resolvedName" else resolvedName)
             .setContentText(body)
-            .setSubText(if (isPriority) "PRIORITY VIP SMS • $formattedTime" else "SMS • $formattedTime")
+            .setSubText(if (isPriority) "★ SMS • $formattedTime" else "SMS • $formattedTime")
             .setCustomContentView(smsCollapsedRemoteViews)
             .setCustomBigContentView(smsExpandedRemoteViews)
             .setCustomHeadsUpContentView(smsExpandedRemoteViews)
@@ -364,19 +368,17 @@ object XenoNotificationHelper {
         createNotificationChannels(context)
 
         val isPriority = PriorityContactManager.isPriorityNumber(callerNumber, context)
-        val resolvedName = if (!callerName.isNullOrBlank()) {
+        val resolvedName = if (!callerName.isNullOrBlank() && !PriorityContactManager.isSyntheticPriorityName(callerName)) {
             callerName
         } else {
-            resolveContactNameQuick(context, callerNumber)
-                ?: if (isPriority) PriorityContactManager.getFallbackPriorityLabel(callerNumber) else callerNumber
+            resolveContactNameQuick(context, callerNumber) ?: callerNumber
         }
         val initials = extractInitials(resolvedName, callerNumber)
-        val baseSubtitle = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
+        val subtitleText = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
             "Incoming Voice Call • $callerNumber"
         } else {
             "Incoming Voice Call"
         }
-        val subtitleText = if (isPriority) "★ PRIORITY VIP • $baseSubtitle" else baseSubtitle
 
         val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or

@@ -37,7 +37,8 @@ class CallLogRepository(private val context: Context) {
                     CallLogEntry(
                         id = obj.optLong("id", 0L),
                         number = obj.optString("number", ""),
-                        cachedName = obj.optString("cachedName", "").takeIf { it.isNotBlank() },
+                        cachedName = obj.optString("cachedName", "")
+                            .takeIf { it.isNotBlank() && !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) },
                         type = runCatching { CallType.valueOf(obj.optString("type", "OUTGOING")) }.getOrDefault(CallType.OUTGOING),
                         date = obj.optLong("date", 0L),
                         durationSeconds = obj.optLong("durationSeconds", 0L),
@@ -129,7 +130,9 @@ class CallLogRepository(private val context: Context) {
                 while (cur.moveToNext() && entries.size < 150) {
                     val id = if (idIdx != -1) cur.getLong(idIdx) else 0L
                     val number = if (numberIdx != -1) cur.getString(numberIdx) ?: "" else ""
-                    val name = if (nameIdx != -1) cur.getString(nameIdx) else null
+                    val name = if (nameIdx != -1) {
+                        cur.getString(nameIdx)?.takeIf { !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) }
+                    } else null
                     val rawType = if (typeIdx != -1) cur.getInt(typeIdx) else 1
                     val date = if (dateIdx != -1) cur.getLong(dateIdx) else System.currentTimeMillis()
                     val duration = if (durationIdx != -1) cur.getLong(durationIdx) else 0L

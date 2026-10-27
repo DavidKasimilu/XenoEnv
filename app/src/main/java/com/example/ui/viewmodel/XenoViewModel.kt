@@ -153,6 +153,7 @@ data class XenoUiState(
     val showMusicPlayer: Boolean = false,
     val musicTracks: List<MusicTrackItem> = emptyList(),
     val isLoadingMusic: Boolean = false,
+    val showVineOS: Boolean = false,
 
     // Notification state
     val deviceNotifications: List<DeviceNotification> = emptyList(),
@@ -580,7 +581,36 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         // 2. Load contacts & SMS threads concurrently on Dispatchers.IO
         viewModelScope.launch(Dispatchers.IO) {
             val contacts = contactsRepo.getContacts(forceRefresh = forceRefresh)
-            _uiState.value = _uiState.value.copy(contacts = contacts)
+            val currentThreads = _uiState.value.smsThreads
+            val enrichedThreads = if (currentThreads.isNotEmpty()) {
+                currentThreads.map { thread ->
+                    val realName = contactsRepo.resolveContactNameFast(thread.address)
+                    if (!realName.isNullOrBlank()) {
+                        thread.copy(contactName = realName)
+                    } else if (com.example.telecom.PriorityContactManager.isSyntheticPriorityName(thread.contactName)) {
+                        thread.copy(contactName = null)
+                    } else {
+                        thread
+                    }
+                }
+            } else {
+                currentThreads
+            }
+            val currentActiveChat = _uiState.value.activeChatThread?.let { active ->
+                val realName = contactsRepo.resolveContactNameFast(active.address)
+                if (!realName.isNullOrBlank()) {
+                    active.copy(contactName = realName)
+                } else if (com.example.telecom.PriorityContactManager.isSyntheticPriorityName(active.contactName)) {
+                    active.copy(contactName = null)
+                } else {
+                    active
+                }
+            }
+            _uiState.value = _uiState.value.copy(
+                contacts = contacts,
+                smsThreads = enrichedThreads,
+                activeChatThread = currentActiveChat
+            )
             // Re-enrich call log contact names in O(1) as soon as contacts are indexed
             syncCallHistoryFast()
         }
@@ -1042,6 +1072,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setShowVineOS(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showVineOS = show)
+    }
+
     fun refreshMusicTracks() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingMusic = true)
@@ -1299,6 +1333,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             showDocsManager = false,
             showMediaManager = false,
             showMusicPlayer = false,
+            showVineOS = false,
             activeChatThread = null
         )
     }

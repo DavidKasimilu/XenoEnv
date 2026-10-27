@@ -333,7 +333,7 @@ fun AppAlertsDrawerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
@@ -362,26 +362,6 @@ fun AppAlertsDrawerOverlay(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                        }
-
-                        // Small 'X' button to draw the App Alerts drawer back up
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .clickable { onCloseDrawer() }
-                                .testTag("close_app_alerts_drawer_btn")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Close App Alerts drawer",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
                         }
                     }
                 }
@@ -856,19 +836,36 @@ fun SmsThreadItem(
             ContactAvatar(nameOrNumber = thread.displayName, size = 46.dp)
 
             Column(modifier = Modifier.weight(1f)) {
+                val isPriority = remember(thread.address) {
+                    com.example.telecom.PriorityContactManager.isPriorityNumber(thread.address)
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = thread.displayName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = if (!thread.read) FontWeight.Bold else FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.weight(1f)
-                    )
+                    ) {
+                        Text(
+                            text = thread.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (!thread.read) FontWeight.Bold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isPriority) {
+                            Text(
+                                text = "★",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     Text(
                         text = thread.formattedDate,
                         style = MaterialTheme.typography.bodySmall,

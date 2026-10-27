@@ -75,7 +75,10 @@ data class CallLogEntry(
     val photoUri: String? = null
 ) {
     val displayName: String
-        get() = cachedName?.takeIf { it.isNotBlank() } ?: number.takeIf { it.isNotBlank() } ?: "Unknown Caller"
+        get() = cachedName
+            ?.takeIf { it.isNotBlank() && !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) }
+            ?: number.takeIf { it.isNotBlank() }
+            ?: "Unknown Caller"
 
     val formattedDuration: String
         get() {
@@ -234,7 +237,10 @@ data class SmsThread(
     val unreadCount: Int = 0
 ) {
     val displayName: String
-        get() = contactName?.takeIf { it.isNotBlank() } ?: address.takeIf { it.isNotBlank() } ?: "Unknown"
+        get() = contactName
+            ?.takeIf { it.isNotBlank() && !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) }
+            ?: address.takeIf { it.isNotBlank() }
+            ?: "Unknown"
 
     val formattedDate: String
         get() {

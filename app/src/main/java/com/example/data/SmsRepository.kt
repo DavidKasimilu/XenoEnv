@@ -73,7 +73,8 @@ class SmsRepository(
                     SmsThread(
                         threadId = obj.optLong("threadId", 0L),
                         address = obj.optString("address", ""),
-                        contactName = obj.optString("contactName", "").takeIf { it.isNotBlank() },
+                        contactName = obj.optString("contactName", "")
+                            .takeIf { it.isNotBlank() && !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) },
                         snippet = obj.optString("snippet", ""),
                         date = obj.optLong("date", 0L),
                         read = obj.optBoolean("read", true),

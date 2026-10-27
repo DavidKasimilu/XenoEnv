@@ -38,6 +38,7 @@ class ContactsRepository(private val context: Context) {
 
     private fun indexContactNumber(rawNumber: String, displayName: String) {
         if (rawNumber.isBlank() || displayName.isBlank()) return
+        if (PriorityContactManager.isSyntheticPriorityName(displayName)) return
         val trimmed = rawNumber.trim()
         phoneToNameCache[trimmed] = displayName
         val digits = normalizeDigits(trimmed)
@@ -46,50 +47,46 @@ class ContactsRepository(private val context: Context) {
             if (digits.length >= 7) {
                 phoneToNameCache[digits.takeLast(7)] = displayName
             }
+            if (digits.length >= 9) {
+                phoneToNameCache[digits.takeLast(9)] = displayName
+            }
             if (digits.length >= 10) {
                 phoneToNameCache[digits.takeLast(10)] = displayName
             }
         }
     }
 
-    init {
-        // Pre-seed in-memory fast lookup with the 5 priority numbers so they resolve in 0ms
-        PriorityContactManager.DEFAULT_PRIORITY_NUMBERS.forEachIndexed { idx, num ->
-            indexContactNumber(num, "Priority VIP ${idx + 1}")
-        }
-    }
-
     /**
      * Synchronous O(1) in-memory contact name lookup.
      * Avoids ContentResolver Binder IPC overhead when enriching Call History and SMS Threads.
+     * Always returns the real contact name saved in the user's phone (never synthetic VIP labels).
      */
     fun resolveContactNameFast(phoneNumber: String): String? {
         if (phoneNumber.isBlank()) return null
         val trimmed = phoneNumber.trim()
-        phoneToNameCache[trimmed]?.let { return it }
+        phoneToNameCache[trimmed]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
 
         val digits = normalizeDigits(trimmed)
         if (digits.isNotEmpty()) {
-            phoneToNameCache[digits]?.let { return it }
+            phoneToNameCache[digits]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
             if (digits.length >= 10) {
-                phoneToNameCache[digits.takeLast(10)]?.let { return it }
+                phoneToNameCache[digits.takeLast(10)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
             }
             if (digits.length >= 9) {
-                phoneToNameCache[digits.takeLast(9)]?.let { return it }
+                phoneToNameCache[digits.takeLast(9)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
             }
             if (digits.length >= 7) {
-                phoneToNameCache[digits.takeLast(7)]?.let { return it }
+                phoneToNameCache[digits.takeLast(7)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
             }
-        }
-        if (com.example.telecom.PriorityContactManager.isPriorityNumber(trimmed, context)) {
-            return com.example.telecom.PriorityContactManager.getFallbackPriorityLabel(trimmed)
         }
         return null
     }
 
     private fun mergePriorityContactsWithDeviceContacts(deviceContacts: List<ContactItem>): List<ContactItem> {
         val priorityNumbers = com.example.telecom.PriorityContactManager.getAllPriorityNumbers(context)
-        val mutableList = deviceContacts.toMutableList()
+        val mutableList = deviceContacts
+            .filterNot { PriorityContactManager.isSyntheticPriorityName(it.displayName) }
+            .toMutableList()
 
         priorityNumbers.forEachIndexed { idx, pNum ->
             val pCore = com.example.telecom.PriorityContactManager.extractCore9(pNum)
@@ -98,13 +95,12 @@ class ContactsRepository(private val context: Context) {
                     contact.allNumbers.any { com.example.telecom.PriorityContactManager.extractCore9(it) == pCore }
             }
             if (!alreadyPresent) {
-                val label = "Priority VIP ${idx + 1}"
-                indexContactNumber(pNum, label)
+                val savedName = resolveContactNameFast(pNum) ?: pNum
                 mutableList.add(
                     ContactItem(
                         id = -1000L - idx,
-                        lookupKey = "priority_vip_${idx + 1}",
-                        displayName = label,
+                        lookupKey = "priority_contact_${idx + 1}",
+                        displayName = savedName,
                         primaryNumber = pNum,
                         allNumbers = listOf(pNum),
                         photoUri = null
@@ -137,7 +133,7 @@ class ContactsRepository(private val context: Context) {
             return@withContext seededOnly
         }
 
-        // Sync the 5 priority numbers into Android OS Starred Contacts (STARRED = 1) for system DND bypass
+        // Sync the priority numbers into Android OS Starred Contacts (STARRED = 1) for system DND bypass
         com.example.telecom.PriorityContactManager.syncPriorityContactsToOs(context)
 
         val contactsMap = mutableMapOf<Long, ContactItem>()
@@ -169,6 +165,10 @@ class ContactsRepository(private val context: Context) {
                     val name = if (nameIdx != -1) cursor.getString(nameIdx) ?: "Unknown" else "Unknown"
                     val number = if (numberIdx != -1) cursor.getString(numberIdx) ?: "" else ""
                     val photoUri = if (photoIdx != -1) cursor.getString(photoIdx) else null
+
+                    if (PriorityContactManager.isSyntheticPriorityName(name)) {
+                        continue
+                    }
 
                     if (number.isNotBlank() && name.isNotBlank()) {
                         indexContactNumber(number, name)
@@ -231,11 +231,11 @@ class ContactsRepository(private val context: Context) {
                     .build()
                 val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
                 contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                    if (cursor.moveToFirst()) {
+                    while (cursor.moveToNext()) {
                         val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
                         if (idx != -1) {
                             val resolved = cursor.getString(idx)
-                            if (!resolved.isNullOrBlank()) {
+                            if (!resolved.isNullOrBlank() && !PriorityContactManager.isSyntheticPriorityName(resolved)) {
                                 indexContactNumber(trimmed, resolved)
                                 return@withContext resolved
                             }
