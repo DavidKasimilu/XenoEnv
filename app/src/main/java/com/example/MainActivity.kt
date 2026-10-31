@@ -550,20 +550,24 @@ fun XenoApp(
         }
 
         // Floating Window Card (squared corners when fit to screen, 14dp rounded corners when floating scaled)
-        Card(
+        Box(
             modifier = Modifier
                 .size(width = targetW, height = targetH)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { /* consume clicks inside window */ }
-                .testTag("floating_window_frame"),
-            shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
-            elevation = CardDefaults.cardElevation(defaultElevation = if (isFitToScreen) 0.dp else 10.dp),
-            border = if (isFitToScreen) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { /* consume clicks inside window */ }
+                    .testTag("floating_window_frame"),
+                shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
+                elevation = CardDefaults.cardElevation(defaultElevation = if (isFitToScreen) 0.dp else 10.dp),
+                border = if (isFitToScreen) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
                 // 1. Top Bar of the Floating Window
                 FloatingWindowTopBar(
                     currentTab = uiState.currentTab,
@@ -805,6 +809,31 @@ fun XenoApp(
             }
         }
 
+            // App Alerts Drawer Overlay rendered inside the floating window bounds, respecting window size
+            AppAlertsDrawerOverlay(
+                isOpen = uiState.isAppAlertsDrawerOpen,
+                onCloseDrawer = { viewModel.setAppAlertsDrawerOpen(false) },
+                notifications = uiState.deviceNotifications,
+                hasNotificationAccess = uiState.hasNotificationAccess,
+                onRequestNotificationAccess = {
+                    XenoNotificationListenerService.openNotificationSettings(context)
+                },
+                onDismissNotification = { viewModel.dismissNotification(it) },
+                onClearAllNotifications = { viewModel.clearAllNotifications() },
+                onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
+                onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
+                onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
+                onSimulateSms = { viewModel.simulateIncomingSms() },
+                onStopFloatingApp = {
+                    FloatingBubbleService.stop(context)
+                    (context as? Activity)?.finishAndRemoveTask()
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(25f)
+            )
+        }
+
         // Floating Minimized Clone App Icons Overlay
         if (uiState.minimizedSpaceClones.isNotEmpty()) {
             MinimizedCloneFloatingOverlay(
@@ -815,29 +844,7 @@ fun XenoApp(
             )
         }
 
-        // Global Swipe-Down App Alerts Drawer Overlay (works across all tabs and inside cloned apps)
-        AppAlertsDrawerOverlay(
-            isOpen = uiState.isAppAlertsDrawerOpen,
-            onCloseDrawer = { viewModel.setAppAlertsDrawerOpen(false) },
-            notifications = uiState.deviceNotifications,
-            hasNotificationAccess = uiState.hasNotificationAccess,
-            onRequestNotificationAccess = {
-                XenoNotificationListenerService.openNotificationSettings(context)
-            },
-            onDismissNotification = { viewModel.dismissNotification(it) },
-            onClearAllNotifications = { viewModel.clearAllNotifications() },
-            onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
-            onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
-            onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
-            onSimulateSms = { viewModel.simulateIncomingSms() },
-            onStopFloatingApp = {
-                FloatingBubbleService.stop(context)
-                (context as? Activity)?.finishAndRemoveTask()
-            },
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(25f)
-        )
+
 
         // Top In-App SMS Notification Popup Overlay
         InAppNotificationOverlay(
