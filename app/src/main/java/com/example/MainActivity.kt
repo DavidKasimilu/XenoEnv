@@ -531,8 +531,7 @@ fun XenoApp(
                 onMinimizeWindow()
             }
             .windowInsetsPadding(WindowInsets.statusBars)
-            .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(top = 10.dp, bottom = 10.dp),
+            .windowInsetsPadding(WindowInsets.navigationBars),
         contentAlignment = Alignment.Center
     ) {
         val screenW = maxWidth
@@ -543,14 +542,14 @@ fun XenoApp(
         }
 
         val (targetW, targetH) = if (isFitToScreen) {
-            Pair(screenW - 12.dp, screenH - 8.dp)
+            Pair(screenW, screenH)
         } else {
             val w = screenW * windowScale
             val h = (w.value / deviceRatio).dp.coerceAtMost(screenH - 12.dp)
             Pair(w, h)
         }
 
-        // Floating Window Card with rounded smooth small corners
+        // Floating Window Card (squared corners when fit to screen, 14dp rounded corners when floating scaled)
         Card(
             modifier = Modifier
                 .size(width = targetW, height = targetH)
@@ -559,10 +558,10 @@ fun XenoApp(
                     indication = null
                 ) { /* consume clicks inside window */ }
                 .testTag("floating_window_frame"),
-            shape = RoundedCornerShape(14.dp),
+            shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
-            elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isFitToScreen) 0.dp else 10.dp),
+            border = if (isFitToScreen) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // 1. Top Bar of the Floating Window

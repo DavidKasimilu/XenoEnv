@@ -4766,12 +4766,8 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    // Use LAYER_TYPE_NONE so WebView uses direct window compositing instead of allocating an offscreen rendernode layer
-                                    if (useSoftwareLayer) {
-                                        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                                    } else {
-                                        setLayerType(View.LAYER_TYPE_NONE, null)
-                                    }
+                                    // Explicitly use LAYER_TYPE_SOFTWARE to prevent rendernode creation failure in headless/virtual GPU environments
+                                    setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
                                     isHorizontalScrollBarEnabled = !isShortVideoSocialApp
                                     if (isInstagram) {
