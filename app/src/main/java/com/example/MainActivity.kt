@@ -828,6 +828,7 @@ fun XenoApp(
                     FloatingBubbleService.stop(context)
                     (context as? Activity)?.finishAndRemoveTask()
                 },
+                shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(25f)

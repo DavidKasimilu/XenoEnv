@@ -275,6 +275,7 @@ fun AppAlertsDrawerOverlay(
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
     onStopFloatingApp: (() -> Unit)? = null,
+    shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp),
     modifier: Modifier = Modifier
 ) {
     val postNotificationLauncher = rememberLauncherForActivityResult(
@@ -308,7 +309,8 @@ fun AppAlertsDrawerOverlay(
                 .fillMaxSize()
                 .testTag("app_alerts_drawer_overlay"),
             color = MaterialTheme.colorScheme.background,
-            tonalElevation = 3.dp
+            tonalElevation = 3.dp,
+            shape = shape
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Top Drawer Bar with Title and Small 'X' Button to Draw Back
