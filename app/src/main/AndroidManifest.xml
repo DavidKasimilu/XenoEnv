@@ -164,7 +164,7 @@
 
         <!-- Boot Receiver for Auto-starting Floating Icon after Reboot -->
         <receiver
-            android:name="com.example.floating.BootReceiver"
+            android:name="com.example.floating.FloatingBootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>

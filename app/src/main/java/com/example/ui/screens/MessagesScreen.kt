@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.NotificationsNone
@@ -273,6 +274,7 @@ fun AppAlertsDrawerOverlay(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    onStopFloatingApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val postNotificationLauncher = rememberLauncherForActivityResult(
@@ -369,12 +371,11 @@ fun AppAlertsDrawerOverlay(
                     },
                     onDismissNotification = onDismissNotification,
                     onClearAll = onClearAllNotifications,
-                    onAddSampleAlerts = onAddSampleAlerts,
-                    onSimulateAlert = onSimulateAlert,
                     onOpenAppDetailsSettings = onOpenAppDetailsSettings,
                     onSimulateSms = onSimulateSms,
                     onSimulateCall = onSimulateCall,
                     onCloseDrawer = onCloseDrawer,
+                    onStopFloatingApp = onStopFloatingApp,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -445,6 +446,7 @@ fun DeviceNotificationsWindow(
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
     onCloseDrawer: (() -> Unit)? = null,
+    onStopFloatingApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -572,16 +574,31 @@ fun DeviceNotificationsWindow(
                         )
                     }
 
-                    if (notifications.isNotEmpty()) {
-                        IconButton(
-                            onClick = onClearAll,
-                            modifier = Modifier.testTag("clear_all_notifications_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ClearAll,
-                                contentDescription = "Clear all notifications",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (notifications.isNotEmpty()) {
+                            IconButton(
+                                onClick = onClearAll,
+                                modifier = Modifier.testTag("clear_all_notifications_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ClearAll,
+                                    contentDescription = "Clear all notifications",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (onStopFloatingApp != null) {
+                            IconButton(
+                                onClick = onStopFloatingApp,
+                                modifier = Modifier.testTag("alerts_drawer_power_off_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.PowerSettingsNew,
+                                    contentDescription = "Turn off floating app",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
                 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -136,6 +137,52 @@ fun FloatingSettingsDialog(
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text("Grant Permission")
+                            }
+                        }
+                    }
+                }
+
+                // Battery Optimization Exemption Card
+                val isIgnoringBattery = FloatingBubbleService.isIgnoringBatteryOptimizations(context)
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isIgnoringBattery) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.BatterySaver,
+                                contentDescription = null,
+                                tint = if (isIgnoringBattery) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                            )
+                            Text(
+                                text = if (isIgnoringBattery) "Unstoppable Persistence Active" else "Optimize Background Persistence",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (isIgnoringBattery)
+                                "Battery saver optimizations bypassed. The floating window and background clone tasks will never be paused or killed by Android."
+                            else
+                                "Grant battery saver exemption so Android never pauses or kills the floating icon in background.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (!isIgnoringBattery) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = { FloatingBubbleService.requestIgnoreBatteryOptimizations(context) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Bypass Battery Saver")
                             }
                         }
                     }

@@ -25,6 +25,11 @@ import kotlin.math.abs
 
 class FloatingBubbleService : Service() {
 
+    private var windowManager: WindowManager? = null
+    private var bubbleView: ImageView? = null
+    private var layoutParams: WindowManager.LayoutParams? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     companion object {
         const val TAG = "FloatingBubbleService"
         const val ACTION_START = "com.example.floating.ACTION_START"
@@ -44,6 +49,31 @@ class FloatingBubbleService : Service() {
                 Settings.canDrawOverlays(context)
             } else {
                 true
+            }
+        }
+
+        fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+            } else {
+                true
+            }
+        }
+
+        fun requestIgnoreBatteryOptimizations(context: Context) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val intent = Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${context.packageName}")
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error opening battery optimization settings", e)
             }
         }
 
@@ -99,10 +129,6 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private var windowManager: WindowManager? = null
-    private var bubbleView: ImageView? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -110,16 +136,50 @@ class FloatingBubbleService : Service() {
         FloatingPreferences.init(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
         createNotificationChannel()
+        acquireWakeLock()
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                wakeLock = pm?.newWakeLock(
+                    android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                    "Rabbit:FloatingBubbleWakeLock"
+                )?.apply {
+                    setReferenceCounted(false)
+                    acquire(10 * 60 * 1000L /* 10 minutes timeout safeguard per lock acquire */)
+                }
+            } else if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire(10 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error acquiring wake lock", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing wake lock", e)
+        }
+        wakeLock = null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
 
         if (action == ACTION_STOP) {
+            releaseWakeLock()
+            stopForeground(true)
             stopSelf()
             return START_NOT_STICKY
         }
 
+        acquireWakeLock()
         startForeground(NOTIFICATION_ID, buildForegroundNotification())
         isRunning = true
 
@@ -324,6 +384,7 @@ class FloatingBubbleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        releaseWakeLock()
         bubbleView?.let {
             try {
                 windowManager?.removeView(it)

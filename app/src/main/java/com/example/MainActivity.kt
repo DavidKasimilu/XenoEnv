@@ -830,6 +830,10 @@ fun XenoApp(
             onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
             onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
             onSimulateSms = { viewModel.simulateIncomingSms() },
+            onStopFloatingApp = {
+                FloatingBubbleService.stop(context)
+                (context as? Activity)?.finishAndRemoveTask()
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(25f)
