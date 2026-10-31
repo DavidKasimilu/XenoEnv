@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.NetworkCell
 import androidx.compose.material.icons.filled.SignalCellularOff
+import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Card
@@ -287,7 +288,30 @@ fun QuickTogglesPanel(
         } catch (_: Exception) {}
     }
 
-    // 5. Brightness State
+    // 5. SIM Toolkit Launch
+    fun openSimToolkit() {
+        val pm = context.packageManager
+        val intent = pm.getLaunchIntentForPackage("com.android.stk")
+            ?: pm.getLaunchIntentForPackage("com.android.stk2")
+            ?: Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage("com.android.stk")
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val stkIntent = Intent("android.intent.action.MAIN")
+                stkIntent.setClassName("com.android.stk", "com.android.stk.StkLauncherActivity")
+                stkIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(stkIntent)
+            } catch (_: Exception) {
+                try {
+                    context.startActivity(Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // 6. Brightness State
     var brightnessLevel by remember {
         val current = activity?.window?.attributes?.screenBrightness ?: -1f
         val initial = if (current >= 0) current else {
@@ -335,7 +359,7 @@ fun QuickTogglesPanel(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 4 Quick Toggle Buttons Row
+            // Quick Toggle Buttons Row (including SIM Toolkit)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -384,6 +408,15 @@ fun QuickTogglesPanel(
                         openBluetoothSettings()
                     },
                     testTag = "toggle_bluetooth"
+                )
+
+                // SIM Toolkit
+                QuickToggleButton(
+                    icon = Icons.Filled.SimCard,
+                    label = "SIM Toolkit",
+                    isActive = false,
+                    onClick = { openSimToolkit() },
+                    testTag = "toggle_sim_toolkit"
                 )
             }
 

@@ -4766,11 +4766,11 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    // Use hardware layer for WhatsApp Web, YouTube, and Instagram so WebRTC/Reels/MSE video codecs and 60fps scroll run at full capability
-                                    if (useSoftwareLayer && !isYoutube && !isWhatsapp && !isInstagram) {
+                                    // Use LAYER_TYPE_NONE so WebView uses direct window compositing instead of allocating an offscreen rendernode layer
+                                    if (useSoftwareLayer) {
                                         setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     } else {
-                                        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                        setLayerType(View.LAYER_TYPE_NONE, null)
                                     }
                                     isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
                                     isHorizontalScrollBarEnabled = !isShortVideoSocialApp
@@ -4837,9 +4837,6 @@ fun CloneWorkspaceScreen(
                                             isVideoCallActive = isVideo
                                             this@apply.keepScreenOn = active
                                             if (active) {
-                                                if (isVideo) {
-                                                    this@apply.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                                }
                                                 audioFocusRequest = setWhatsAppCallAudioMode(
                                                     ctx,
                                                     active = true,
@@ -5160,13 +5157,8 @@ fun CloneWorkspaceScreen(
                                             }
                                         } catch (_: Exception) {}
                                         webViewInstance = null
-                                        if (!useSoftwareLayer) {
-                                            // Automatically recover in software layer mode without interrupting the user
-                                            useSoftwareLayer = true
-                                            reloadKey++
-                                        } else {
-                                            hasRenderCrash = true
-                                        }
+                                        useSoftwareLayer = true
+                                        reloadKey++
                                         return true
                                     }
                                 }
@@ -5209,9 +5201,6 @@ fun CloneWorkspaceScreen(
                                                         isCallActive = true
                                                         isVideoCallActive = needsVideo
                                                         this@apply.keepScreenOn = true
-                                                        if (needsVideo) {
-                                                            this@apply.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                                        }
                                                         audioFocusRequest = setWhatsAppCallAudioMode(
                                                             ctx,
                                                             active = true,

@@ -97,7 +97,7 @@ enum class BrowserDualTab {
 }
 
 data class XenoUiState(
-    val currentTab: XenoTab = XenoTab.CALLS,
+    val currentTab: XenoTab = XenoTab.MESSAGES,
     val messagesSubTab: MessagesSubTab = MessagesSubTab.SMS,
     val isLoading: Boolean = false,
     val callLogs: List<CallLogEntry> = emptyList(),

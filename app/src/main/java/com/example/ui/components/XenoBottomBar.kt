@@ -1,26 +1,15 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Dialpad
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.outlined.Call
-import androidx.compose.material.icons.outlined.Dialpad
-import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Message
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -54,19 +43,6 @@ fun XenoBottomBar(
 ) {
     val items = listOf(
         BottomBarItem(
-            tab = XenoTab.CALLS,
-            label = "Calls",
-            selectedIcon = Icons.Filled.Call,
-            unselectedIcon = Icons.Outlined.Call,
-            badgeCount = missedCallsCount
-        ),
-        BottomBarItem(
-            tab = XenoTab.KEYPAD,
-            label = "Keypad",
-            selectedIcon = Icons.Filled.Dialpad,
-            unselectedIcon = Icons.Outlined.Dialpad
-        ),
-        BottomBarItem(
             tab = XenoTab.MESSAGES,
             label = "Messages",
             selectedIcon = Icons.Filled.Message,
@@ -88,7 +64,10 @@ fun XenoBottomBar(
     )
 
     NavigationBar(
-        modifier = modifier.testTag("xeno_bottom_bar"),
+        modifier = modifier
+            .height(62.dp)
+            .testTag("xeno_bottom_bar"),
+        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 3.dp
     ) {

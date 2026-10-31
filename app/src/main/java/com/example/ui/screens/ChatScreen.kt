@@ -294,16 +294,6 @@ fun ChatScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(
-                        onClick = { placeCall(thread.address) },
-                        modifier = Modifier.testTag("chat_call_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Call,
-                            contentDescription = "Call ${thread.displayName}",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
                             Icon(

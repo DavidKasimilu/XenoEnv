@@ -137,7 +137,6 @@ fun MessagesScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .testTag("search_sms_input"),
-                    placeholder = { Text("Search messages or senders...") },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Filled.Search,

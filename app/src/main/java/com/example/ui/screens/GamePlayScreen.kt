@@ -7,6 +7,7 @@ import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -563,6 +564,22 @@ fun GamePlayScreen(
                                             }
                                             currentWebUrl = url
                                             return false
+                                        }
+
+                                        override fun onRenderProcessGone(
+                                            view: WebView?,
+                                            detail: RenderProcessGoneDetail?
+                                        ): Boolean {
+                                            try {
+                                                view?.let {
+                                                    val parent = it.parent as? ViewGroup
+                                                    parent?.removeView(it)
+                                                    it.stopLoading()
+                                                    it.destroy()
+                                                }
+                                            } catch (_: Exception) {}
+                                            webViewInstance = null
+                                            return true
                                         }
                                     }
                                     webChromeClient = object : WebChromeClient() {
