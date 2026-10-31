@@ -3861,7 +3861,7 @@ fun CloneWorkspaceScreen(
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
     var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(false) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
-    var keepAliveInMinimizedPool by remember(instance.instanceId) { mutableStateOf(false) }
+    var keepAliveInMinimizedPool by remember(instance.instanceId) { mutableStateOf(true) }
 
     // Voice & Video Call hardware states
     var hasMicPermission by remember {
@@ -4766,8 +4766,11 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    // Explicitly use LAYER_TYPE_SOFTWARE to prevent rendernode creation failure in headless/virtual GPU environments
-                                    setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                                    if (useSoftwareLayer) {
+                                        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                                    } else {
+                                        setLayerType(View.LAYER_TYPE_NONE, null)
+                                    }
                                     isVerticalScrollBarEnabled = !isShortVideoSocialApp || isYoutube || isFacebook
                                     isHorizontalScrollBarEnabled = !isShortVideoSocialApp
                                     if (isInstagram) {

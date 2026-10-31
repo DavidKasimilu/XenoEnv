@@ -977,7 +977,7 @@ fun BrowserScreen(
                             factory = { ctx ->
                                 WebView(ctx).apply {
                                     try {
-                                        setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+                                        setLayerType(android.view.View.LAYER_TYPE_NONE, null)
                                     } catch (_: Exception) {}
 
                                     applyBrowserModeSettings(this, tab.isDesktopMode, tab.url)
@@ -1109,7 +1109,7 @@ fun BrowserScreen(
                                                 }
                                             } catch (_: Exception) {}
                                             activeWebView = null
-                                            hasRenderCrash = true
+                                            reloadKey++
                                             return true
                                         }
                                     }
