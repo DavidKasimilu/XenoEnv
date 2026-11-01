@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -419,10 +420,9 @@ fun XenoApp(
         }
     }
 
-    // Show user notices
+    // Clear user notices silently (removing blue notification snackbar popup completely)
     LaunchedEffect(uiState.userNotice) {
         uiState.userNotice?.let { notice ->
-            snackbarHostState.showSnackbar(notice)
             viewModel.clearUserNotice()
         }
     }
@@ -521,8 +521,8 @@ fun XenoApp(
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            contentWindowInsets = WindowInsets.systemBars,
+            snackbarHost = {},
             bottomBar = {
                 if (uiState.activeChatThread == null &&
                     uiState.activeSpaceInstanceId == null &&

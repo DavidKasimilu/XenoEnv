@@ -16,6 +16,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
@@ -76,9 +77,8 @@ fun XenoBottomBar(
 
     NavigationBar(
         modifier = modifier
-            .height(68.dp)
             .testTag("xeno_bottom_bar"),
-        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+        windowInsets = NavigationBarDefaults.windowInsets,
         containerColor = Color(0xFF1E1E22),
         tonalElevation = 4.dp
     ) {
