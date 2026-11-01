@@ -12,9 +12,13 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+import org.json.JSONArray
+import org.json.JSONObject
+
 class ContactsRepository(private val context: Context) {
 
     private val contentResolver: ContentResolver = context.contentResolver
+    private val fastCachePrefs = context.getSharedPreferences("xeno_fast_contacts_cache", Context.MODE_PRIVATE)
 
     @Volatile
     private var cachedContacts: List<ContactItem> = emptyList()
@@ -25,7 +29,63 @@ class ContactsRepository(private val context: Context) {
     private val phoneToNameCache = ConcurrentHashMap<String, String>()
     private val unresolvedPhonesCache = ConcurrentHashMap<String, Long>()
 
-    fun getCachedContactsSnapshot(): List<ContactItem> = cachedContacts
+    /**
+     * Returns an instant snapshot of Contacts from memory or lightweight disk cache
+     * so Contacts and Call History names render immediately on Frame 1 with 0ms delay.
+     */
+    fun getCachedContactsSnapshot(): List<ContactItem> {
+        if (cachedContacts.isNotEmpty()) return cachedContacts
+        return try {
+            val raw = fastCachePrefs.getString("contacts_snapshot", null) ?: return emptyList()
+            val arr = JSONArray(raw)
+            val list = ArrayList<ContactItem>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optLong("id", 0L)
+                val lookupKey = obj.optString("lookupKey", "")
+                val name = obj.optString("displayName", "Unknown")
+                val number = obj.optString("primaryNumber", "")
+                val photoUri = obj.optString("photoUri", "").takeIf { it.isNotBlank() }
+
+                val item = ContactItem(
+                    id = id,
+                    lookupKey = lookupKey,
+                    displayName = name,
+                    primaryNumber = number,
+                    allNumbers = if (number.isNotBlank()) listOf(number) else emptyList(),
+                    photoUri = photoUri
+                )
+                list.add(item)
+                if (number.isNotBlank() && name.isNotBlank()) {
+                    indexContactNumber(number, name)
+                }
+            }
+            cachedContacts = list
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveContactsSnapshot(contacts: List<ContactItem>) {
+        cachedContacts = contacts
+        try {
+            val arr = JSONArray()
+            val limit = contacts.size.coerceAtMost(250)
+            for (i in 0 until limit) {
+                val c = contacts[i]
+                val obj = JSONObject().apply {
+                    put("id", c.id)
+                    put("lookupKey", c.lookupKey)
+                    put("displayName", c.displayName)
+                    put("primaryNumber", c.primaryNumber)
+                    put("photoUri", c.photoUri ?: "")
+                }
+                arr.put(obj)
+            }
+            fastCachePrefs.edit().putString("contacts_snapshot", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
 
     private fun normalizeDigits(number: String): String {
         val sb = StringBuilder(number.length)
@@ -173,6 +233,7 @@ class ContactsRepository(private val context: Context) {
         val result = mergePriorityContactsWithDeviceContacts(contactsMap.values.toList())
         cachedContacts = result
         lastContactsLoadTimeMs = System.currentTimeMillis()
+        saveContactsSnapshot(result)
         return@withContext result
     }
 

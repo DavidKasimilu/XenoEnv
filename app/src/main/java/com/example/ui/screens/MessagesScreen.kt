@@ -55,6 +55,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -308,33 +312,55 @@ fun AppAlertsDrawerOverlay(
             onCloseDrawer()
         }
 
+        val drawerNestedScrollConnection = remember(onCloseDrawer) {
+            object : NestedScrollConnection {
+                var accumulatedUpDrag = 0f
+
+                override fun onPostScroll(
+                    consumed: Offset,
+                    available: Offset,
+                    source: NestedScrollSource
+                ): Offset {
+                    if (available.y < -8f) {
+                        accumulatedUpDrag += kotlin.math.abs(available.y)
+                        if (accumulatedUpDrag > 60f) {
+                            onCloseDrawer()
+                            accumulatedUpDrag = 0f
+                        }
+                    } else if (available.y > 0f) {
+                        accumulatedUpDrag = 0f
+                    }
+                    return Offset.Zero
+                }
+            }
+        }
+
         Surface(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(Unit) {
+                    var totalDy = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { totalDy = 0f },
+                        onVerticalDrag = { _, dragAmount ->
+                            totalDy += dragAmount
+                            if (totalDy < -50f) {
+                                onCloseDrawer()
+                            }
+                        }
+                    )
+                }
                 .testTag("app_alerts_drawer_overlay"),
             color = MaterialTheme.colorScheme.background,
             tonalElevation = 3.dp,
             shape = shape
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Drawer Bar with Title and Small 'X' Button to Draw Back
+                // Top Drawer Bar with Title and Speed Boost
                 Surface(
                     tonalElevation = 2.dp,
                     color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            var totalDy = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { totalDy = 0f },
-                                onVerticalDrag = { _, dragAmount ->
-                                    totalDy += dragAmount
-                                    if (totalDy < -28.dp.toPx()) {
-                                        onCloseDrawer()
-                                    }
-                                }
-                            )
-                        }
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
@@ -390,7 +416,7 @@ fun AppAlertsDrawerOverlay(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                // Existing App Alerts Drawer Body (Quick Toggles + Device & App Notifications)
+                // Existing App Alerts Drawer Body with swipe-up-to-dismiss support
                 DeviceNotificationsWindow(
                     notifications = notifications,
                     hasNotificationAccess = hasNotificationAccess,
@@ -410,54 +436,8 @@ fun AppAlertsDrawerOverlay(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .nestedScroll(drawerNestedScrollConnection)
                 )
-
-                // Compact Bottom Handle Bar with Small 'X' to Draw Back from Bottom as well
-                Surface(
-                    tonalElevation = 2.dp,
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            var totalDy = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { totalDy = 0f },
-                                onVerticalDrag = { _, dragAmount ->
-                                    totalDy += dragAmount
-                                    if (totalDy < -24.dp.toPx()) {
-                                        onCloseDrawer()
-                                    }
-                                }
-                            )
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable { onCloseDrawer() }
-                                .testTag("close_app_alerts_drawer_bottom_btn")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Draw back App Alerts",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
     }

@@ -231,6 +231,19 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         if (!callPrefs.contains("last_seen_calls_ts")) {
             callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
         }
+
+        // 0ms Synchronous Frame-1 Instant Seed from persistent fast snapshots
+        val initContacts = contactsRepo.getCachedContactsSnapshot()
+        val initCalls = callLogRepo.getCachedCallLogsSnapshot()
+        val initThreads = smsRepo.getCachedThreadsSnapshot()
+        if (initContacts.isNotEmpty() || initCalls.isNotEmpty() || initThreads.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                contacts = initContacts,
+                callLogs = initCalls,
+                smsThreads = initThreads
+            )
+        }
+
         boostAppPerformanceAndFastLoadHelper()
         registerCallLogSyncHelper()
 
