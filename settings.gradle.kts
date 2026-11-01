@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Xeno"
+rootProject.name = "Calls"
 
 include(":app")

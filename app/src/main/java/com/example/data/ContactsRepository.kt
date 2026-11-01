@@ -83,33 +83,9 @@ class ContactsRepository(private val context: Context) {
     }
 
     private fun mergePriorityContactsWithDeviceContacts(deviceContacts: List<ContactItem>): List<ContactItem> {
-        val priorityNumbers = com.example.telecom.PriorityContactManager.getAllPriorityNumbers(context)
-        val mutableList = deviceContacts
+        return deviceContacts
             .filterNot { PriorityContactManager.isSyntheticPriorityName(it.displayName) }
-            .toMutableList()
-
-        priorityNumbers.forEachIndexed { idx, pNum ->
-            val pCore = com.example.telecom.PriorityContactManager.extractCore9(pNum)
-            val alreadyPresent = mutableList.any { contact ->
-                com.example.telecom.PriorityContactManager.extractCore9(contact.primaryNumber) == pCore ||
-                    contact.allNumbers.any { com.example.telecom.PriorityContactManager.extractCore9(it) == pCore }
-            }
-            if (!alreadyPresent) {
-                val savedName = resolveContactNameFast(pNum) ?: pNum
-                mutableList.add(
-                    ContactItem(
-                        id = -1000L - idx,
-                        lookupKey = "priority_contact_${idx + 1}",
-                        displayName = savedName,
-                        primaryNumber = pNum,
-                        allNumbers = listOf(pNum),
-                        photoUri = null
-                    )
-                )
-            }
-        }
-
-        return mutableList.sortedBy { it.displayName.lowercase() }
+            .sortedBy { it.displayName.lowercase() }
     }
 
     suspend fun getContacts(forceRefresh: Boolean = false): List<ContactItem> = withContext(Dispatchers.IO) {

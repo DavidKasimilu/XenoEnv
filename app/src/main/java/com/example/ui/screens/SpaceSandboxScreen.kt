@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.DropdownMenu
@@ -166,6 +167,10 @@ fun SpaceSandboxScreen(
                 )
             }
 
+            BrowserShortcutIconItem(
+                onClick = onBackToBrowser
+            )
+
             MediaShortcutIconItem(
                 onClick = onOpenMedia
             )
@@ -187,6 +192,59 @@ fun SpaceSandboxScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun BrowserShortcutIconItem(
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(96.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp)
+            .testTag("clone_space_browser_shortcut")
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(68.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF0284C7),
+                                Color(0xFF0369A1)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Public,
+                    contentDescription = "Browser",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Browser",
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
         )
     }
 }
@@ -360,7 +418,7 @@ fun CloneAppVisualIcon(
     instance: ClonedAppInstance,
     iconSize: Dp = 64.dp,
     cornerRadius: Dp = 18.dp,
-    showBadgeDot: Boolean = true,
+    showBadgeDot: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -410,6 +468,12 @@ fun CloneAppVisualIcon(
                 instance.targetUrl.contains("discord.gg", ignoreCase = true)
     }
 
+    val isBrowser = remember(instance) {
+        instance.displayName.equals("Browser", ignoreCase = true) ||
+                instance.packageName.contains("browser", ignoreCase = true) ||
+                instance.originalName.contains("browser", ignoreCase = true)
+    }
+
     val appIcon = remember(instance.packageName) {
         try {
             if (instance.packageName.isNotBlank()) {
@@ -432,6 +496,28 @@ fun CloneAppVisualIcon(
                 fallbackName = instance.originalName,
                 modifier = Modifier.size(iconSize)
             )
+        } else if (isBrowser) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(iconSize)
+                    .clip(RoundedCornerShape(cornerRadius))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFF1E88E5),
+                                Color(0xFF1565C0)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Public,
+                    contentDescription = "Browser",
+                    tint = Color.White,
+                    modifier = Modifier.size(glyphSize)
+                )
+            }
         } else if (isInstagram) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -584,16 +670,7 @@ fun CloneAppVisualIcon(
             )
         }
 
-        if (showBadgeDot) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(badgeColor)
-                    .border(2.dp, MaterialTheme.colorScheme.background, CircleShape)
-            )
-        }
+        // Badge dot removed per design requirements
     }
 }
 
@@ -814,7 +891,7 @@ private fun CloneAppIconItem(
                     instance = instance,
                     iconSize = 64.dp,
                     cornerRadius = 18.dp,
-                    showBadgeDot = true
+                    showBadgeDot = false
                 )
                 if (isMinimized) {
                     Surface(

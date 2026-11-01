@@ -94,38 +94,24 @@ class FloatingBubbleService : Service() {
         }
 
         fun start(context: Context) {
-            FloatingPreferences.init(context)
-            if (!isOverlayPermissionGranted(context)) {
-                Log.w(TAG, "Overlay permission not granted. Cannot start bubble service.")
-                return
-            }
-            val intent = Intent(context, FloatingBubbleService::class.java).apply {
-                action = ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            stop(context)
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, FloatingBubbleService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.startService(intent)
+            try {
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                notificationManager?.cancel(NOTIFICATION_ID)
+            } catch (_: Exception) {}
+            try {
+                val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                    action = ACTION_STOP
+                }
+                context.stopService(intent)
+            } catch (_: Exception) {}
         }
 
         fun updateMinimizedTab(context: Context, tabName: String) {
-            FloatingPreferences.init(context)
-            FloatingPreferences.setMinimizedTab(tabName)
-            if (isRunning) {
-                val intent = Intent(context, FloatingBubbleService::class.java).apply {
-                    action = ACTION_UPDATE_TAB
-                    putExtra(EXTRA_TAB, tabName)
-                }
-                context.startService(intent)
-            }
+            // Disabled
         }
     }
 
@@ -133,64 +119,39 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        FloatingPreferences.init(this)
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-        createNotificationChannel()
-        acquireWakeLock()
+        stopForeground(true)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        notificationManager?.cancel(NOTIFICATION_ID)
+        stopSelf()
     }
 
-    private fun acquireWakeLock() {
-        try {
-            if (wakeLock == null) {
-                val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-                wakeLock = pm?.newWakeLock(
-                    android.os.PowerManager.PARTIAL_WAKE_LOCK,
-                    "Rabbit:FloatingBubbleWakeLock"
-                )?.apply {
-                    setReferenceCounted(false)
-                    acquire(10 * 60 * 1000L /* 10 minutes timeout safeguard per lock acquire */)
-                }
-            } else if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(10 * 60 * 1000L)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error acquiring wake lock", e)
+    private fun removeBubbleView() {
+        bubbleView?.let {
+            try {
+                windowManager?.removeView(it)
+            } catch (_: Exception) {}
         }
+        bubbleView = null
     }
 
-    private fun releaseWakeLock() {
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing wake lock", e)
-        }
-        wakeLock = null
-    }
+    private fun acquireWakeLock() {}
+
+    private fun releaseWakeLock() {}
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: ACTION_START
-
-        if (action == ACTION_STOP) {
-            releaseWakeLock()
-            stopForeground(true)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        acquireWakeLock()
-        startForeground(NOTIFICATION_ID, buildForegroundNotification())
-        isRunning = true
-
-        val tab = intent?.getStringExtra(EXTRA_TAB) ?: FloatingPreferences.configFlow.value.minimizedTab
-        if (action == ACTION_UPDATE_TAB) {
-            updateBubbleIcon(tab)
+        releaseWakeLock()
+        removeBubbleView()
+        isRunning = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
-            showOrUpdateBubble(tab)
+            @Suppress("DEPRECATION")
+            stopForeground(true)
         }
-
-        return START_STICKY
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        notificationManager?.cancel(NOTIFICATION_ID)
+        stopSelf()
+        return START_NOT_STICKY
     }
 
     private fun createNotificationChannel() {

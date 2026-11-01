@@ -188,8 +188,10 @@ class SpaceRepository(private val context: Context) {
                         origName.contains("vine", ignoreCase = true) ||
                         dispName.contains("vine", ignoreCase = true) ||
                         rawTarget.contains("vine", ignoreCase = true)
+                val isDefaultBrowserClone = obj.optString("instanceId") == "clone_browser_default" ||
+                        pkg == "com.android.browser"
 
-                if (isTiktok || isTermux || isVine) {
+                if (isTiktok || isTermux || isVine || isDefaultBrowserClone) {
                     needsResave = true
                     continue
                 }

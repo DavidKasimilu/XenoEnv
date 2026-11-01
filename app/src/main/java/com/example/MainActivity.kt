@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,58 +20,56 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.example.ui.components.InAppNotificationOverlay
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.models.CallType
 import com.example.telecom.TelecomHelper
 import com.example.telecom.XenoNotificationListenerService
-import com.example.ui.components.DefaultAppBanner
+import com.example.ui.components.GlobalSwipeDownTracker
+import com.example.ui.components.InAppNotificationOverlay
 import com.example.ui.components.NewChatDialog
-import com.example.ui.components.XenoBottomBar
 import com.example.ui.components.VideoPlayerModal
+import com.example.ui.components.XenoBottomBar
 import com.example.ui.screens.ActiveCallScreen
+import com.example.ui.screens.AppAlertsDrawerOverlay
 import com.example.ui.screens.BrowserHubScreen
-import com.example.ui.screens.BrowserScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.ChatScreen
-import com.example.ui.screens.ContactsScreen
 import com.example.ui.screens.DocsManagerScreen
-import com.example.ui.screens.FileManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import com.example.ui.components.GlobalSwipeDownTracker
-import com.example.ui.screens.AppAlertsDrawerOverlay
 import com.example.ui.screens.MessagesScreen
 import com.example.ui.screens.MinimizedCloneFloatingOverlay
 import com.example.ui.screens.MusicPlayerScreen
@@ -78,36 +77,16 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.XenoTab
 import com.example.ui.viewmodel.XenoViewModel
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
-import com.example.floating.FloatingBubbleService
-import com.example.floating.FloatingPreferences
-import com.example.ui.components.FloatingSettingsDialog
-import com.example.ui.components.FloatingWindowTopBar
 
 class MainActivity : ComponentActivity() {
 
     companion object {
         @Volatile
         var isAppInForeground: Boolean = false
-        @Volatile
-        var launchedFromBubble: Boolean = false
     }
 
-    private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
-    private val intentTriggerCounter = androidx.compose.runtime.mutableIntStateOf(0)
+    private val currentIntentState = mutableStateOf<Intent?>(null)
+    private val intentTriggerCounter = mutableIntStateOf(0)
 
     private fun applyLockScreenAndWakeFlags() {
         try {
@@ -125,12 +104,29 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
+    private fun applyHighRefreshRateAndPerformanceFlags() {
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val supportedModes = display?.supportedModes
+                val maxRefreshMode = supportedModes?.maxByOrNull { it.refreshRate }
+                if (maxRefreshMode != null) {
+                    window.attributes = window.attributes.apply {
+                        preferredDisplayModeId = maxRefreshMode.modeId
+                    }
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                window.attributes = window.attributes.apply {
+                    preferredRefreshRate = 120f
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        FloatingPreferences.init(this)
-        launchedFromBubble = intent?.getBooleanExtra("from_floating_bubble", false) ?: false
-
         applyLockScreenAndWakeFlags()
+        applyHighRefreshRateAndPerformanceFlags()
         enableEdgeToEdge()
         currentIntentState.value = intent
         intentTriggerCounter.intValue++
@@ -157,18 +153,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         isAppInForeground = true
-        FloatingPreferences.init(this)
-        val hasOverlay = FloatingBubbleService.isOverlayPermissionGranted(this)
-        if (hasOverlay) {
-            FloatingBubbleService.start(this)
-            if (!launchedFromBubble) {
-                // When opened initially from app launcher icon:
-                // Start floating icon and minimize immediately to background so user gets the floating icon on screen.
-                // Tapping the floating icon will launch MainActivity with from_floating_bubble = true.
-                android.widget.Toast.makeText(this, "Rabbit floating icon active. Tap to open.", android.widget.Toast.LENGTH_SHORT).show()
-                moveTaskToBack(true)
-            }
-        }
     }
 
     override fun onStop() {
@@ -240,7 +224,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        launchedFromBubble = intent.getBooleanExtra("from_floating_bubble", false)
         setIntent(intent)
         currentIntentState.value = intent
         intentTriggerCounter.intValue++
@@ -275,15 +258,10 @@ fun XenoApp(
         }
     }
 
-    var hasOverlayPermissionState by remember {
-        mutableStateOf(FloatingBubbleService.isOverlayPermissionGranted(context))
-    }
-
     // Observe lifecycle to refresh status when returning from settings/role prompts
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                hasOverlayPermissionState = FloatingBubbleService.isOverlayPermissionGranted(context)
                 viewModel.checkDefaultAppStatus()
                 viewModel.checkNotificationAccess()
                 viewModel.loadAllData()
@@ -308,6 +286,18 @@ fun XenoApp(
         viewModel.checkDefaultAppStatus()
     }
 
+    // Automatic prompt to set app as default phone app upon opening it
+    LaunchedEffect(uiState.isDefaultDialer) {
+        if (!uiState.isDefaultDialer) {
+            val dialerIntent = TelecomHelper.createRequestDefaultDialerIntent(context)
+            if (dialerIntent != null) {
+                try {
+                    defaultDialerLauncher.launch(dialerIntent)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     // Runtime permissions launcher
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -316,12 +306,13 @@ fun XenoApp(
         viewModel.checkNotificationAccess()
     }
 
-    val apkPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let {
-            viewModel.installApk(it, context)
-        }
+    // Stop floating bubble service and cancel notification
+    LaunchedEffect(Unit) {
+        try {
+            com.example.floating.FloatingBubbleService.stop(context)
+            val nm = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            nm?.cancel(4099)
+        } catch (_: Exception) {}
     }
 
     // Request permissions on first launch only for permissions not yet granted
@@ -339,10 +330,10 @@ fun XenoApp(
             android.Manifest.permission.RECORD_AUDIO,
             android.Manifest.permission.CAMERA
         )
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             perms.add(android.Manifest.permission.READ_PHONE_NUMBERS)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms.add(android.Manifest.permission.READ_MEDIA_IMAGES)
             perms.add(android.Manifest.permission.READ_MEDIA_VIDEO)
             perms.add(android.Manifest.permission.READ_MEDIA_AUDIO)
@@ -351,10 +342,10 @@ fun XenoApp(
             perms.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
             perms.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 29) {
             perms.add(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             perms.add(android.Manifest.permission.BLUETOOTH_CONNECT)
         }
         val missingPerms = perms.filter {
@@ -366,7 +357,7 @@ fun XenoApp(
         }
     }
 
-    // Handle intents (e.g. incoming call notification, SMS reply notification, tel: or smsto:)
+    // Handle intents (incoming calls, SMS reply, tel:, smsto:)
     LaunchedEffect(initialIntent, intentTriggerTick) {
         initialIntent?.let { intent ->
             val incomingNumber = intent.getStringExtra("incoming_number")
@@ -436,7 +427,7 @@ fun XenoApp(
         }
     }
 
-    // Immersive system bars for browser fullscreen video and built-in video player (no top or bottom phone bars)
+    // Immersive system bars for video playback
     val isImmersiveVideoActive = uiState.isBrowserFullscreenVideo || uiState.selectedVideoItem != null
     LaunchedEffect(isImmersiveVideoActive) {
         val window = (context as? Activity)?.window ?: return@LaunchedEffect
@@ -458,24 +449,16 @@ fun XenoApp(
         uiState.smsThreads.sumOf { it.unreadCount }
     }
 
-    val floatingConfig by FloatingPreferences.configFlow.collectAsState()
-    var showFloatingSettings by remember { mutableStateOf(false) }
-    var isFitToScreen by remember { mutableStateOf(floatingConfig.isFitToScreen) }
-    var windowScale by remember { mutableFloatStateOf(floatingConfig.windowScale) }
-
-    val onMinimizeWindow: () -> Unit = {
-        MainActivity.launchedFromBubble = false
-        FloatingBubbleService.updateMinimizedTab(context, uiState.currentTab.name)
-        (context as? Activity)?.moveTaskToBack(true)
-    }
-
+    // Back handling for standard navigation stack
     BackHandler {
         if (uiState.activeChatThread != null) {
             viewModel.closeChat()
         } else if (uiState.isAppAlertsDrawerOpen) {
             viewModel.setAppAlertsDrawerOpen(false)
+        } else if (uiState.currentTab != XenoTab.CALLS) {
+            viewModel.selectTab(XenoTab.CALLS)
         } else {
-            onMinimizeWindow()
+            (context as? Activity)?.finish()
         }
     }
 
@@ -519,288 +502,266 @@ fun XenoApp(
         }
     }
 
-    // Outer translucent backdrop: clicking outside minimizes to floating icon
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                onMinimizeWindow()
+    // If there is an active call, show ActiveCallScreen full screen (Screenshots 2 & 4)
+    val activeCall = uiState.activeCallState
+    if (activeCall != null) {
+        ActiveCallScreen(
+            phoneNumber = activeCall.phoneNumber,
+            contactName = activeCall.contactName,
+            isIncoming = activeCall.isIncoming,
+            onAcceptCall = { viewModel.answerIncomingCall() },
+            onDeclineCall = { viewModel.endCall() },
+            onEndCall = { _ -> viewModel.endCall() },
+            modifier = Modifier.fillMaxSize()
+        )
+        return
+    }
+
+    // Normal full-screen phone app Scaffold (no floating window)
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            bottomBar = {
+                if (uiState.activeChatThread == null &&
+                    uiState.activeSpaceInstanceId == null &&
+                    !uiState.showMediaManager &&
+                    !uiState.showDocsManager &&
+                    !uiState.showMusicPlayer &&
+                    uiState.selectedVideoItem == null &&
+                    !uiState.isBrowserHeaderHidden &&
+                    !uiState.isBrowserFullscreenVideo
+                ) {
+                    XenoBottomBar(
+                        currentTab = uiState.currentTab,
+                        onTabSelected = {
+                            viewModel.setAppAlertsDrawerOpen(false)
+                            viewModel.selectTab(it)
+                        },
+                        missedCallsCount = 0,
+                        unreadMessagesCount = unreadSmsCount
+                    )
+                }
             }
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .windowInsetsPadding(WindowInsets.navigationBars),
-        contentAlignment = Alignment.Center
-    ) {
-        val screenW = maxWidth
-        val screenH = maxHeight
-        // Calculate device aspect ratio
-        val deviceRatio = remember(screenW, screenH) {
-            (screenW.value / screenH.value).coerceIn(0.35f, 0.90f)
-        }
-
-        val (targetW, targetH) = if (isFitToScreen) {
-            Pair(screenW, screenH)
-        } else {
-            val w = screenW * windowScale
-            val h = (w.value / deviceRatio).dp.coerceAtMost(screenH - 12.dp)
-            Pair(w, h)
-        }
-
-        // Floating Window Card (squared corners when fit to screen, 14dp rounded corners when floating scaled)
-        Box(
-            modifier = Modifier
-                .size(width = targetW, height = targetH)
-        ) {
-            Card(
+        ) { innerPadding ->
+            val effectivePadding = if (isImmersiveVideoActive) PaddingValues(0.dp) else innerPadding
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { /* consume clicks inside window */ }
-                    .testTag("floating_window_frame"),
-                shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
-                elevation = CardDefaults.cardElevation(defaultElevation = if (isFitToScreen) 0.dp else 10.dp),
-                border = if (isFitToScreen) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    .padding(effectivePadding)
+                    .nestedScroll(rootNestedScrollConnection)
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                // 1. Top Bar of the Floating Window
-                FloatingWindowTopBar(
-                    currentTab = uiState.currentTab,
-                    isFitToScreen = isFitToScreen,
-                    windowScale = windowScale,
-                    onToggleFit = {
-                        val next = !isFitToScreen
-                        isFitToScreen = next
-                        FloatingPreferences.setFitToScreen(next)
-                    },
-                    onScaleStep = { delta ->
-                        val next = (windowScale + delta).coerceIn(0.60f, 0.98f)
-                        windowScale = next
-                        FloatingPreferences.setWindowScale(next)
-                    },
-                    onOpenSettings = { showFloatingSettings = true },
-                    onMinimize = onMinimizeWindow
-                )
-
-                // 2. Window Content Body
-                Scaffold(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
-                    snackbarHost = { SnackbarHost(snackbarHostState) },
-                    bottomBar = {
-                        if (uiState.activeChatThread == null && uiState.activeSpaceInstanceId == null && !uiState.showMediaManager && !uiState.showDocsManager && !uiState.showMusicPlayer && uiState.selectedVideoItem == null && !uiState.isBrowserHeaderHidden && !uiState.isBrowserFullscreenVideo) {
-                            XenoBottomBar(
-                                currentTab = uiState.currentTab,
-                                onTabSelected = {
-                                    viewModel.setAppAlertsDrawerOpen(false)
-                                    viewModel.selectTab(it)
-                                    FloatingBubbleService.updateMinimizedTab(context, it.name)
-                                },
-                                missedCallsCount = 0,
-                                unreadMessagesCount = unreadSmsCount
-                            )
-                        }
-                    }
-                ) { innerPadding ->
-                    val effectivePadding = if (isImmersiveVideoActive) PaddingValues(0.dp) else innerPadding
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(effectivePadding)
-                            .nestedScroll(rootNestedScrollConnection)
+                if (uiState.selectedVideoItem != null) {
+                    VideoPlayerModal(
+                        videoItem = uiState.selectedVideoItem!!,
+                        isControlsHidden = uiState.isVideoControlsHidden,
+                        onToggleHide = { viewModel.setVideoControlsHidden(it) },
+                        onClose = { viewModel.selectVideoItem(null) },
+                        onDeleteVideo = { viewModel.deleteMediaItem(it) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (uiState.showDocsManager) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
                     ) {
-                        if (uiState.selectedVideoItem != null) {
-                            VideoPlayerModal(
-                                videoItem = uiState.selectedVideoItem!!,
-                                isControlsHidden = uiState.isVideoControlsHidden,
-                                onToggleHide = { viewModel.setVideoControlsHidden(it) },
-                                onClose = { viewModel.selectVideoItem(null) },
-                                onDeleteVideo = { viewModel.deleteMediaItem(it) },
-                                modifier = Modifier.fillMaxSize()
+                        DocsManagerScreen(
+                            folders = uiState.documentFolders,
+                            isLoading = uiState.isLoadingDocs,
+                            onRefresh = { viewModel.refreshDocumentFolders() },
+                            onOpenDocumentContent = { doc -> viewModel.openDocumentReadOnly(doc) },
+                            onClose = { viewModel.setShowDocsManager(false) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                } else if (uiState.showMusicPlayer) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MusicPlayerScreen(
+                            tracks = uiState.musicTracks,
+                            isLoading = uiState.isLoadingMusic,
+                            onRefreshScan = { viewModel.refreshMusicTracks() },
+                            onToggleFavorite = { trackId -> viewModel.toggleFavoriteMusicTrack(trackId) },
+                            onImportAudioUris = { uris -> viewModel.importMusicUris(uris) },
+                            onClose = { viewModel.setShowMusicPlayer(false) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                } else if (uiState.showMediaManager) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        GalleryScreen(
+                            mediaItems = uiState.mediaItems,
+                            filter = uiState.mediaFilter,
+                            selectedImageItem = uiState.selectedImageItem,
+                            selectedVideoItem = uiState.selectedVideoItem,
+                            isControlsHidden = uiState.isVideoControlsHidden,
+                            onToggleHide = { viewModel.setVideoControlsHidden(it) },
+                            onFilterChange = { viewModel.setMediaFilter(it) },
+                            onSelectImage = { viewModel.selectImageItem(it) },
+                            onSelectVideo = { viewModel.selectVideoItem(it) },
+                            onRefresh = { viewModel.refreshMedia() },
+                            onAddCustomMedia = { uri, isVideo, name -> viewModel.addCustomMedia(uri, isVideo, name) },
+                            onDeleteMedia = { viewModel.deleteMediaItem(it) },
+                            onDeleteDemoMedia = { viewModel.removeDemoMedia() },
+                            onClose = { viewModel.setShowMediaManager(false) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Main Content View
+                        if (uiState.activeChatThread != null) {
+                            ChatScreen(
+                                thread = uiState.activeChatThread!!,
+                                messages = uiState.activeChatMessages,
+                                onBackClick = { viewModel.closeChat() },
+                                onSendMessage = { viewModel.sendChatMessage(it) },
+                                onDeleteMessage = { viewModel.deleteChatMessage(it) },
+                                onDeleteThread = {
+                                    viewModel.deleteChatThread(uiState.activeChatThread!!)
+                                }
                             )
-                        } else if (uiState.showDocsManager) {
-                            Surface(
-                                modifier = Modifier.fillMaxSize(),
-                                color = MaterialTheme.colorScheme.background
-                            ) {
-                                DocsManagerScreen(
-                                    folders = uiState.documentFolders,
-                                    isLoading = uiState.isLoadingDocs,
-                                    onRefresh = { viewModel.refreshDocumentFolders() },
-                                    onOpenDocumentContent = { doc -> viewModel.openDocumentReadOnly(doc) },
-                                    onClose = { viewModel.setShowDocsManager(false) },
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        } else if (uiState.showMusicPlayer) {
-                            Surface(
-                                modifier = Modifier.fillMaxSize(),
-                                color = MaterialTheme.colorScheme.background
-                            ) {
-                                MusicPlayerScreen(
-                                    tracks = uiState.musicTracks,
-                                    isLoading = uiState.isLoadingMusic,
-                                    onRefreshScan = { viewModel.refreshMusicTracks() },
-                                    onToggleFavorite = { trackId -> viewModel.toggleFavoriteMusicTrack(trackId) },
-                                    onImportAudioUris = { uris -> viewModel.importMusicUris(uris) },
-                                    onClose = { viewModel.setShowMusicPlayer(false) },
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        } else if (uiState.showMediaManager) {
-                            Surface(
-                                modifier = Modifier.fillMaxSize(),
-                                color = MaterialTheme.colorScheme.background
-                            ) {
-                                GalleryScreen(
-                                    mediaItems = uiState.mediaItems,
-                                    filter = uiState.mediaFilter,
-                                    selectedImageItem = uiState.selectedImageItem,
-                                    selectedVideoItem = uiState.selectedVideoItem,
-                                    isControlsHidden = uiState.isVideoControlsHidden,
-                                    onToggleHide = { viewModel.setVideoControlsHidden(it) },
-                                    onFilterChange = { viewModel.setMediaFilter(it) },
-                                    onSelectImage = { viewModel.selectImageItem(it) },
-                                    onSelectVideo = { viewModel.selectVideoItem(it) },
-                                    onRefresh = { viewModel.refreshMedia() },
-                                    onAddCustomMedia = { uri, isVideo, name -> viewModel.addCustomMedia(uri, isVideo, name) },
-                                    onDeleteMedia = { viewModel.deleteMediaItem(it) },
-                                    onDeleteDemoMedia = { viewModel.removeDemoMedia() },
-                                    onClose = { viewModel.setShowMediaManager(false) },
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
                         } else {
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                // Main Content View
-                                if (uiState.activeChatThread != null) {
-                                    ChatScreen(
-                                        thread = uiState.activeChatThread!!,
-                                        messages = uiState.activeChatMessages,
-                                        onBackClick = { viewModel.closeChat() },
-                                        onSendMessage = { viewModel.sendChatMessage(it) },
-                                        onDeleteMessage = { viewModel.deleteChatMessage(it) },
-                                        onDeleteThread = {
-                                            viewModel.deleteChatThread(uiState.activeChatThread!!)
-                                        }
+                            when (uiState.currentTab) {
+                                XenoTab.CALLS -> {
+                                    CallsScreen(
+                                        callLogs = uiState.callLogs,
+                                        filter = uiState.callFilter,
+                                        onFilterChange = { viewModel.setCallFilter(it) },
+                                        onDeleteCall = { viewModel.deleteCallLog(it) },
+                                        onClearAll = { viewModel.clearAllCallLogs() },
+                                        onClearMissedCalls = { viewModel.clearMissedCallLogs() },
+                                        onMarkMissedSeen = { viewModel.markMissedCallsAsSeen() },
+                                        onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
+                                        onOpenContacts = { viewModel.selectTab(XenoTab.KEYPAD) },
+                                        onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
+                                        onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        onSpeedBoost = { viewModel.triggerSpeedBoost() },
+                                        modifier = Modifier.fillMaxSize()
                                     )
-                                } else {
-                                    when (uiState.currentTab) {
-                                        XenoTab.MESSAGES -> {
-                                            MessagesScreen(
-                                                threads = uiState.smsThreads,
-                                                searchQuery = uiState.smsSearchQuery,
-                                                onSearchQueryChange = { viewModel.setSmsSearchQuery(it) },
-                                                onOpenThread = { viewModel.openChatThread(it) },
-                                                onDeleteThread = { viewModel.deleteChatThread(it) },
-                                                onStartNewChat = { viewModel.setShowNewChatDialog(true) },
-                                                subTab = uiState.messagesSubTab,
-                                                onSubTabChange = { viewModel.setMessagesSubTab(it) },
-                                                notifications = uiState.deviceNotifications,
-                                                hasNotificationAccess = uiState.hasNotificationAccess,
-                                                onRequestNotificationAccess = {
-                                                    XenoNotificationListenerService.openNotificationSettings(context)
-                                                },
-                                                onDismissNotification = { viewModel.dismissNotification(it) },
-                                                onClearAllNotifications = { viewModel.clearAllNotifications() },
-                                                onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
-                                                onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
-                                                onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
-                                                onSimulateSms = { viewModel.simulateIncomingSms() },
-                                                onReplyNotification = { notif, text -> viewModel.replyToNotification(notif, text) }
-                                            )
-                                        }
-                                        XenoTab.BROWSER, XenoTab.CLONE_SPACE -> {
-                                            BrowserHubScreen(
-                                                dualTab = uiState.browserDualTab,
-                                                onDualTabChanged = { viewModel.setBrowserDualTab(it) },
-                                                tabs = uiState.browserTabs,
-                                                activeTabId = uiState.activeBrowserTabId,
-                                                history = uiState.browserHistory,
-                                                showTabSwitcher = uiState.showTabSwitcher,
-                                                showHistoryDialog = uiState.showHistoryDialog,
-                                                onOpenNewTab = { viewModel.openNewBrowserTab(it) },
-                                                onSelectTab = { viewModel.selectBrowserTab(it) },
-                                                onCloseTab = { viewModel.closeBrowserTab(it) },
-                                                onUpdateTabUrl = { url, title -> viewModel.updateActiveTabUrl(url, title) },
-                                                onUpdateTabLoading = { isLoading, progress -> viewModel.updateActiveTabLoading(isLoading, progress) },
-                                                onUpdateTabNavState = { back, fwd -> viewModel.updateActiveTabNavState(back, fwd) },
-                                                onToggleTabDesktopMode = { viewModel.toggleActiveTabDesktopMode() },
-                                                onSetShowTabSwitcher = { viewModel.setShowTabSwitcher(it) },
-                                                onSetShowHistoryDialog = { viewModel.setShowHistoryDialog(it) },
-                                                onClearHistory = { viewModel.clearBrowserHistory() },
-                                                isBrowserHeaderHidden = uiState.isBrowserHeaderHidden,
-                                                onToggleBrowserHeader = { viewModel.toggleBrowserHeader() },
-                                                isBrowserFullscreenVideo = uiState.isBrowserFullscreenVideo,
-                                                onSetBrowserFullscreenVideo = { viewModel.setBrowserFullscreenVideo(it) },
-                                                spaceClones = uiState.spaceClones,
-                                                activeSpaceDock = uiState.activeSpaceDock,
-                                                minimizedCloneIds = uiState.minimizedSpaceCloneIds,
-                                                activeSpaceInstance = uiState.activeSpaceInstance,
-                                                showAddCloneDialog = uiState.showAddCloneDialog,
-                                                selectedCloneForEdit = uiState.selectedCloneForEdit,
-                                                onLaunchClone = { viewModel.launchCloneWorkspace(it) },
-                                                onCloseCloneWorkspace = { viewModel.closeCloneWorkspace() },
-                                                onMinimizeCloneWorkspace = { viewModel.minimizeCloneWorkspace() },
-                                                onOpenAddClone = { viewModel.openAddCloneDialog() },
-                                                onCloseAddClone = { viewModel.closeAddCloneDialog() },
-                                                onCreateClone = { pkg, appName, name, badgeTag, badgeColorHex ->
-                                                    viewModel.createAppClone(pkg, appName, name, badgeTag, badgeColorHex)
-                                                },
-                                                onOpenEditClone = { viewModel.openEditCloneDialog(it) },
-                                                onCloseEditClone = { viewModel.closeEditCloneDialog() },
-                                                onUpdateClone = { viewModel.updateAppClone(it) },
-                                                onDeleteClone = { viewModel.deleteAppClone(it) },
-                                                onCloseFromDock = { viewModel.closeCloneFromDock(it) },
-                                                onCloneUrlChanged = { instanceId, url -> viewModel.updateCloneCurrentUrl(instanceId, url) },
-                                                onToggleDesktopMode = { viewModel.toggleCloneDesktopMode(it) },
-                                                downloads = uiState.downloads,
-                                                onDeleteDownload = { viewModel.deleteDownloadItem(it) },
-                                                onClearAllDownloads = { viewModel.clearAllDownloads() },
-                                                onAddDownloadItem = { dmId, url, fileName, mimeType, fileSize ->
-                                                    viewModel.addDownloadItem(dmId, url, fileName, mimeType, fileSize)
-                                                },
-                                                savedPasswords = uiState.savedPasswords,
-                                                showPasswordManager = uiState.showPasswordManager,
-                                                onSetShowPasswordManager = { viewModel.setShowPasswordManager(it) },
-                                                onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
-                                                onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
-                                                onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
-                                                onSavePassword = { domain, title, username, pass ->
-                                                    viewModel.savePassword(domain, title, username, pass)
-                                                },
-                                                onDeletePassword = { viewModel.deletePassword(it) },
-                                                onPlayVideo = { viewModel.selectVideoItem(it) }
-                                            )
-                                        }
-                                        else -> {
-                                            SettingsScreen(
-                                                isDefaultDialer = false,
-                                                isDefaultSms = uiState.isDefaultSms,
-                                                onRequestDefaultDialer = {},
-                                                onRequestDefaultSms = {
-                                                    TelecomHelper.createRequestDefaultSmsIntent(context)?.let {
-                                                        defaultSmsLauncher.launch(it)
-                                                    }
-                                                },
-                                                onPermissionsUpdated = {
-                                                    viewModel.loadAllData()
-                                                    viewModel.checkDefaultAppStatus()
-                                                },
-                                                onSimulateSms = { viewModel.simulateIncomingSms() },
-                                                onSimulateCall = {},
-                                                preventOverlayApps = uiState.preventOverlayApps,
-                                                onTogglePreventOverlayApps = { viewModel.setPreventOverlayApps(it) }
-                                            )
-                                        }
-                                    }
+                                }
+                                XenoTab.KEYPAD -> {
+                                    KeypadScreen(
+                                        digits = uiState.dialpadDigits,
+                                        onDigitClick = { viewModel.appendDialpadDigit(it) },
+                                        onBackspace = { viewModel.backspaceDialpad() },
+                                        onClear = { viewModel.clearDialpad() },
+                                        onSettingsClick = { viewModel.selectTab(XenoTab.CALLS) },
+                                        contacts = uiState.contacts,
+                                        onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
+                                        onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
+                                        onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                XenoTab.MESSAGES -> {
+                                    MessagesScreen(
+                                        threads = uiState.smsThreads,
+                                        searchQuery = uiState.smsSearchQuery,
+                                        onSearchQueryChange = { viewModel.setSmsSearchQuery(it) },
+                                        onOpenThread = { viewModel.openChatThread(it) },
+                                        onDeleteThread = { viewModel.deleteChatThread(it) },
+                                        onStartNewChat = { viewModel.setShowNewChatDialog(true) },
+                                        subTab = uiState.messagesSubTab,
+                                        onSubTabChange = { viewModel.setMessagesSubTab(it) },
+                                        notifications = uiState.deviceNotifications,
+                                        hasNotificationAccess = uiState.hasNotificationAccess,
+                                        onRequestNotificationAccess = {
+                                            XenoNotificationListenerService.openNotificationSettings(context)
+                                        },
+                                        onDismissNotification = { viewModel.dismissNotification(it) },
+                                        onClearAllNotifications = { viewModel.clearAllNotifications() },
+                                        onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
+                                        onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
+                                        onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
+                                        onSimulateSms = { viewModel.simulateIncomingSms() },
+                                        onReplyNotification = { notif, text -> viewModel.replyToNotification(notif, text) }
+                                    )
+                                }
+                                XenoTab.BROWSER, XenoTab.CLONE_SPACE -> {
+                                    BrowserHubScreen(
+                                        dualTab = uiState.browserDualTab,
+                                        onDualTabChanged = { viewModel.setBrowserDualTab(it) },
+                                        tabs = uiState.browserTabs,
+                                        activeTabId = uiState.activeBrowserTabId,
+                                        history = uiState.browserHistory,
+                                        showTabSwitcher = uiState.showTabSwitcher,
+                                        showHistoryDialog = uiState.showHistoryDialog,
+                                        onOpenNewTab = { viewModel.openNewBrowserTab(it) },
+                                        onSelectTab = { viewModel.selectBrowserTab(it) },
+                                        onCloseTab = { viewModel.closeBrowserTab(it) },
+                                        onUpdateTabUrl = { url, title -> viewModel.updateActiveTabUrl(url, title) },
+                                        onUpdateTabLoading = { isLoading, progress -> viewModel.updateActiveTabLoading(isLoading, progress) },
+                                        onUpdateTabNavState = { back, fwd -> viewModel.updateActiveTabNavState(back, fwd) },
+                                        onToggleTabDesktopMode = { viewModel.toggleActiveTabDesktopMode() },
+                                        onSetShowTabSwitcher = { viewModel.setShowTabSwitcher(it) },
+                                        onSetShowHistoryDialog = { viewModel.setShowHistoryDialog(it) },
+                                        onClearHistory = { viewModel.clearBrowserHistory() },
+                                        isBrowserHeaderHidden = uiState.isBrowserHeaderHidden,
+                                        onToggleBrowserHeader = { viewModel.toggleBrowserHeader() },
+                                        isBrowserFullscreenVideo = uiState.isBrowserFullscreenVideo,
+                                        onSetBrowserFullscreenVideo = { viewModel.setBrowserFullscreenVideo(it) },
+                                        spaceClones = uiState.spaceClones,
+                                        activeSpaceDock = uiState.activeSpaceDock,
+                                        minimizedCloneIds = uiState.minimizedSpaceCloneIds,
+                                        activeSpaceInstance = uiState.activeSpaceInstance,
+                                        showAddCloneDialog = uiState.showAddCloneDialog,
+                                        selectedCloneForEdit = uiState.selectedCloneForEdit,
+                                        onLaunchClone = { viewModel.launchCloneWorkspace(it) },
+                                        onCloseCloneWorkspace = { viewModel.closeCloneWorkspace() },
+                                        onMinimizeCloneWorkspace = { viewModel.minimizeCloneWorkspace() },
+                                        onOpenAddClone = { viewModel.openAddCloneDialog() },
+                                        onCloseAddClone = { viewModel.closeAddCloneDialog() },
+                                        onCreateClone = { pkg, appName, name, badgeTag, badgeColorHex ->
+                                            viewModel.createAppClone(pkg, appName, name, badgeTag, badgeColorHex)
+                                        },
+                                        onOpenEditClone = { viewModel.openEditCloneDialog(it) },
+                                        onCloseEditClone = { viewModel.closeEditCloneDialog() },
+                                        onUpdateClone = { viewModel.updateAppClone(it) },
+                                        onDeleteClone = { viewModel.deleteAppClone(it) },
+                                        onCloseFromDock = { viewModel.closeCloneFromDock(it) },
+                                        onCloneUrlChanged = { instanceId, url -> viewModel.updateCloneCurrentUrl(instanceId, url) },
+                                        onToggleDesktopMode = { viewModel.toggleCloneDesktopMode(it) },
+                                        downloads = uiState.downloads,
+                                        onDeleteDownload = { viewModel.deleteDownloadItem(it) },
+                                        onClearAllDownloads = { viewModel.clearAllDownloads() },
+                                        onAddDownloadItem = { dmId, url, fileName, mimeType, fileSize ->
+                                            viewModel.addDownloadItem(dmId, url, fileName, mimeType, fileSize)
+                                        },
+                                        savedPasswords = uiState.savedPasswords,
+                                        showPasswordManager = uiState.showPasswordManager,
+                                        onSetShowPasswordManager = { viewModel.setShowPasswordManager(it) },
+                                        onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
+                                        onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
+                                        onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
+                                        onSavePassword = { domain, title, username, pass ->
+                                            viewModel.savePassword(domain, title, username, pass)
+                                        },
+                                        onDeletePassword = { viewModel.deletePassword(it) },
+                                        onPlayVideo = { viewModel.selectVideoItem(it) }
+                                    )
+                                }
+                                else -> {
+                                    CallsScreen(
+                                        callLogs = uiState.callLogs,
+                                        filter = uiState.callFilter,
+                                        onFilterChange = { viewModel.setCallFilter(it) },
+                                        onDeleteCall = { viewModel.deleteCallLog(it) },
+                                        onClearAll = { viewModel.clearAllCallLogs() },
+                                        onClearMissedCalls = { viewModel.clearMissedCallLogs() },
+                                        onMarkMissedSeen = { viewModel.markMissedCallsAsSeen() },
+                                        onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
+                                        onOpenContacts = { viewModel.selectTab(XenoTab.KEYPAD) },
+                                        onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
+                                        onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
                                 }
                             }
                         }
@@ -809,103 +770,67 @@ fun XenoApp(
             }
         }
 
-            // App Alerts Drawer Overlay rendered inside the floating window bounds, respecting window size
-            AppAlertsDrawerOverlay(
-                isOpen = uiState.isAppAlertsDrawerOpen,
-                onCloseDrawer = { viewModel.setAppAlertsDrawerOpen(false) },
-                notifications = uiState.deviceNotifications,
-                hasNotificationAccess = uiState.hasNotificationAccess,
-                onRequestNotificationAccess = {
-                    XenoNotificationListenerService.openNotificationSettings(context)
-                },
-                onDismissNotification = { viewModel.dismissNotification(it) },
-                onClearAllNotifications = { viewModel.clearAllNotifications() },
-                onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
-                onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
-                onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
-                onSimulateSms = { viewModel.simulateIncomingSms() },
-                onStopFloatingApp = {
-                    FloatingBubbleService.stop(context)
-                    (context as? Activity)?.finishAndRemoveTask()
-                },
-                shape = if (isFitToScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(25f)
-            )
-        }
-
-        // Floating Minimized Clone App Icons Overlay
-        if (uiState.minimizedSpaceClones.isNotEmpty()) {
-            MinimizedCloneFloatingOverlay(
-                minimizedClones = uiState.minimizedSpaceClones,
-                onRestoreClone = { viewModel.restoreMinimizedClone(it) },
-                onCloseMinimizedClone = { viewModel.closeMinimizedClone(it) },
-                modifier = Modifier.zIndex(15f)
-            )
-        }
+        // App Alerts Drawer Overlay (full screen overlay)
+        AppAlertsDrawerOverlay(
+            isOpen = uiState.isAppAlertsDrawerOpen,
+            onCloseDrawer = { viewModel.setAppAlertsDrawerOpen(false) },
+            notifications = uiState.deviceNotifications,
+            hasNotificationAccess = uiState.hasNotificationAccess,
+            onRequestNotificationAccess = {
+                XenoNotificationListenerService.openNotificationSettings(context)
+            },
+            onDismissNotification = { viewModel.dismissNotification(it) },
+            onClearAllNotifications = { viewModel.clearAllNotifications() },
+            onAddSampleAlerts = { viewModel.addSampleCommunicationAlerts() },
+            onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
+            onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
+            onSimulateSms = { viewModel.simulateIncomingSms() },
+            onStopFloatingApp = {
+                (context as? Activity)?.finishAndRemoveTask()
+            },
+            onSpeedBoost = { viewModel.triggerSpeedBoost() },
+            shape = RoundedCornerShape(0.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(25f)
+        )
 
 
 
-        // Top In-App SMS Notification Popup Overlay
+        // Top In-App Notification Popup Overlay (Call banner & SMS banner)
         InAppNotificationOverlay(
             incomingSms = uiState.incomingSmsPopup,
-            incomingCall = null,
+            incomingCall = uiState.incomingCallPopup,
             onMarkSmsRead = { viewModel.markSmsPopupAsRead(it) },
             onReplySms = { viewModel.replySmsPopup(it) },
             onDismissSms = { viewModel.dismissSmsPopup() },
-            onAcceptCall = {},
-            onDeclineCall = {},
-            onDismissCall = {},
-            onExpandCall = {},
+            onAcceptCall = { viewModel.answerIncomingCall() },
+            onDeclineCall = { viewModel.declineIncomingCall() },
+            onDismissCall = { viewModel.dismissIncomingCallPopup() },
+            onExpandCall = { viewModel.openFullScreenIncomingCall(it.callerNumber, it.callerName) },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(30f)
         )
-    }
 
-    // Floating App Settings Dialog
-    if (showFloatingSettings) {
-        FloatingSettingsDialog(
-            onDismiss = { showFloatingSettings = false }
-        )
-    }
-
-    // New Chat Dialog
-    if (uiState.showNewChatDialog) {
-        NewChatDialog(
-            contacts = uiState.contacts,
-            onDismiss = { viewModel.setShowNewChatDialog(false) },
-            onStartChat = { number, name ->
-                viewModel.startChatWithNumber(number, name)
-            }
-        )
-    }
-
-    // Floating Overlay Permission Dialog (shown on initial launch if permission not yet granted)
-    if (!hasOverlayPermissionState) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { /* require user action */ },
-            title = {
-                androidx.compose.material3.Text(
-                    text = "Floating Icon Permission",
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                )
-            },
-            text = {
-                androidx.compose.material3.Text(
-                    text = "Rabbit runs as a floating icon on your screen. Please allow the 'Display over other apps' permission to start."
-                )
-            },
-            confirmButton = {
-                androidx.compose.material3.Button(
-                    onClick = {
-                        FloatingBubbleService.openOverlayPermissionSettings(context)
-                    }
-                ) {
-                    androidx.compose.material3.Text("Enable Floating Icon")
+        // New Chat Dialog
+        if (uiState.showNewChatDialog) {
+            NewChatDialog(
+                contacts = uiState.contacts,
+                onDismiss = { viewModel.setShowNewChatDialog(false) },
+                onStartChat = { number, name ->
+                    viewModel.startChatWithNumber(number, name)
                 }
-            }
-        )
+            )
+        }
+
+        // Super Speed Boost Overlay
+        if (uiState.showSpeedBoostOverlay) {
+            com.example.ui.components.SpeedBoostOverlay(
+                isBoosting = uiState.isBoosting,
+                result = uiState.speedBoostResult,
+                onDismiss = { viewModel.dismissSpeedBoostOverlay() }
+            )
+        }
     }
 }

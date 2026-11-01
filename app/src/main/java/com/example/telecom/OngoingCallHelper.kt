@@ -657,6 +657,11 @@ object OngoingCallHelper {
         return next
     }
 
+    fun toggleSpeaker(context: Context): Boolean = toggleSpeakerphone(context)
+    fun toggleMute(context: Context): Boolean = toggleMicrophoneMute(context)
+    fun toggleHold(): Boolean = toggleCallHold()
+    fun playDtmf(digit: Char, toneGenerator: ToneGenerator? = null) = sendDtmfTone(digit, toneGenerator)
+
     fun setSpeakerphone(context: Context, enabled: Boolean) {
         _sessionFlow.value = _sessionFlow.value.copy(isSpeakerOn = enabled)
         try {

@@ -7,11 +7,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class FloatingConfig(
-    val isServiceEnabled: Boolean = true,
+    val isServiceEnabled: Boolean = false,
     val lockPosition: Boolean = false,
     val bubbleSizeDp: Int = 58,
     val bubbleAlpha: Float = 0.95f,
-    val startOnBoot: Boolean = true,
+    val startOnBoot: Boolean = false,
     val windowScale: Float = 0.85f,
     val isFitToScreen: Boolean = false,
     val minimizedTab: String = "MESSAGES",

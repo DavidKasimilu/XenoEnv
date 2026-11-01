@@ -42,7 +42,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.NotificationsNone
@@ -50,6 +50,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -77,7 +78,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.models.DeviceNotification
 import com.example.data.models.SmsThread
 import com.example.ui.components.ContactAvatar
@@ -275,6 +278,7 @@ fun AppAlertsDrawerOverlay(
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
     onStopFloatingApp: (() -> Unit)? = null,
+    onSpeedBoost: () -> Unit = {},
     shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp),
     modifier: Modifier = Modifier
 ) {
@@ -336,7 +340,7 @@ fun AppAlertsDrawerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.Start,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
@@ -354,6 +358,31 @@ fun AppAlertsDrawerOverlay(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                onCloseDrawer()
+                                onSpeedBoost()
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = androidx.compose.ui.graphics.Color(0xFF00E676).copy(alpha = 0.2f),
+                                contentColor = androidx.compose.ui.graphics.Color(0xFF00E676)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.RocketLaunch,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Speed Boost",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

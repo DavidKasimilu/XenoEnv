@@ -1,5 +1,13 @@
 package com.example.ui.screens
 
+import android.content.Context
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,34 +28,34 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CallMade
 import androidx.compose.material.icons.filled.CallMissed
 import androidx.compose.material.icons.filled.CallReceived
-import androidx.compose.material.icons.filled.ClearAll
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.PhoneInTalk
-import androidx.compose.material.icons.filled.SimCard
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,28 +64,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.models.CallLogEntry
-import com.example.data.models.CallLogGroup
 import com.example.data.models.CallType
-import com.example.data.models.groupConsecutiveCalls
 import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
-import com.example.ui.components.ContactAvatar
 import com.example.ui.components.SimSelectionDialog
-import com.example.ui.theme.MissedRed
-import com.example.ui.theme.SuccessGreen
 import com.example.ui.viewmodel.CallFilter
 
-@OptIn(ExperimentalMaterial3Api::class)
+data class FavoriteContact(
+    val id: String,
+    val name: String,
+    val number: String,
+    val color: Color,
+    val simLabel: String = "Airtel"
+)
+
 @Composable
 fun CallsScreen(
     callLogs: List<CallLogEntry>,
@@ -93,12 +102,14 @@ fun CallsScreen(
     onStartCall: (String, String?) -> Unit,
     onStartCallWithSim: (String, String?, SimCardInfo?) -> Unit = { num, name, _ -> onStartCall(num, name) },
     onSimulateIncomingCall: () -> Unit = {},
+    onSpeedBoost: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    var selectedGroup by remember { mutableStateOf<CallLogGroup?>(null) }
-    var showClearDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCallForHistory by remember { mutableStateOf<CallLogEntry?>(null) }
+    var expandedLogId by remember { mutableStateOf<Long?>(null) }
+    var favoritesCollapsed by remember { mutableStateOf(false) }
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
     var callNameTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
@@ -111,720 +122,856 @@ fun CallsScreen(
         val clean = number.trim()
         if (clean.isBlank()) return
         if (TelecomHelper.isUssdCode(clean)) {
-            onStartCallWithSim(clean, name, null)
-            return
-        }
-        // Priority Contacts bypass Dual-SIM selection prompt for immediate zero-delay dialing
-        if (PriorityContactManager.isPriorityNumber(clean, context)) {
-            val resolvedName = name?.takeIf {
-                it.isNotBlank() && it != clean && !PriorityContactManager.isSyntheticPriorityName(it)
+            val sims = TelecomHelper.getAvailableSimCards(context)
+            if (sims.size > 1) {
+                availableSims = sims
+                callNumberTarget = clean
+                callNameTarget = name
+                return
             }
-            val preferredSim = TelecomHelper.getPreferredSimForPriorityCall(context)
-            onStartCallWithSim(clean, resolvedName, preferredSim)
+            onStartCallWithSim(clean, name, sims.firstOrNull())
             return
         }
-        val sims = TelecomHelper.getSimChoicesForCall(context)
-        availableSims = sims
-        callNameTarget = name?.takeIf { it.isNotBlank() && it != clean }
-        callNumberTarget = clean
+        if (PriorityContactManager.isPriorityNumber(clean, context)) {
+            val preferredSim = TelecomHelper.getPreferredSimForPriorityCall(context)
+            onStartCallWithSim(clean, name, preferredSim)
+            return
+        }
+        val sims = TelecomHelper.getAvailableSimCards(context)
+        if (sims.size > 1 && callNumberTarget == null) {
+            availableSims = sims
+            callNumberTarget = clean
+            callNameTarget = name
+            return
+        }
+        onStartCallWithSim(clean, name, sims.firstOrNull())
     }
 
-    fun placeCallWithSpecificSim(number: String, name: String?, sim: SimCardInfo) {
-        val clean = number.trim()
-        if (clean.isBlank()) return
-        val resolvedName = name?.takeIf { it.isNotBlank() && it != clean }
-        onStartCallWithSim(clean, resolvedName, sim)
+    // Favorites derived from recent call logs (empty if none)
+    val defaultFavorites = remember(callLogs) {
+        val uniqueFromLogs = callLogs.map { it.displayName to it.number }.distinctBy { it.second }.take(6)
+        val palette = listOf(
+            Color(0xFFE65100), Color(0xFF2E7D32), Color(0xFF1B5E20),
+            Color(0xFF00838F), Color(0xFFC2185B), Color(0xFF512DA8)
+        )
+        uniqueFromLogs.mapIndexed { i, (name, num) ->
+            FavoriteContact("fav_$i", name, num, palette[i % palette.size], "SIM")
+        }
     }
 
-    val filteredLogs = remember(callLogs, filter) {
-        when (filter) {
+    // Contact History Screen (Screenshot 9)
+    if (selectedCallForHistory != null) {
+        ContactHistoryView(
+            contactCall = selectedCallForHistory!!,
+            allLogs = callLogs,
+            onBack = { selectedCallForHistory = null },
+            onCall = { num, name -> placeCall(num, name) },
+            onMessage = { num, name -> onStartSms(num, name) },
+            modifier = modifier
+        )
+        return
+    }
+
+    // Filter call logs
+    val filteredLogs = remember(callLogs, filter, searchQuery) {
+        val base = when (filter) {
             CallFilter.ALL -> callLogs
             CallFilter.MISSED -> callLogs.filter { it.type == CallType.MISSED || it.type == CallType.REJECTED }
             CallFilter.INCOMING -> callLogs.filter { it.type == CallType.INCOMING }
             CallFilter.OUTGOING -> callLogs.filter { it.type == CallType.OUTGOING }
         }
+        if (searchQuery.isBlank()) base
+        else {
+            val q = searchQuery.trim().lowercase()
+            base.filter { it.displayName.lowercase().contains(q) || it.number.contains(q) }
+        }
     }
 
-    // Bundle consecutive calls to the same person/number within a 3-hour window
+    // Group logs into Today, Yesterday, Older (Screenshot 3)
     val groupedLogs = remember(filteredLogs) {
-        groupConsecutiveCalls(filteredLogs)
-    }
+        val today = mutableListOf<CallLogEntry>()
+        val yesterday = mutableListOf<CallLogEntry>()
+        val older = mutableListOf<CallLogEntry>()
+        val now = System.currentTimeMillis()
+        val oneDayMs = 24 * 60 * 60 * 1000L
 
-    val (missedCount, incomingCount, outgoingCount) = remember(callLogs) {
-        var missed = 0
-        var incoming = 0
-        var outgoing = 0
-        for (entry in callLogs) {
-            when (entry.type) {
-                CallType.MISSED, CallType.REJECTED -> missed++
-                CallType.INCOMING -> incoming++
-                CallType.OUTGOING -> outgoing++
-                else -> {}
+        for (entry in filteredLogs) {
+            val diff: Long = now - entry.date
+            when {
+                diff < oneDayMs -> today.add(entry)
+                diff < 2 * oneDayMs -> yesterday.add(entry)
+                else -> older.add(entry)
             }
         }
-        Triple(missed, incoming, outgoing)
+        listOf(
+            "Today" to today,
+            "Yesterday" to yesterday,
+            "Older" to older
+        ).filter { it.second.isNotEmpty() }
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
+            .background(Color(0xFF121214))
             .testTag("calls_screen")
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize()
-        ) {
-        // Header & Actions
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "Call History",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = if (groupedLogs.size != filteredLogs.size) {
-                        "${groupedLogs.size} entries (${filteredLogs.size} recorded calls)"
-                    } else {
-                        "${filteredLogs.size} recorded calls"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Row {
-                IconButton(
-                    onClick = onOpenContacts,
-                    modifier = Modifier.testTag("open_contacts_button")
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 1. Top Search Bar (Screenshot 3 & 7)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = Color(0xFF232529)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.People,
-                        contentDescription = "Open Contacts",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (filteredLogs.isNotEmpty()) {
                     IconButton(
-                        onClick = { showClearDialog = true },
-                        modifier = Modifier.testTag("clear_history_button")
+                        onClick = onOpenContacts,
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.ClearAll,
-                            contentDescription = if (filter == CallFilter.MISSED) "Clear missed calls" else "Clear call history",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            imageVector = Icons.Filled.Menu,
+                            contentDescription = "Menu / Contacts",
+                            tint = Color(0xFFB0B0B4),
+                            modifier = Modifier.size(22.dp)
                         )
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = {
+                            Text(
+                                text = "Search contacts",
+                                color = Color(0xFF8E8E93),
+                                fontSize = 16.sp
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            cursorColor = Color.White,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Clear search",
+                                tint = Color(0xFF8E8E93),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // Filter chips
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item(key = "filter_all") {
-                FilterChip(
-                    selected = filter == CallFilter.ALL,
-                    onClick = { onFilterChange(CallFilter.ALL) },
-                    label = { Text("All (${callLogs.size})") },
-                    colors = FilterChipDefaults.filterChipColors()
-                )
-            }
-            item(key = "filter_missed") {
-                FilterChip(
-                    selected = filter == CallFilter.MISSED,
-                    onClick = { onFilterChange(CallFilter.MISSED) },
-                    label = { Text("Missed ($missedCount)") },
-                    colors = FilterChipDefaults.filterChipColors()
-                )
-            }
-            item(key = "filter_incoming") {
-                FilterChip(
-                    selected = filter == CallFilter.INCOMING,
-                    onClick = { onFilterChange(CallFilter.INCOMING) },
-                    label = { Text("Incoming ($incomingCount)") },
-                    colors = FilterChipDefaults.filterChipColors()
-                )
-            }
-            item(key = "filter_outgoing") {
-                FilterChip(
-                    selected = filter == CallFilter.OUTGOING,
-                    onClick = { onFilterChange(CallFilter.OUTGOING) },
-                    label = { Text("Outgoing ($outgoingCount)") },
-                    colors = FilterChipDefaults.filterChipColors()
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        if (groupedLogs.isEmpty()) {
-            Box(
+            // 2. Horizontal Filter Chips: All, Missed, Contacts, Non-spam, Spam (Screenshot 3)
+            LazyRow(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Filled.Phone,
-                        contentDescription = null,
-                        modifier = Modifier.size(56.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "No calls found",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "New incoming and outgoing calls will appear here",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                    )
+                listOf(
+                    CallFilter.ALL to "All",
+                    CallFilter.MISSED to "Missed",
+                    CallFilter.INCOMING to "Contacts",
+                    CallFilter.OUTGOING to "Non-spam"
+                ).forEach { (f, label) ->
+                    val isSelected = filter == f
+                    item(key = label) {
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { onFilterChange(f) },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (isSelected) Color(0xFF38383E) else Color(0xFF1E1E22)
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else Color(0xFFB0B0B4),
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
                 }
             }
-        } else {
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Main Call Log & Favorites List
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(bottom = 80.dp)
             ) {
-                itemsIndexed(
-                    items = groupedLogs,
-                    key = { index, group ->
-                        val head = group.latestEntry
-                        "call_group_${head.id}_${head.number}_${group.count}_$index"
-                    },
-                    contentType = { _, _ -> "call_log_row" }
-                ) { _, group ->
-                    val entry = group.latestEntry
-                    CallLogItem(
-                        entry = entry,
-                        callCount = group.count,
-                        oldestTimeOfDay = if (group.count > 1) group.oldestEntry.formattedTimeOfDay else null,
-                        onClick = { selectedGroup = group },
-                        onCallClick = { placeCall(entry.number, entry.displayName) }
-                    )
+                // 3. Favorites Section (Screenshot 3)
+                if (searchQuery.isBlank() && defaultFavorites.isNotEmpty()) {
+                    item(key = "favorites_header") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { favoritesCollapsed = !favoritesCollapsed }
+                            ) {
+                                Text(
+                                    text = "Favorites",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = if (favoritesCollapsed) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            TextButton(onClick = onOpenContacts) {
+                                Text(
+                                    text = "View contacts",
+                                    color = Color(0xFFB0B0B4),
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+
+                    if (!favoritesCollapsed) {
+                        item(key = "favorites_row") {
+                            LazyRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(defaultFavorites, key = { it.id }) { fav ->
+                                    FavoriteContactItem(
+                                        favorite = fav,
+                                        onClick = { placeCall(fav.number, fav.name) }
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                    }
+                }
+
+                // 4. Recents Call Log grouped by Date (Screenshot 3 & 7)
+                if (groupedLogs.isEmpty()) {
+                    item(key = "empty_recents") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No calls found",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color(0xFF8E8E93)
+                            )
+                        }
+                    }
+                } else {
+                    groupedLogs.forEach { (sectionTitle, entries) ->
+                        item(key = "header_$sectionTitle") {
+                            Text(
+                                text = sectionTitle,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFB0B0B4),
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                            )
+                        }
+
+                        itemsIndexed(
+                            items = entries,
+                            key = { idx, item -> "call_${item.id}_${item.number}_$idx" }
+                        ) { _, entry ->
+                            val isExpanded = expandedLogId == entry.id
+                            RecentsCallCard(
+                                entry = entry,
+                                isExpanded = isExpanded,
+                                onClick = {
+                                    expandedLogId = if (isExpanded) null else entry.id
+                                },
+                                onCallClick = { placeCall(entry.number, entry.displayName) },
+                                onMessageClick = { onStartSms(entry.number, entry.displayName) },
+                                onHistoryClick = { selectedCallForHistory = entry }
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Call Details Bottom Sheet (shows individual call times when tapped)
-    selectedGroup?.let { group ->
-        val entry = group.latestEntry
-        ModalBottomSheet(
-            onDismissRequest = { selectedGroup = null },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.surface
+    // Dual-SIM Selector
+    callNumberTarget?.let { num ->
+        SimSelectionDialog(
+            phoneNumber = num,
+            simCards = availableSims,
+            onSimSelected = { sim ->
+                callNumberTarget = null
+                onStartCallWithSim(num, callNameTarget, sim)
+            },
+            onDismiss = { callNumberTarget = null }
+        )
+    }
+}
+
+/**
+ * Favorite Contact Avatar with bottom-right phone badge (Screenshot 3)
+ */
+@Composable
+private fun FavoriteContactItem(
+    favorite: FavoriteContact,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(68.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier.size(56.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            Surface(
+                modifier = Modifier.size(54.dp),
+                shape = CircleShape,
+                color = favorite.color
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = favorite.name.take(1).uppercase(),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp
+                    )
+                }
+            }
+
+            // Small black circular badge with phone icon at bottom-right
+            Surface(
+                modifier = Modifier
+                    .size(20.dp)
+                    .align(Alignment.BottomEnd),
+                shape = CircleShape,
+                color = Color.Black
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = favorite.name,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * Recents Call Card matching Screenshot 3, expandable inline to show Message & History (Screenshot 7)
+ */
+@Composable
+private fun RecentsCallCard(
+    entry: CallLogEntry,
+    isExpanded: Boolean,
+    onClick: () -> Unit,
+    onCallClick: () -> Unit,
+    onMessageClick: () -> Unit,
+    onHistoryClick: () -> Unit
+) {
+    val avatarColor = remember(entry.displayName) {
+        val colors = listOf(
+            Color(0xFFC62828), Color(0xFF2E7D32), Color(0xFF1565C0),
+            Color(0xFFE65100), Color(0xFF6A1B9A), Color(0xFF00838F)
+        )
+        val hash = kotlin.math.abs(entry.displayName.hashCode())
+        colors[hash % colors.size]
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .testTag("call_item_${entry.id}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E22))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Left avatar + details
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        modifier = Modifier.size(46.dp),
+                        shape = CircleShape,
+                        color = avatarColor
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = entry.displayName.take(1).uppercase(),
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            )
+                        }
+                    }
+
+                    Column {
+                        Text(
+                            text = entry.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = when (entry.type) {
+                                    CallType.OUTGOING -> Icons.Filled.CallMade
+                                    CallType.MISSED, CallType.REJECTED -> Icons.Filled.CallMissed
+                                    else -> Icons.Filled.CallReceived
+                                },
+                                contentDescription = null,
+                                tint = if (entry.type == CallType.MISSED || entry.type == CallType.REJECTED) Color(0xFFFF5252) else Color(0xFF9E9E9E),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Mobile • ${entry.formattedTimeOfDay}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFB0B0B4)
+                            )
+                        }
+
+                        // SIM Name in pink (Screenshot 3 & 7)
+                        val simName = remember(entry.simSlot) {
+                            if (entry.simSlot == 1) "Saf 04284530" else "Airtel"
+                        }
+                        Text(
+                            text = simName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFFF4081),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Call icon button on the right
+                IconButton(
+                    onClick = onCallClick,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = "Call",
+                        tint = Color(0xFFB0B0B4),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // Inline Expansion (Screenshot 7): Message & History Buttons
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onMessageClick),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF28282D)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Message,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Message",
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onHistoryClick),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF28282D)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.History,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "History",
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Contact History Screen (Screenshot 9)
+ */
+@Composable
+fun ContactHistoryView(
+    contactCall: CallLogEntry,
+    allLogs: List<CallLogEntry>,
+    onBack: () -> Unit,
+    onCall: (String, String?) -> Unit,
+    onMessage: (String, String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler { onBack() }
+
+    val contactLogs = remember(contactCall, allLogs) {
+        val cleanTarget = contactCall.number.filter { it.isDigit() }
+        allLogs.filter { log ->
+            val clean = log.number.filter { it.isDigit() }
+            clean == cleanTarget || (clean.length >= 7 && cleanTarget.endsWith(clean.takeLast(7)))
+        }.sortedByDescending { it.date }
+    }
+
+    val groupedContactLogs = remember(contactLogs) {
+        val today = mutableListOf<CallLogEntry>()
+        val older = mutableListOf<CallLogEntry>()
+        val now = System.currentTimeMillis()
+        val oneDayMs = 24 * 60 * 60 * 1000L
+
+        for (log in contactLogs) {
+            val diff: Long = now - log.date
+            if (diff < oneDayMs) {
+                today.add(log)
+            } else {
+                older.add(log)
+            }
+        }
+        listOf(
+            "Today" to today,
+            "Older" to older
+        ).filter { it.second.isNotEmpty() }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF121214))
+            .testTag("contact_history_screen")
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top App Bar (Screenshot 9)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    ContactAvatar(nameOrNumber = entry.displayName, size = 56.dp)
-                    Column(modifier = Modifier.weight(1f)) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+
+                    Surface(
+                        modifier = Modifier.size(40.dp),
+                        shape = CircleShape,
+                        color = Color(0xFFC62828)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = contactCall.displayName.take(1).uppercase(),
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                        }
+                    }
+
+                    Column {
                         Text(
-                            text = if (group.count > 1) "${entry.displayName} (${group.count})" else entry.displayName,
+                            text = contactCall.displayName,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                         Text(
-                            text = entry.number,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = if (group.count > 1) {
-                                "${group.count} consecutive calls • ${group.oldestEntry.formattedTimeOfDay} – ${entry.formattedTimeOfDay}"
-                            } else {
-                                "${entry.formattedDayLabel}, ${entry.formattedTimeOfDay} • ${entry.formattedDuration}"
-                            },
+                            text = "Mobile • ${contactCall.number}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF9E9E9E)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Action Buttons Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    // Call (Choose SIM)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clickable {
-                                    val num = entry.number
-                                    val name = entry.displayName
-                                    selectedGroup = null
-                                    placeCall(num, name)
-                                }
-                                .testTag("sheet_call_choose_sim_btn")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Call,
-                                    contentDescription = "Call and choose SIM",
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Call", style = MaterialTheme.typography.labelSmall)
-                    }
-
-                    // SMS
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clickable {
-                                    onStartSms(entry.number, entry.cachedName)
-                                    selectedGroup = null
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Message,
-                                    contentDescription = "SMS",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Message", style = MaterialTheme.typography.labelSmall)
-                    }
-
-                    // Copy Number
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clickable {
-                                    clipboardManager.setText(AnnotatedString(entry.number))
-                                    selectedGroup = null
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Outlined.ContentCopy,
-                                    contentDescription = "Copy",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Copy", style = MaterialTheme.typography.labelSmall)
-                    }
-
-                    // Delete Call Record(s)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clickable {
-                                    group.entries.forEach { callToDelete ->
-                                        onDeleteCall(callToDelete)
-                                    }
-                                    selectedGroup = null
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Delete,
-                                    contentDescription = "Delete",
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (group.count > 1) "Delete (${group.count})" else "Delete",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Quick SIM Call Buttons in Details Sheet
-                val sheetSims = remember { TelecomHelper.getSimChoicesForCall(context) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    sheetSims.forEachIndexed { idx, sim ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable {
-                                    val num = entry.number
-                                    val name = entry.displayName
-                                    selectedGroup = null
-                                    placeCallWithSpecificSim(num, name, sim)
-                                }
-                                .testTag("sheet_quick_sim_${idx + 1}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.SimCard,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Call SIM ${sim.subscriptionId + 1}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Individual Call Times Breakdown
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (group.count > 1) "Call Times (${group.count})" else "Call Time",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                IconButton(onClick = { /* More options */ }) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Options",
+                        tint = Color.White
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 260.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    itemsIndexed(
-                        items = group.entries,
-                        key = { idx, item -> "sheet_call_time_${item.id}_${item.date}_$idx" }
-                    ) { idx, callItem ->
-                        val (typeIcon, typeTint) = when (callItem.type) {
-                            CallType.INCOMING -> Icons.Filled.CallReceived to SuccessGreen
-                            CallType.OUTGOING -> Icons.Filled.CallMade to MaterialTheme.colorScheme.primary
-                            CallType.MISSED, CallType.REJECTED -> Icons.Filled.CallMissed to MissedRed
-                            else -> Icons.Filled.Call to MaterialTheme.colorScheme.onSurfaceVariant
-                        }
+            // Grouped History Call Items (Screenshot 9)
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 96.dp)
+            ) {
+                groupedContactLogs.forEach { (section, logs) ->
+                    item(key = "hist_sec_$section") {
+                        Text(
+                            text = section,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFB0B0B4),
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
 
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("call_time_row_$idx")
+                    items(logs, key = { "hist_log_${it.id}_${it.date}" }) { log ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E22))
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = typeTint.copy(alpha = 0.14f),
-                                    modifier = Modifier.size(32.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = typeIcon,
-                                            contentDescription = callItem.typeLabel,
-                                            tint = typeTint,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
+                                    Icon(
+                                        imageVector = when (log.type) {
+                                            CallType.OUTGOING -> Icons.Filled.CallMade
+                                            CallType.MISSED, CallType.REJECTED -> Icons.Filled.CallMissed
+                                            else -> Icons.Filled.CallReceived
+                                        },
+                                        contentDescription = null,
+                                        tint = if (log.type == CallType.MISSED || log.type == CallType.REJECTED) Color(0xFFFF5252) else Color(0xFF9E9E9E),
+                                        modifier = Modifier.size(18.dp)
+                                    )
 
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
+                                    Column {
                                         Text(
-                                            text = callItem.formattedTimeOfDay,
+                                            text = when (log.type) {
+                                                CallType.OUTGOING -> "Outgoing call"
+                                                CallType.MISSED, CallType.REJECTED -> "Missed call"
+                                                else -> "Incoming call"
+                                            },
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = if (callItem.type == CallType.MISSED) {
-                                                MissedRed
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurface
-                                            }
+                                            color = Color.White
                                         )
-                                        Text(
-                                            text = "• ${callItem.formattedDayLabel}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = log.formattedTimeOfDay,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF9E9E9E)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Airtel",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFFF4081),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                     }
-                                    Text(
-                                        text = "${callItem.typeLabel} • ${callItem.formattedDuration}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
 
-                                if (group.count > 1) {
-                                    IconButton(
-                                        onClick = {
-                                            onDeleteCall(callItem)
-                                            val remaining = group.entries.filterNot {
-                                                it.id == callItem.id && it.date == callItem.date
-                                            }
-                                            selectedGroup = if (remaining.isEmpty()) {
-                                                null
-                                            } else {
-                                                CallLogGroup(remaining)
-                                            }
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Delete,
-                                            contentDescription = "Delete single call record",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
+                                Text(
+                                    text = if (log.durationSeconds > 0) log.formattedDuration else "Missed",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF9E9E9E)
+                                )
                             }
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
             }
         }
-    }
 
-    if (showClearDialog) {
-        val hasMissedCalls = callLogs.any { it.type == CallType.MISSED || it.type == CallType.REJECTED }
-        val isMissedFilter = filter == CallFilter.MISSED
-        AlertDialog(
-            onDismissRequest = { showClearDialog = false },
-            title = {
-                Text(if (isMissedFilter) "Clear Missed Calls" else "Clear Call History")
-            },
-            text = {
-                Text(
-                    if (isMissedFilter) {
-                        "Are you sure you want to clear all missed call records? Your incoming and outgoing call history will be kept."
-                    } else if (hasMissedCalls) {
-                        "Would you like to clear only missed calls or clear your entire call history?"
-                    } else {
-                        "Are you sure you want to remove all call records from your history?"
-                    }
-                )
-            },
-            confirmButton = {
-                if (isMissedFilter) {
-                    TextButton(
-                        onClick = {
-                            onClearMissedCalls()
-                            showClearDialog = false
-                        }
-                    ) {
-                        Text("Clear Missed", color = MaterialTheme.colorScheme.error)
-                    }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (hasMissedCalls) {
-                            TextButton(
-                                onClick = {
-                                    onClearMissedCalls()
-                                    showClearDialog = false
-                                }
-                            ) {
-                                Text("Clear Missed Only", color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                        TextButton(
-                            onClick = {
-                                onClearAll()
-                                showClearDialog = false
-                            }
-                        ) {
-                            Text("Clear All", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    callNumberTarget?.let { num ->
-        SimSelectionDialog(
-            phoneNumber = num,
-            contactName = callNameTarget,
-            simCards = availableSims,
-            onSimSelected = { sim ->
-                val targetName = callNameTarget
-                callNumberTarget = null
-                callNameTarget = null
-                placeCallWithSpecificSim(num, targetName, sim)
-            },
-            onDismiss = {
-                callNumberTarget = null
-                callNameTarget = null
-            }
-        )
-    }
-  }
-}
-
-@Composable
-fun CallLogItem(
-    entry: CallLogEntry,
-    callCount: Int = 1,
-    oldestTimeOfDay: String? = null,
-    onClick: () -> Unit,
-    onCallClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag("call_item_${entry.id}"),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
+        // Bottom Bar in Contact History Screen (Screenshot 9)
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+            color = Color(0xFF18181C),
+            tonalElevation = 8.dp
         ) {
-            ContactAvatar(nameOrNumber = entry.displayName, size = 44.dp)
-
-            Column(modifier = Modifier.weight(1f)) {
-                val titleColor = if (entry.type == CallType.MISSED) MissedRed else MaterialTheme.colorScheme.onSurface
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Call Pill Button (Green)
+                Surface(
+                    modifier = Modifier
+                        .width(130.dp)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .clickable { onCall(contactCall.number, contactCall.displayName) },
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color(0xFF4CAF50)
                 ) {
-                    Text(
-                        text = entry.displayName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = titleColor,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (callCount > 1) {
-                        Text(
-                            text = "($callCount)",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = titleColor,
-                            modifier = Modifier.testTag("call_count_badge_${entry.id}")
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = "Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Message Pill Button
+                Surface(
+                    modifier = Modifier
+                        .width(130.dp)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .clickable { onMessage(contactCall.number, contactCall.displayName) },
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color(0xFF28282D)
                 ) {
-                    val (icon, tint) = when (entry.type) {
-                        CallType.INCOMING -> Icons.Filled.CallReceived to SuccessGreen
-                        CallType.OUTGOING -> Icons.Filled.CallMade to MaterialTheme.colorScheme.primary
-                        CallType.MISSED, CallType.REJECTED -> Icons.Filled.CallMissed to MissedRed
-                        else -> Icons.Filled.Call to MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Message,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Message",
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
                     }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = tint
-                    )
-                    Text(
-                        text = if (callCount > 1 && oldestTimeOfDay != null && oldestTimeOfDay != entry.formattedTimeOfDay) {
-                            "${entry.formattedDate} ($oldestTimeOfDay – ${entry.formattedTimeOfDay}) • ${entry.formattedDuration}"
-                        } else {
-                            "${entry.formattedDate} • ${entry.formattedDuration}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
-            }
-
-            IconButton(
-                onClick = onCallClick,
-                modifier = Modifier
-                    .size(42.dp)
-                    .testTag("call_action_${entry.id}")
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Call,
-                    contentDescription = "Call ${entry.displayName}",
-                    tint = MaterialTheme.colorScheme.primary
-                )
             }
         }
     }

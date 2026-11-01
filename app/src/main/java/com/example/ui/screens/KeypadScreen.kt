@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.provider.ContactsContract
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,15 +20,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.SimCard
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Voicemail
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -37,7 +37,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,28 +53,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.models.ContactItem
-import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
-import com.example.ui.components.ContactAvatar
 import com.example.ui.components.SimSelectionDialog
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 
-
-data class DialpadKey(val digit: Char, val letters: String)
+data class DialpadKey(val digit: Char, val letters: String, val hasVoicemail: Boolean = false)
 
 private val DIALPAD_KEYS = listOf(
-    DialpadKey('1', ""),
-    DialpadKey('2', "A B C"),
-    DialpadKey('3', "D E F"),
-    DialpadKey('4', "G H I"),
-    DialpadKey('5', "J K L"),
-    DialpadKey('6', "M N O"),
-    DialpadKey('7', "P Q R S"),
-    DialpadKey('8', "T U V"),
-    DialpadKey('9', "W X Y Z"),
+    DialpadKey('1', "", hasVoicemail = true),
+    DialpadKey('2', "ABC"),
+    DialpadKey('3', "DEF"),
+    DialpadKey('4', "GHI"),
+    DialpadKey('5', "JKL"),
+    DialpadKey('6', "MNO"),
+    DialpadKey('7', "PQRS"),
+    DialpadKey('8', "TUV"),
+    DialpadKey('9', "WXYZ"),
     DialpadKey('*', ""),
     DialpadKey('0', "+"),
     DialpadKey('#', "")
@@ -88,6 +85,7 @@ fun KeypadScreen(
     contacts: List<ContactItem>,
     onStartSms: (String, String?) -> Unit,
     onStartCall: (String, String?) -> Unit,
+    onStartCallWithSim: (String, String?, SimCardInfo?) -> Unit = { num, name, _ -> onStartCall(num, name) },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -95,37 +93,9 @@ fun KeypadScreen(
     var selectedSimSlot by remember { mutableStateOf(prefs.getInt("preferred_sim_slot", 0)) }
     var selectedSimName by remember { mutableStateOf(prefs.getString("preferred_sim_name", "SIM 1") ?: "SIM 1") }
     var showSimSelectionModal by remember { mutableStateOf(false) }
-
-    // Find matched contact based on typed digits
-    val matchedContact = remember(digits, contacts) {
-        if (digits.length >= 3) {
-            val clean = digits.filter { it.isDigit() }
-            contacts.find { contact ->
-                contact.primaryNumber.filter { it.isDigit() }.contains(clean) ||
-                        contact.allNumbers.any { it.filter { c -> c.isDigit() }.contains(clean) }
-            }
-        } else null
-    }
-
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
+    var callNameTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
-
-    fun placeCall(number: String, name: String? = null) {
-        val clean = number.trim()
-        if (clean.isBlank()) return
-        val isUssd = TelecomHelper.isUssdCode(clean)
-        val isPriority = PriorityContactManager.isPriorityNumber(clean, context)
-        val sims = TelecomHelper.getAvailableSimCards(context)
-        if (sims.size > 1 && !isUssd && !isPriority && callNumberTarget == null) {
-            availableSims = sims
-            callNumberTarget = clean
-            return
-        }
-        val resolvedName = name
-            ?: matchedContact?.displayName
-            ?: contacts.find { it.primaryNumber.filter { c -> c.isDigit() } == clean.filter { c -> c.isDigit() } }?.displayName
-        onStartCall(clean, resolvedName)
-    }
 
     fun triggerVibration() {
         try {
@@ -139,276 +109,284 @@ fun KeypadScreen(
         } catch (_: Exception) {}
     }
 
-    if (showSimSelectionModal) {
-        val detectedSims = remember {
-            val list = TelecomHelper.getAvailableSimCards(context)
-            if (list.size >= 2) list else listOf(
-                SimCardInfo(null, "SIM 1 (Primary)", 0),
-                SimCardInfo(null, "SIM 2 (Secondary)", 1)
-            )
+    // Filter contacts for the "Suggested" section
+    val suggestedContacts = remember(digits, contacts) {
+        if (digits.isBlank()) {
+            contacts.take(5)
+        } else {
+            val clean = digits.filter { it.isDigit() }
+            contacts.filter { contact ->
+                contact.primaryNumber.filter { it.isDigit() }.contains(clean) ||
+                        contact.displayName.contains(digits, ignoreCase = true) ||
+                        contact.allNumbers.any { it.filter { c -> c.isDigit() }.contains(clean) }
+            }.take(5)
         }
-        SimSelectionDialog(
-            phoneNumber = "Select SIM Card for Calls",
-            simCards = detectedSims,
-            onSimSelected = { sim ->
-                selectedSimSlot = sim.subscriptionId
-                val label = if (sim.carrierName.length > 12) "SIM ${sim.subscriptionId + 1}" else sim.carrierName
-                selectedSimName = label
-                prefs.edit()
-                    .putInt("preferred_sim_slot", sim.subscriptionId)
-                    .putString("preferred_sim_name", label)
-                    .apply()
-                showSimSelectionModal = false
-                android.widget.Toast.makeText(
-                    context,
-                    "Calling SIM set to: ${sim.carrierName}",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            },
-            onDismiss = { showSimSelectionModal = false }
-        )
+    }
+
+    fun initiateCall(number: String, name: String? = null) {
+        val clean = number.trim()
+        if (clean.isBlank()) return
+        val isUssd = TelecomHelper.isUssdCode(clean)
+        val sims = TelecomHelper.getAvailableSimCards(context)
+        
+        // When dialing USSD or standard call with multiple SIMs, prompt SIM selection if not chosen
+        if (sims.size > 1 && callNumberTarget == null) {
+            availableSims = sims
+            callNumberTarget = clean
+            callNameTarget = name
+            return
+        }
+
+        // Single SIM or already selected
+        val defaultSim = sims.firstOrNull()
+        onStartCallWithSim(clean, name, defaultSim)
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 12.dp)
-            .testTag("keypad_screen"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+            .background(Color(0xFF121214))
+            .testTag("keypad_screen")
     ) {
-        // Top Bar: Preferred SIM selector & Settings button
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable {
-                        showSimSelectionModal = true
-                    }
-                    .testTag("keypad_sim_selector_btn")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SimCard,
-                        contentDescription = "Set SIM",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = selectedSimName,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier.testTag("keypad_settings_btn")
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings")
-            }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (matchedContact != null) {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.clickable {
-                        placeCall(matchedContact.primaryNumber, matchedContact.displayName)
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ContactAvatar(nameOrNumber = matchedContact.displayName, size = 26.dp)
-                        Text(
-                            text = matchedContact.displayName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-
-        // Displayed typed digits area
+        // Upper section: Suggested contacts
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Text(
-                text = if (digits.isEmpty()) " " else digits,
-                fontSize = if (digits.length > 12) 28.sp else 36.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("dialpad_digits_display")
+                text = "Suggested",
+                style = MaterialTheme.typography.titleSmall,
+                color = Color(0xFFB0B0B4),
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(vertical = 6.dp)
             )
-        }
 
-        // 3x4 Dialpad Grid
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            for (row in 0..3) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    for (col in 0..2) {
-                        val index = row * 3 + col
-                        val key = DIALPAD_KEYS[index]
-                        DialpadButton(
-                            key = key,
-                            onClick = {
-                                triggerVibration()
-                                onDigitClick(key.digit)
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 8.dp)
+            ) {
+                items(
+                    items = suggestedContacts,
+                    key = { "sugg_${it.id}_${it.primaryNumber}" }
+                ) { contact ->
+                    val avatarColor = remember(contact.displayName) {
+                        val colors = listOf(
+                            Color(0xFF1E88E5), Color(0xFF43A047), Color(0xFFE65100),
+                            Color(0xFF00897B), Color(0xFFD81B60), Color(0xFF8E24AA)
+                        )
+                        val hash = kotlin.math.abs(contact.displayName.hashCode())
+                        colors[hash % colors.size]
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                initiateCall(contact.primaryNumber, contact.displayName)
                             },
-                            onLongClick = {
-                                if (key.digit == '0') {
-                                    triggerVibration()
-                                    onDigitClick('+')
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E22))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(42.dp),
+                                    shape = CircleShape,
+                                    color = avatarColor
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = contact.displayName.take(1).uppercase(),
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 18.sp
+                                        )
+                                    }
+                                }
+
+                                Column {
+                                    Text(
+                                        text = contact.displayName,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "Mobile ${contact.primaryNumber}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF9E9E9E),
+                                        maxLines = 1
+                                    )
                                 }
                             }
-                        )
+
+                            IconButton(
+                                onClick = { initiateCall(contact.primaryNumber, contact.displayName) }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Call,
+                                    contentDescription = "Call",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Bottom Action Bar: [Add Contact / SMS] - [Call Button] - [Backspace]
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+        // Lower Keypad Container (Screenshot 6 Layout)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = Color(0xFF18181C),
+            tonalElevation = 8.dp
         ) {
-            // Left Action: SMS or Add Contact
-            if (digits.isNotEmpty()) {
-                IconButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_INSERT).apply {
-                            type = ContactsContract.Contacts.CONTENT_TYPE
-                            putExtra(ContactsContract.Intents.Insert.PHONE, digits)
-                        }
-                        try {
-                            context.startActivity(intent)
-                        } catch (_: Exception) {}
-                    },
-                    modifier = Modifier
-                        .size(54.dp)
-                        .testTag("dialpad_add_contact")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.PersonAdd,
-                        contentDescription = "Save to contacts",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                IconButton(
-                    onClick = {
-                        val intent = context.packageManager.getLaunchIntentForPackage("com.android.stk")
-                        if (intent != null) {
-                            context.startActivity(intent)
-                        }
-                    },
-                    modifier = Modifier
-                        .size(54.dp)
-                        .testTag("dialpad_sim_toolkit")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SimCard,
-                        contentDescription = "SIM Toolkit",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Big Call Button
-            Surface(
+            Column(
                 modifier = Modifier
-                    .size(68.dp)
-                    .clip(CircleShape)
-                    .testTag("dialpad_call_button")
-                    .clickable {
-                        if (digits.isNotBlank()) {
-                            triggerVibration()
-                            placeCall(digits)
-                        }
-                    },
-                shape = CircleShape,
-                color = if (digits.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                shadowElevation = 4.dp
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.Call,
-                        contentDescription = "Call",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-            }
-
-            // Right Action: Backspace
-            if (digits.isNotEmpty()) {
+                // Digits Display and Top-Right Backspace Key
                 Box(
                     modifier = Modifier
-                        .size(54.dp)
-                        .clip(CircleShape)
-                        .combinedClickable(
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (digits.isBlank()) "" else digits,
+                        fontSize = if (digits.length > 12) 26.sp else 34.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 48.dp)
+                            .testTag("dialpad_digits_display")
+                    )
+
+                    if (digits.isNotEmpty()) {
+                        IconButton(
                             onClick = {
                                 triggerVibration()
                                 onBackspace()
                             },
-                            onLongClick = {
-                                triggerVibration()
-                                onClear()
-                            }
-                        )
-                        .testTag("dialpad_backspace"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Backspace,
-                        contentDescription = "Delete digit",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(44.dp)
+                                .testTag("dialpad_backspace")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Backspace,
+                                contentDescription = "Delete",
+                                tint = Color(0xFFB0B0B4),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
                 }
-            } else {
-                Spacer(modifier = Modifier.size(54.dp))
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // 3x4 Dialpad Grid of Oval / Rounded Buttons
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (row in 0..3) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            for (col in 0..2) {
+                                val key = DIALPAD_KEYS[row * 3 + col]
+                                DialpadPillButton(
+                                    key = key,
+                                    onClick = {
+                                        triggerVibration()
+                                        onDigitClick(key.digit)
+                                    },
+                                    onLongClick = {
+                                        if (key.digit == '0') {
+                                            triggerVibration()
+                                            onDigitClick('+')
+                                        } else if (key.digit == '1') {
+                                            triggerVibration()
+                                            initiateCall("123", "Voicemail")
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Bottom Call Button: Wide Green Pill (Screenshot 6)
+                Surface(
+                    modifier = Modifier
+                        .width(160.dp)
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(27.dp))
+                        .clickable {
+                            if (digits.isNotBlank()) {
+                                triggerVibration()
+                                initiateCall(digits)
+                            }
+                        }
+                        .testTag("dialpad_call_button"),
+                    shape = RoundedCornerShape(27.dp),
+                    color = if (digits.isNotBlank()) Color(0xFF4CAF50) else Color(0xFF2E7D32).copy(alpha = 0.6f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = "Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Call",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
 
+    // SIM Selection Dialog for Calls & USSD code dialing
     callNumberTarget?.let { num ->
         SimSelectionDialog(
             phoneNumber = num,
@@ -422,8 +400,7 @@ fun KeypadScreen(
                     .putInt("preferred_sim_slot", sim.subscriptionId)
                     .putString("preferred_sim_name", label)
                     .apply()
-                val resolvedName = matchedContact?.displayName ?: contacts.find { it.primaryNumber.filter { c -> c.isDigit() } == num.filter { c -> c.isDigit() } }?.displayName
-                onStartCall(num, resolvedName)
+                onStartCallWithSim(num, callNameTarget, sim)
             },
             onDismiss = { callNumberTarget = null }
         )
@@ -432,7 +409,7 @@ fun KeypadScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DialpadButton(
+private fun DialpadPillButton(
     key: DialpadKey,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -440,33 +417,41 @@ private fun DialpadButton(
 ) {
     Surface(
         modifier = modifier
-            .size(72.dp)
-            .clip(CircleShape)
+            .height(54.dp)
+            .clip(RoundedCornerShape(27.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
             .testTag("dialpad_key_${key.digit}"),
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant
+        shape = RoundedCornerShape(27.dp),
+        color = Color(0xFF24242A)
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxSize()
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = key.digit.toString(),
-                fontSize = 24.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color.White,
+                lineHeight = 24.sp
             )
-            if (key.letters.isNotEmpty()) {
+            if (key.hasVoicemail) {
+                Icon(
+                    imageVector = Icons.Filled.Voicemail,
+                    contentDescription = null,
+                    tint = Color(0xFF9E9E9E),
+                    modifier = Modifier.size(12.dp)
+                )
+            } else if (key.letters.isNotEmpty()) {
                 Text(
                     text = key.letters,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    color = Color(0xFF9E9E9E),
                     letterSpacing = 1.sp
                 )
             }

@@ -72,8 +72,10 @@ data class CallLogEntry(
     val type: CallType,
     val date: Long,
     val durationSeconds: Long,
-    val photoUri: String? = null
+    val photoUri: String? = null,
+    val simSlot: Int = 0
 ) {
+    val timestamp: Long get() = date
     val displayName: String
         get() = cachedName
             ?.takeIf { it.isNotBlank() && !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(it) }

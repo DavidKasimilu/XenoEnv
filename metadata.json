@@ -1,6 +1,6 @@
 {
-  "name": "Xeno",
-  "description": "Communications hub with calls, contacts, keypad, SMS, notifications viewer, gallery with video player, multi-tab browser, and Space sandbox app cloner with isolated sessions.",
+  "name": "Calls",
+  "description": "Phone app with dialer, call history, contacts, SMS messaging, and Clone Space sandbox.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

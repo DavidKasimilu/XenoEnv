@@ -45,6 +45,7 @@ import com.example.data.models.MediaItem
 import com.example.data.models.SmsDeliveryStatus
 import com.example.data.models.SmsMessage
 import com.example.data.models.SmsThread
+import com.example.data.models.SpeedBoostResult
 import com.example.data.models.WebTab
 import com.example.telecom.CallPhase
 import com.example.telecom.MusicPlaybackController
@@ -97,7 +98,7 @@ enum class BrowserDualTab {
 }
 
 data class XenoUiState(
-    val currentTab: XenoTab = XenoTab.MESSAGES,
+    val currentTab: XenoTab = XenoTab.CALLS,
     val messagesSubTab: MessagesSubTab = MessagesSubTab.SMS,
     val isLoading: Boolean = false,
     val callLogs: List<CallLogEntry> = emptyList(),
@@ -173,7 +174,12 @@ data class XenoUiState(
     val activeGameUrl: String? = null,
     val activeGameTitle: String? = null,
     val activeGamePackage: String? = null,
-    val preventOverlayApps: Boolean = true
+    val preventOverlayApps: Boolean = true,
+
+    // Super Speed Boost state
+    val isBoosting: Boolean = false,
+    val speedBoostResult: SpeedBoostResult? = null,
+    val showSpeedBoostOverlay: Boolean = false
 ) {
     val activeBrowserTab: WebTab?
         get() = browserTabs.find { it.id == activeBrowserTabId } ?: browserTabs.firstOrNull()
@@ -1508,7 +1514,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startCall(
         number: String,
-        name: String?,
+        name: String? = null,
         simCard: com.example.telecom.SimCardInfo? = null,
         skipSystemCall: Boolean = false
     ) {
@@ -1525,7 +1531,8 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             null
         }
-        startActiveCall(phoneNumber = clean, contactName = resolvedName, isIncoming = false)
+
+        // USSD code dialing should never bring up in-app call screen; executed directly via Android telephony
         if (isUssdCode(clean)) {
             _uiState.value = _uiState.value.copy(
                 userNotice = "Executing USSD code $clean..."
@@ -1548,6 +1555,8 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
+
+        startActiveCall(phoneNumber = clean, contactName = resolvedName, isIncoming = false)
         if (effectiveSim != null) {
             val prefs = getApplication<Application>().getSharedPreferences("xeno_telecom_prefs", Context.MODE_PRIVATE)
             val label = if (effectiveSim.carrierName.length > 14) "SIM ${effectiveSim.subscriptionId + 1}" else effectiveSim.carrierName
@@ -1575,6 +1584,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 android.util.Log.e("XenoViewModel", "Error placing call: ${e.message}")
             }
         }
+    }
+
+    fun startCall(number: String, simCard: com.example.telecom.SimCardInfo?) {
+        startCall(number = number, name = null, simCard = simCard)
     }
 
     // In-App & System Notification Popups logic
@@ -1804,6 +1817,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         XenoNotificationHelper.cancelCallNotification(getApplication())
         _uiState.value = _uiState.value.copy(incomingCallPopup = null)
     }
+
+    fun dismissIncomingCallPopup() = dismissCallPopup()
+    fun answerIncomingCall() = acceptActiveCall()
+    fun declineIncomingCall() = declineActiveCall()
+    fun endCall() = declineActiveCall()
 
     fun expandCallPopupToFullScreen(popup: IncomingCallPopup) {
         OngoingCallHelper.expandIncomingCallToFullScreen(getApplication())
@@ -2144,5 +2162,25 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             preventOverlayApps = prevent,
             userNotice = if (prevent) "Anti-Overlay Active: No external apps can display over this app." else "Overlay protection disabled."
         )
+    }
+
+    fun triggerSpeedBoost() {
+        _uiState.value = _uiState.value.copy(
+            isBoosting = true,
+            showSpeedBoostOverlay = true
+        )
+        viewModelScope.launch {
+            delay(1000)
+            val result = com.example.util.PerformanceBooster.executeSuperBoost(getApplication())
+            _uiState.value = _uiState.value.copy(
+                isBoosting = false,
+                speedBoostResult = result,
+                userNotice = "Super Speed Boosted! ${result.freedMemoryMb} MB RAM Freed (+${result.speedBoostPercent}% Fast)"
+            )
+        }
+    }
+
+    fun dismissSpeedBoostOverlay() {
+        _uiState.value = _uiState.value.copy(showSpeedBoostOverlay = false)
     }
 }

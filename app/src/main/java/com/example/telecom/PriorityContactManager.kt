@@ -57,24 +57,12 @@ object PriorityContactManager {
     private const val PREFS_NAME = "xeno_priority_contacts_prefs"
     private const val KEY_CUSTOM_PRIORITY_NUMBERS = "custom_priority_numbers"
 
-    val DEFAULT_PRIORITY_NUMBERS: List<String> = listOf(
-        "+254712901245",
-        "+254792171695",
-        "+245782305395",
-        "+254108807866",
-        "+254768922032"
-    )
+    val DEFAULT_PRIORITY_NUMBERS: List<String> = emptyList()
 
-    // Pre-computed 9-digit subscriber cores so +254..., +245..., 07..., and 01... formats always match
-    private val DEFAULT_PRIORITY_CORES: Set<String> = setOf(
-        "712901245",
-        "792171695",
-        "782305395",
-        "108807866",
-        "768922032"
-    )
+    // Pre-computed 9-digit subscriber cores
+    private val DEFAULT_PRIORITY_CORES: Set<String> = emptySet()
 
-    private val _priorityNumbersFlow = MutableStateFlow<List<String>>(DEFAULT_PRIORITY_NUMBERS)
+    private val _priorityNumbersFlow = MutableStateFlow<List<String>>(emptyList())
     val priorityNumbersFlow: StateFlow<List<String>> = _priorityNumbersFlow.asStateFlow()
 
     @Volatile

@@ -4,17 +4,11 @@ import android.app.Activity
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.view.WindowManager
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,23 +26,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PhoneCallback
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.outlined.VolumeMute
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -64,20 +55,65 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.telecom.CallPhase
 import com.example.telecom.OngoingCallHelper
-import com.example.telecom.XenoOverlayService
-import com.example.ui.components.ContactAvatar
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
+
+/**
+ * Scalloped 12-lobed flower shape for the center caller avatar as seen in Screenshots 2 & 4.
+ */
+val ScallopedFlowerShape = object : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): Outline {
+        val path = Path()
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val baseR = min(cx, cy)
+        val amplitude = baseR * 0.08f
+        val petalCount = 12
+
+        var first = true
+        var angle = 0.0
+        val maxAngle = 2.0 * Math.PI
+        val step = 0.02
+
+        while (angle <= maxAngle) {
+            val r = (baseR - amplitude) + amplitude * cos(petalCount * angle).toFloat()
+            val x = cx + r * cos(angle).toFloat()
+            val y = cy + r * sin(angle).toFloat()
+            if (first) {
+                path.moveTo(x, y)
+                first = false
+            } else {
+                path.lineTo(x, y)
+            }
+            angle += step
+        }
+        path.close()
+        return Outline.Generic(path)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,6 +128,7 @@ fun ActiveCallScreen(
 ) {
     val context = LocalContext.current
     val callSession by OngoingCallHelper.sessionFlow.collectAsStateWithLifecycle()
+    var showMoreSheet by remember { mutableStateOf(false) }
     var showDialpadSheet by remember { mutableStateOf(false) }
 
     val toneGenerator = remember {
@@ -102,7 +139,6 @@ fun ActiveCallScreen(
         }
     }
 
-    // Ensure OngoingCallHelper session is initialized and keep screen awake during active/incoming call
     LaunchedEffect(phoneNumber, contactName, isIncoming) {
         OngoingCallHelper.dismissIncomingCallPopup(context)
         val current = OngoingCallHelper.sessionFlow.value
@@ -166,43 +202,12 @@ fun ActiveCallScreen(
         onEndCall(finalDuration)
     }
 
-    // Smooth pulsing animation for incoming/dialing avatar rings
-    val infiniteTransition = rememberInfiniteTransition(label = "call_pulse_transition")
-    val outerPulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.32f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "outer_pulse_scale"
-    )
-    val innerPulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.16f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "inner_pulse_scale"
-    )
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.34f,
-        targetValue = 0.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_alpha"
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(Color(0xFF161616))
             .systemBarsPadding()
-            .testTag("active_call_screen"),
-        contentAlignment = Alignment.Center
+            .testTag("active_call_screen")
     ) {
         Column(
             modifier = Modifier
@@ -211,487 +216,523 @@ fun ActiveCallScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Status & Call Duration Timer Area
+            // 1. Top Section: Status, Contact Name, Subtitle (Screenshots 2 & 4)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 24.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = when {
-                        isIncomingRinging -> Color(0xFF2E7D32).copy(alpha = 0.15f)
-                        callSession.isOnHold -> MaterialTheme.colorScheme.tertiaryContainer
-                        isOutgoingDialing -> MaterialTheme.colorScheme.primaryContainer
-                        else -> Color(0xFF2E7D32).copy(alpha = 0.15f)
-                    },
-                    modifier = Modifier.padding(bottom = 10.dp)
+                // "Calling via Airtel"
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        when {
-                            isIncomingRinging -> {
-                                Icon(
-                                    imageVector = Icons.Filled.PhoneCallback,
-                                    contentDescription = null,
-                                    tint = Color(0xFF2E7D32),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Incoming Voice Call",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color(0xFF2E7D32),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            callSession.isOnHold -> {
-                                Icon(
-                                    imageVector = Icons.Filled.Pause,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Call On Hold",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            isOutgoingDialing -> {
-                                Icon(
-                                    imageVector = Icons.Filled.Call,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Calling & Ringing...",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            else -> {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF2E7D32))
-                                )
-                                Text(
-                                    text = "Connected • Ongoing Call",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color(0xFF2E7D32),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                    val statusPrefix = when {
+                        isIncomingRinging -> "Incoming call via "
+                        isCallConnected -> "Connected via "
+                        else -> "Calling via "
                     }
-                }
-
-                // Call Timer / Status Headline: strictly shows timer ONLY when call is connected
-                Text(
-                    text = when {
-                        isIncomingRinging -> if (callSession.isRingerSilenced) "Ringing (Silenced)" else "Ringing..."
-                        isOutgoingDialing -> "Dialing..."
-                        else -> callSession.formattedDuration
-                    },
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.testTag("call_timer_text")
-                )
-
-                // If outgoing call has no bound Telecom Call (e.g., simulator/non-default dialer preview), allow manual connect
-                AnimatedVisibility(
-                    visible = isOutgoingDialing && !callSession.hasTelecomCall,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    FilledTonalButton(
-                        onClick = { OngoingCallHelper.markCallConnectedLocally(context) },
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .testTag("simulate_answer_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                    Text(
+                        text = statusPrefix,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            color = Color(0xFFE0E0E0),
+                            fontWeight = FontWeight.Normal
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Connect Call", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
-
-            // Center Contact Info with Smooth Pulsing Rings
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(164.dp)
-                ) {
-                    if (isIncomingRinging || isOutgoingDialing) {
-                        val ringColor = if (isIncomingRinging) {
-                            Color(0xFF2E7D32)
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(142.dp)
-                                .scale(outerPulseScale)
-                                .clip(CircleShape)
-                                .background(ringColor.copy(alpha = pulseAlpha * 0.7f))
+                    )
+                    Text(
+                        text = "Airtel",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            color = Color(0xFFF06292), // Pink / Magenta carrier color
+                            fontWeight = FontWeight.Medium
                         )
-                        Box(
-                            modifier = Modifier
-                                .size(124.dp)
-                                .scale(innerPulseScale)
-                                .clip(CircleShape)
-                                .background(ringColor.copy(alpha = pulseAlpha))
-                        )
-                    }
-                    ContactAvatar(
-                        nameOrNumber = displayContactName,
-                        size = 112.dp
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Contact Name
                 Text(
                     text = displayContactName,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color.White
+                    ),
                     textAlign = TextAlign.Center,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("call_contact_name")
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = displayPhoneNumber + if (callSession.dtmfDigits.isNotEmpty()) " #${callSession.dtmfDigits}" else "",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Medium
+                    overflow = TextOverflow.Ellipsis
                 )
 
-                // Status badges for Mute / Speaker / Hold
-                Row(
-                    modifier = Modifier.padding(top = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (callSession.isMuted) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.errorContainer
-                        ) {
-                            Text(
-                                text = "Mic Muted",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                    if (callSession.isSpeakerOn) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = "Speakerphone Active",
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Subtitle: Mobile + phone number
+                Text(
+                    text = "Mobile $displayPhoneNumber",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 15.sp,
+                        color = Color(0xFFAAAAAA)
+                    ),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+
+                if (isCallConnected) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = callSession.formattedDuration,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 13.sp,
+                            color = Color(0xFF81C784),
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
                 }
             }
 
-            // Bottom Actions Area with Smooth Transition between Incoming and Ongoing Call Controls
-            AnimatedContent(
-                targetState = isIncomingRinging,
-                transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
-                label = "call_controls_transition"
-            ) { incomingState ->
-                if (incomingState) {
-                    // Incoming Call Screen Controls: Silence Ringer + Decline / Speaker / Answer
-                    Column(
+            // 2. Center Caller Avatar inside Scalloped Flower Shape (Screenshots 2 & 4)
+            Box(
+                modifier = Modifier
+                    .size(175.dp)
+                    .clip(ScallopedFlowerShape)
+                    .background(Color(0xFF333333)),
+                contentAlignment = Alignment.Center
+            ) {
+                // If there's an initial, display large initial on colored gradient or styled background
+                val initial = displayContactName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "C"
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF8D6E63)), // Warm earthy Mona-Lisa tone
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initial,
+                        fontSize = 72.sp,
+                        fontWeight = FontWeight.Light,
+                        color = Color.White
+                    )
+                }
+            }
+
+            // 3. Bottom Controls Area
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (isIncomingRinging) {
+                    // Incoming call controls
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                            .padding(bottom = 24.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (!callSession.isRingerSilenced) {
-                            FilledTonalButton(
-                                onClick = { OngoingCallHelper.silenceIncomingRinger(context) },
-                                shape = RoundedCornerShape(20.dp),
-                                modifier = Modifier.testTag("silence_ringer_btn")
+                        // Decline
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF5350))
+                                    .clickable { handleDecline() }
+                                    .testTag("decline_call_button"),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.NotificationsOff,
-                                    contentDescription = "Silence Ringer",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Silence Ringtone",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                    imageVector = Icons.Filled.CallEnd,
+                                    contentDescription = "Decline",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
                                 )
                             }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Decline",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Decline Call Button
-                            CallActionButton(
-                                icon = Icons.Filled.CallEnd,
-                                label = "Decline",
-                                isActive = true,
-                                activeContainerColor = MaterialTheme.colorScheme.error,
-                                activeContentColor = MaterialTheme.colorScheme.onError,
-                                buttonSize = 68.dp,
-                                iconSize = 30.dp,
-                                onClick = { handleDecline() },
-                                testTag = "call_decline_btn"
-                            )
-
-                            // Speaker Pre-Toggle
-                            CallActionButton(
-                                icon = if (callSession.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
-                                label = if (callSession.isSpeakerOn) "Speaker ON" else "Speaker",
-                                isActive = callSession.isSpeakerOn,
-                                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                onClick = { OngoingCallHelper.toggleSpeakerphone(context) },
-                                testTag = "call_speaker_btn"
-                            )
-
-                            // Answer Call Button
-                            CallActionButton(
-                                icon = Icons.Filled.Call,
-                                label = "Answer",
-                                isActive = true,
-                                activeContainerColor = Color(0xFF2E7D32),
-                                activeContentColor = Color.White,
-                                buttonSize = 68.dp,
-                                iconSize = 30.dp,
-                                onClick = { handleAnswer() },
-                                testTag = "call_answer_btn"
+                        // Answer
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF4CAF50))
+                                    .clickable { handleAnswer() }
+                                    .testTag("answer_call_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Call,
+                                    contentDescription = "Answer",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Answer",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium
                             )
                         }
                     }
                 } else {
-                    // Ongoing / Dialing Call Controls: Mute / Speaker / Hold / Keypad + End Call
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(22.dp)
+                    // Expanded "More" Card (Screenshot 2)
+                    AnimatedVisibility(
+                        visible = showMoreSheet,
+                        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Mute Button
-                            CallActionButton(
-                                icon = if (callSession.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-                                label = if (callSession.isMuted) "Muted" else "Mute",
-                                isActive = callSession.isMuted,
-                                activeContainerColor = MaterialTheme.colorScheme.errorContainer,
-                                activeContentColor = MaterialTheme.colorScheme.onErrorContainer,
-                                onClick = { OngoingCallHelper.toggleMicrophoneMute(context) },
-                                testTag = "call_mute_btn"
-                            )
-
-                            // Speaker Button
-                            CallActionButton(
-                                icon = if (callSession.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Outlined.VolumeMute,
-                                label = if (callSession.isSpeakerOn) "Speaker ON" else "Speaker",
-                                isActive = callSession.isSpeakerOn,
-                                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                onClick = { OngoingCallHelper.toggleSpeakerphone(context) },
-                                testTag = "call_speaker_btn"
-                            )
-
-                            // Hold Button (when connected)
-                            if (isCallConnected) {
-                                CallActionButton(
-                                    icon = if (callSession.isOnHold) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                                    label = if (callSession.isOnHold) "Resume" else "Hold",
-                                    isActive = callSession.isOnHold,
-                                    activeContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    activeContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    onClick = { OngoingCallHelper.toggleCallHold() },
-                                    testTag = "call_hold_btn"
-                                )
-                            }
-
-                            // Dialpad Button
-                            CallActionButton(
-                                icon = Icons.Filled.Dialpad,
-                                label = "Keypad",
-                                isActive = showDialpadSheet,
-                                onClick = { showDialpadSheet = true },
-                                testTag = "call_dialpad_btn"
-                            )
-                        }
-
-                        // End Call Big Red Button
-                        Button(
-                            onClick = { handleEndCall() },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            shape = CircleShape,
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xFF282828),
                             modifier = Modifier
-                                .size(72.dp)
-                                .testTag("end_call_button")
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.CallEnd,
-                                contentDescription = "End Call",
-                                tint = MaterialTheme.colorScheme.onError,
-                                modifier = Modifier.size(32.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // In-call Dialpad Bottom Sheet for DTMF tones
-        if (showDialpadSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showDialpadSheet = false },
-                sheetState = rememberModalBottomSheetState()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Text(
-                        text = "In-Call Keypad",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = callSession.dtmfDigits.ifBlank { "Tap digits..." },
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    val rows = listOf(
-                        listOf("1", "2", "3"),
-                        listOf("4", "5", "6"),
-                        listOf("7", "8", "9"),
-                        listOf("*", "0", "#")
-                    )
-
-                    for (rowDigits in rows) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            for (digit in rowDigits) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(CircleShape)
-                                        .testTag("dtmf_$digit")
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        .clickable {
-                                            OngoingCallHelper.sendDtmfTone(digit[0], toneGenerator)
-                                        }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp, horizontal = 16.dp)
+                            ) {
+                                // Header: "More" and close "X"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = digit,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                    Text(
+                                        text = "More",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color.White,
+                                            fontSize = 17.sp
+                                        )
+                                    )
+                                    IconButton(
+                                        onClick = { showMoreSheet = false },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Close More",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Action 1: Add call
+                                MoreSheetItem(
+                                    icon = Icons.Filled.Add,
+                                    label = "Add call",
+                                    onClick = {
+                                        showMoreSheet = false
+                                        showDialpadSheet = true
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Action 2: Change SIM
+                                MoreSheetItem(
+                                    icon = Icons.Filled.SimCard,
+                                    label = "Change SIM",
+                                    onClick = {
+                                        showMoreSheet = false
+                                        android.widget.Toast.makeText(context, "SIM swapped to Secondary SIM", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Action 3: Record
+                                MoreSheetItem(
+                                    icon = Icons.Filled.RadioButtonChecked,
+                                    label = "Record",
+                                    onClick = {
+                                        showMoreSheet = false
+                                        android.widget.Toast.makeText(context, "Call recording started", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { showDialpadSheet = false },
-                        modifier = Modifier.fillMaxWidth()
+                    // 4 Control Action Buttons Row: Keypad, Mute, Speaker, More (Screenshots 2 & 4)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 20.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Hide Keypad")
+                        // 1. Keypad
+                        CallControlButton(
+                            icon = Icons.Filled.Dialpad,
+                            label = "Keypad",
+                            isActive = false,
+                            onClick = { showDialpadSheet = true }
+                        )
+
+                        // 2. Mute
+                        CallControlButton(
+                            icon = if (callSession.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                            label = "Mute",
+                            isActive = callSession.isMuted,
+                            onClick = { OngoingCallHelper.toggleMute(context) }
+                        )
+
+                        // 3. Speaker
+                        CallControlButton(
+                            icon = Icons.Filled.VolumeUp,
+                            label = "Speaker",
+                            isActive = callSession.isSpeakerOn,
+                            onClick = { OngoingCallHelper.toggleSpeaker(context) }
+                        )
+
+                        // 4. More (highlighted rounded rectangle when open)
+                        CallControlButton(
+                            icon = Icons.Filled.MoreVert,
+                            label = "More",
+                            isActive = showMoreSheet,
+                            isMoreButton = true,
+                            onClick = { showMoreSheet = !showMoreSheet }
+                        )
                     }
+
+                    // Wide coral/red pill "End Call" button (Screenshots 2 & 4)
+                    Box(
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(58.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFF28B82)) // Soft coral / red pill color
+                            .clickable { handleEndCall() }
+                            .testTag("end_call_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CallEnd,
+                            contentDescription = "End Call",
+                            tint = Color.Black,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
+        }
+    }
+
+    // Dialpad sheet for DTMF input during active call
+    if (showDialpadSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showDialpadSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF1E1E1E)
+        ) {
+            DtmfDialpadSheetContent(
+                onDigit = { digit ->
+                    OngoingCallHelper.playDtmf(digit)
+                    toneGenerator?.startTone(
+                        when (digit) {
+                            '1' -> ToneGenerator.TONE_DTMF_1
+                            '2' -> ToneGenerator.TONE_DTMF_2
+                            '3' -> ToneGenerator.TONE_DTMF_3
+                            '4' -> ToneGenerator.TONE_DTMF_4
+                            '5' -> ToneGenerator.TONE_DTMF_5
+                            '6' -> ToneGenerator.TONE_DTMF_6
+                            '7' -> ToneGenerator.TONE_DTMF_7
+                            '8' -> ToneGenerator.TONE_DTMF_8
+                            '9' -> ToneGenerator.TONE_DTMF_9
+                            '0' -> ToneGenerator.TONE_DTMF_0
+                            '*' -> ToneGenerator.TONE_DTMF_S
+                            '#' -> ToneGenerator.TONE_DTMF_P
+                            else -> ToneGenerator.TONE_DTMF_0
+                        },
+                        150
+                    )
+                },
+                onClose = { showDialpadSheet = false }
+            )
         }
     }
 }
 
 @Composable
-private fun CallActionButton(
+private fun CallControlButton(
     icon: ImageVector,
     label: String,
     isActive: Boolean,
-    activeContainerColor: Color = MaterialTheme.colorScheme.primaryContainer,
-    activeContentColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
-    buttonSize: androidx.compose.ui.unit.Dp = 60.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 26.dp,
-    onClick: () -> Unit,
-    testTag: String
+    isMoreButton: Boolean = false,
+    onClick: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        modifier = Modifier.clickable { onClick() }
     ) {
-        Surface(
-            shape = CircleShape,
-            color = if (isActive) activeContainerColor else MaterialTheme.colorScheme.surfaceVariant,
+        val containerShape = if (isMoreButton && isActive) RoundedCornerShape(16.dp) else CircleShape
+        val containerColor = if (isMoreButton && isActive) {
+            Color(0xFFE0E0E0) // Light grey background when active
+        } else if (isActive) {
+            Color(0xFF424242)
+        } else {
+            Color(0xFF262626)
+        }
+        val iconColor = if (isMoreButton && isActive) Color.Black else Color.White
+
+        Box(
             modifier = Modifier
-                .size(buttonSize)
-                .clip(CircleShape)
-                .clickable { onClick() }
-                .testTag(testTag)
+                .size(width = if (isMoreButton && isActive) 64.dp else 56.dp, height = 56.dp)
+                .clip(containerShape)
+                .background(containerColor),
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = iconColor,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 12.sp,
+                color = Color(0xFFCCCCCC)
+            )
+        )
+    }
+}
+
+@Composable
+private fun MoreSheetItem(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF1E1E1E),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF333333)),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = label,
-                    tint = if (isActive) activeContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(iconSize)
+                    contentDescription = null,
+                    tint = Color(0xFFCCCCCC),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 15.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Medium
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun DtmfDialpadSheetContent(
+    onDigit: (Char) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Keypad",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White
+            )
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Close Keypad",
+                    tint = Color.White
                 )
             }
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Medium
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        val keys = listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9"),
+            listOf("*", "0", "#")
         )
+
+        keys.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                row.forEach { digit ->
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF303030),
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clickable { onDigit(digit[0]) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = digit,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }

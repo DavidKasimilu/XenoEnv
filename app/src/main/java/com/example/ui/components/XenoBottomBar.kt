@@ -3,24 +3,28 @@ package com.example.ui.components
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.outlined.Dialpad
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Message
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.viewmodel.XenoTab
@@ -43,17 +47,24 @@ fun XenoBottomBar(
 ) {
     val items = listOf(
         BottomBarItem(
+            tab = XenoTab.CALLS,
+            label = "Home",
+            selectedIcon = Icons.Filled.Home,
+            unselectedIcon = Icons.Outlined.Home,
+            badgeCount = missedCallsCount
+        ),
+        BottomBarItem(
+            tab = XenoTab.KEYPAD,
+            label = "Keypad",
+            selectedIcon = Icons.Filled.Dialpad,
+            unselectedIcon = Icons.Outlined.Dialpad
+        ),
+        BottomBarItem(
             tab = XenoTab.MESSAGES,
             label = "Messages",
             selectedIcon = Icons.Filled.Message,
             unselectedIcon = Icons.Outlined.Message,
             badgeCount = unreadMessagesCount
-        ),
-        BottomBarItem(
-            tab = XenoTab.BROWSER,
-            label = "Browser",
-            selectedIcon = Icons.Filled.Public,
-            unselectedIcon = Icons.Outlined.Public
         ),
         BottomBarItem(
             tab = XenoTab.CLONE_SPACE,
@@ -65,18 +76,25 @@ fun XenoBottomBar(
 
     NavigationBar(
         modifier = modifier
-            .height(62.dp)
+            .height(68.dp)
             .testTag("xeno_bottom_bar"),
         windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp
+        containerColor = Color(0xFF1E1E22),
+        tonalElevation = 4.dp
     ) {
         items.forEach { item ->
             val isSelected = currentTab == item.tab
             NavigationBarItem(
                 selected = isSelected,
                 onClick = { onTabSelected(item.tab) },
-                alwaysShowLabel = false,
+                alwaysShowLabel = true,
+                colors = NavigationBarItemDefaults.colors(
+                    indicatorColor = Color(0xFF38383E),
+                    selectedIconColor = Color.White,
+                    unselectedIconColor = Color(0xFF9E9E9E),
+                    selectedTextColor = Color.White,
+                    unselectedTextColor = Color(0xFF9E9E9E)
+                ),
                 icon = {
                     if (item.badgeCount > 0) {
                         BadgedBox(
@@ -104,7 +122,8 @@ fun XenoBottomBar(
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1
                     )
                 },

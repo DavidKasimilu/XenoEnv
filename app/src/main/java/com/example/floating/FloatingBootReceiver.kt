@@ -19,13 +19,7 @@ class FloatingBootReceiver : BroadcastReceiver() {
             action == Intent.ACTION_MY_PACKAGE_REPLACED ||
             action == "android.intent.action.QUICKBOOT_POWERON"
         ) {
-            FloatingPreferences.init(context)
-            val config = FloatingPreferences.configFlow.value
-
-            if (config.startOnBoot && FloatingBubbleService.isOverlayPermissionGranted(context)) {
-                Log.i("FloatingBootReceiver", "Auto-starting persistent FloatingBubbleService after boot/update")
-                FloatingBubbleService.start(context)
-            }
+            FloatingBubbleService.stop(context)
         }
     }
 }
