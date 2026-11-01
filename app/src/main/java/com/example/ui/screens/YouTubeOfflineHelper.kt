@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -134,6 +136,41 @@ object YouTubeOfflineRepository {
     // Maps videoId -> download progress (0..100)
     private val _activeDownloadsFlow = MutableStateFlow<Map<String, Int>>(emptyMap())
     val activeDownloadsFlow: StateFlow<Map<String, Int>> = _activeDownloadsFlow.asStateFlow()
+
+    // Tracks videoIds that are currently paused
+    private val _pausedDownloadsFlow = MutableStateFlow<Set<String>>(emptySet())
+    val pausedDownloadsFlow: StateFlow<Set<String>> = _pausedDownloadsFlow.asStateFlow()
+
+    // Tracks videoIds that have been cancelled
+    private val _cancelledDownloadsFlow = MutableStateFlow<Set<String>>(emptySet())
+
+    fun pauseVideoDownload(videoId: String) {
+        val cleanId = videoId.trim().substringBefore("&").substringBefore("?").substringBefore("/")
+        if (cleanId.isNotBlank()) {
+            _pausedDownloadsFlow.value = _pausedDownloadsFlow.value + cleanId
+        }
+    }
+
+    fun resumeVideoDownload(videoId: String) {
+        val cleanId = videoId.trim().substringBefore("&").substringBefore("?").substringBefore("/")
+        if (cleanId.isNotBlank()) {
+            _pausedDownloadsFlow.value = _pausedDownloadsFlow.value - cleanId
+        }
+    }
+
+    fun cancelVideoDownload(videoId: String) {
+        val cleanId = videoId.trim().substringBefore("&").substringBefore("?").substringBefore("/")
+        if (cleanId.isNotBlank()) {
+            _cancelledDownloadsFlow.value = _cancelledDownloadsFlow.value + cleanId
+            _pausedDownloadsFlow.value = _pausedDownloadsFlow.value - cleanId
+            _activeDownloadsFlow.value = _activeDownloadsFlow.value - cleanId
+        }
+    }
+
+    fun isVideoPaused(videoId: String): Boolean {
+        val cleanId = videoId.trim().substringBefore("&").substringBefore("?").substringBefore("/")
+        return _pausedDownloadsFlow.value.contains(cleanId)
+    }
 
     // Live stream URLs captured from WebView playback (videoId -> CapturedMediaStreams)
     private data class CapturedMediaStreams(
@@ -1419,6 +1456,23 @@ object YouTubeOfflineRepository {
                     var downloaded = 0L
                     var lastReportedPct = -1
                     while (input.read(buffer).also { bytesRead = it } != -1) {
+                        // Check if download was cancelled by user
+                        val activeCancelled = _cancelledDownloadsFlow.value.firstOrNull { urlStr.contains(it) || destFile.name.contains(it) }
+                        if (activeCancelled != null) {
+                            return false
+                        }
+
+                        // Check if download was paused by user
+                        val activePaused = _pausedDownloadsFlow.value.firstOrNull { urlStr.contains(it) || destFile.name.contains(it) }
+                        if (activePaused != null) {
+                            while (_pausedDownloadsFlow.value.contains(activePaused)) {
+                                try { Thread.sleep(300) } catch (_: Exception) {}
+                                if (_cancelledDownloadsFlow.value.contains(activePaused)) {
+                                    return false
+                                }
+                            }
+                        }
+
                         output.write(buffer, 0, bytesRead)
                         downloaded += bytesRead
                         if (onProgress != null && totalBytes > 0L) {
@@ -1743,10 +1797,14 @@ class YouTubeJsDownloadBridge(
 fun YouTubeOfflineDesktopView(
     videos: List<YouTubeOfflineVideo>,
     activeDownloads: Map<String, Int>,
+    pausedDownloads: Set<String>,
     isOfflineNetwork: Boolean,
     selectedVideo: YouTubeOfflineVideo?,
     onSelectVideo: (YouTubeOfflineVideo?) -> Unit,
     onDeleteVideo: (String) -> Unit,
+    onPauseDownload: (String) -> Unit,
+    onResumeDownload: (String) -> Unit,
+    onCancelDownload: (String) -> Unit,
     onReturnToLiveYouTube: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
@@ -1915,6 +1973,10 @@ fun YouTubeOfflineDesktopView(
         // Active Download Progress Bar (if a video is currently downloading)
         if (activeDownloads.isNotEmpty() && !isFullscreenPlayer) {
             val entry = activeDownloads.entries.first()
+            val videoId = entry.key
+            val progress = entry.value
+            val isPaused = pausedDownloads.contains(videoId)
+            
             Surface(
                 color = Color(0xFF212121),
                 modifier = Modifier.fillMaxWidth()
@@ -1931,21 +1993,39 @@ fun YouTubeOfflineDesktopView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Saving video with sound for offline playback (${entry.key})...",
+                            text = "Saving \"${videoId}\" (${progress}%)...",
                             color = Color.White,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.Medium
                         )
-                        Text(
-                            text = "${entry.value}%",
-                            color = Color(0xFFFF0000),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { if (isPaused) onResumeDownload(videoId) else onPauseDownload(videoId) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                    contentDescription = if (isPaused) "Resume" else "Pause",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { onCancelDownload(videoId) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Cancel",
+                                    tint = Color.Red,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                     LinearProgressIndicator(
-                        progress = { entry.value / 100f },
-                        color = Color(0xFFFF0000),
+                        progress = { progress / 100f },
+                        color = if (isPaused) Color.Gray else Color(0xFFFF0000),
                         trackColor = Color(0xFF383838),
                         modifier = Modifier
                             .fillMaxWidth()

@@ -3927,6 +3927,7 @@ fun CloneWorkspaceScreen(
     // YouTube Offline Downloads & Desktop-Style Offline Mode state
     val youtubeOfflineVideos by YouTubeOfflineRepository.downloadsFlow.collectAsStateWithLifecycle()
     val youtubeActiveDownloads by YouTubeOfflineRepository.activeDownloadsFlow.collectAsStateWithLifecycle()
+    val youtubePausedDownloads by YouTubeOfflineRepository.pausedDownloadsFlow.collectAsStateWithLifecycle()
     var isYoutubeNetworkOffline by remember(instance.instanceId) {
         mutableStateOf(isYoutube && !YouTubeOfflineRepository.isDeviceOnline(context))
     }
@@ -4218,8 +4219,17 @@ fun CloneWorkspaceScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    val cleanTitle = remember(instance.displayName, instance.originalName) {
+                        val raw = instance.displayName.ifBlank { instance.originalName }
+                        raw.replace(" Clone", "", ignoreCase = true)
+                           .replace("Clone", "", ignoreCase = true)
+                           .replace("(Clone)", "", ignoreCase = true)
+                           .trim()
+                           .ifBlank { instance.originalName }
+                    }
+
                     Text(
-                        text = instance.displayName,
+                        text = cleanTitle,
                         style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5.sp),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -4552,22 +4562,6 @@ fun CloneWorkspaceScreen(
                         }
                     }
 
-                    if (onOpenInBrowser != null) {
-                        IconButton(
-                            onClick = { onOpenInBrowser(currentUrl.ifBlank { instance.targetUrl }) },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .testTag("workspace_open_in_browser_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = "Open in Web Browser",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-
                     IconButton(
                         onClick = {
                             hasRenderCrash = false
@@ -4587,35 +4581,6 @@ fun CloneWorkspaceScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
-                    }
-
-                    // Minimize to Floating Icon Button
-                    IconButton(
-                        onClick = {
-                            keepAliveInMinimizedPool = true
-                            webViewInstance?.let { wv ->
-                                CloneWebViewPool.retain(instance.instanceId, wv)
-                            }
-                            onMinimizeWorkspace()
-                        },
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("workspace_minimize_btn")
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Remove,
-                                    contentDescription = "Minimize to floating icon",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                            }
-                        }
                     }
 
                     IconButton(
@@ -5411,6 +5376,7 @@ fun CloneWorkspaceScreen(
                 YouTubeOfflineDesktopView(
                     videos = youtubeOfflineVideos,
                     activeDownloads = youtubeActiveDownloads,
+                    pausedDownloads = youtubePausedDownloads,
                     isOfflineNetwork = isYoutubeNetworkOffline,
                     selectedVideo = selectedOfflineYtVideo,
                     onSelectVideo = { selectedOfflineYtVideo = it },
@@ -5420,6 +5386,9 @@ fun CloneWorkspaceScreen(
                             selectedOfflineYtVideo = youtubeOfflineVideos.firstOrNull { it.videoId != videoId }
                         }
                     },
+                    onPauseDownload = { YouTubeOfflineRepository.pauseVideoDownload(it) },
+                    onResumeDownload = { YouTubeOfflineRepository.resumeVideoDownload(it) },
+                    onCancelDownload = { YouTubeOfflineRepository.cancelVideoDownload(it) },
                     onReturnToLiveYouTube = {
                         val online = YouTubeOfflineRepository.isDeviceOnline(context)
                         isYoutubeNetworkOffline = !online
