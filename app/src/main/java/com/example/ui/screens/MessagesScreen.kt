@@ -544,56 +544,8 @@ fun DeviceNotificationsWindow(
             }
 
             // Clean Header Bar with Total Count and Clear All
-            item(key = "alerts_header_bar") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Device & App Notifications",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (notifications.isNotEmpty()) "${notifications.size} active notifications" else "No active notifications",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            // Header and Power icon removed as requested
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (notifications.isNotEmpty()) {
-                            IconButton(
-                                onClick = onClearAll,
-                                modifier = Modifier.testTag("clear_all_notifications_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ClearAll,
-                                    contentDescription = "Clear all notifications",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        if (onStopFloatingApp != null) {
-                            IconButton(
-                                onClick = onStopFloatingApp,
-                                modifier = Modifier.testTag("alerts_drawer_power_off_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PowerSettingsNew,
-                                    contentDescription = "Turn off floating app",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-                }
-            }
 
             // Alerts Items or Clean Empty State
             if (notifications.isEmpty()) {
@@ -601,30 +553,14 @@ fun DeviceNotificationsWindow(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 40.dp),
+                            .padding(vertical = 120.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Outlined.NotificationsNone,
-                                contentDescription = null,
-                                modifier = Modifier.size(56.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "No active notifications",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Incoming notifications from the device and your installed apps will appear here",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
-                        }
+                        Text(
+                            text = "No notifications",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
                     }
                 }
             } else {
