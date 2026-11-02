@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -311,27 +312,55 @@ fun QuickTogglesPanel(
         }
     }
 
-    // 6. Brightness State
+    // 6. Brightness State (System-wide)
     var brightnessLevel by remember {
-        val current = activity?.window?.attributes?.screenBrightness ?: -1f
-        val initial = if (current >= 0) current else {
-            try {
-                val sysBrightness = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-                sysBrightness / 255f
-            } catch (_: Exception) {
-                0.65f
-            }
+        val currentSys = try {
+            Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+        } catch (_: Exception) {
+            0.65f
         }
-        mutableFloatStateOf(initial.coerceIn(0.05f, 1.0f))
+        mutableFloatStateOf(currentSys.coerceIn(0.05f, 1.0f))
     }
 
     fun updateBrightness(level: Float) {
         val clamped = level.coerceIn(0.05f, 1.0f)
         brightnessLevel = clamped
+        
+        // 1. Update current window (instant feedback)
         activity?.let { act ->
             val layoutParams = act.window.attributes
             layoutParams.screenBrightness = clamped
             act.window.attributes = layoutParams
+        }
+
+        // 2. Update system settings if permitted
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Settings.System.canWrite(context)) {
+                try {
+                    Settings.System.putInt(
+                        context.contentResolver,
+                        Settings.System.SCREEN_BRIGHTNESS,
+                        (clamped * 255).toInt()
+                    )
+                } catch (_: Exception) {}
+            } else {
+                // Request permission if not granted
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) {}
+            }
+        } else {
+            try {
+                Settings.System.putInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    (clamped * 255).toInt()
+                )
+            } catch (_: Exception) {}
         }
     }
 

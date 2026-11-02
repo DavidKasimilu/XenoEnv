@@ -56,6 +56,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import com.example.telecom.TelecomHelper
 import com.example.telecom.XenoNotificationListenerService
 import com.example.ui.components.GlobalSwipeDownTracker
@@ -265,7 +266,6 @@ fun XenoApp(
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.checkDefaultAppStatus()
                 viewModel.checkNotificationAccess()
-                viewModel.loadAllData()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -316,8 +316,9 @@ fun XenoApp(
         } catch (_: Exception) {}
     }
 
-    // Request permissions on first launch only for permissions not yet granted
+    // Request permissions with a small delay to prioritize Frame 1 rendering and launch speed
     LaunchedEffect(Unit) {
+        delay(800L) // Delay slightly to ensure smooth app entry animation
         val perms = mutableListOf(
             android.Manifest.permission.CALL_PHONE,
             android.Manifest.permission.READ_PHONE_STATE,
