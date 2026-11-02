@@ -406,30 +406,6 @@ fun AppAlertsDrawerOverlay(
                             )
                         }
 
-                        FilledTonalButton(
-                            onClick = {
-                                onCloseDrawer()
-                                onSpeedBoost()
-                            },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = androidx.compose.ui.graphics.Color(0xFF00E676).copy(alpha = 0.2f),
-                                contentColor = androidx.compose.ui.graphics.Color(0xFF00E676)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.RocketLaunch,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Speed Boost",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
                     }
                 }
 

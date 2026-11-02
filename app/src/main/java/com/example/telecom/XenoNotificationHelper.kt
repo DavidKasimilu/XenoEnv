@@ -298,34 +298,12 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val smsCollapsedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms_collapsed).apply {
-            setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, resolvedName)
-            setTextViewText(R.id.notif_sms_time, formattedTime)
-            setTextViewText(R.id.notif_sms_body, body)
-        }
-
-        val smsExpandedRemoteViews = RemoteViews(context.packageName, R.layout.notification_custom_sms).apply {
-            setTextViewText(R.id.notif_sms_avatar_text, initials)
-            setTextViewText(R.id.notif_sms_sender, resolvedName)
-            setTextViewText(R.id.notif_sms_number, displaySubtitle)
-            setTextViewText(R.id.notif_sms_time, formattedTime)
-            setTextViewText(R.id.notif_sms_body, body)
-
-            setOnClickPendingIntent(R.id.btn_sms_mark_read, markReadPendingIntent)
-            setOnClickPendingIntent(R.id.btn_sms_reply, replyPendingIntent)
-        }
-
         val targetChannel = if (isPriority) CHANNEL_PRIORITY_SMS_ID else CHANNEL_SMS_ID
         val notification = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(resolvedName)
             .setContentText(body)
             .setSubText("SMS • $formattedTime")
-            .setCustomContentView(smsCollapsedRemoteViews)
-            .setCustomBigContentView(smsExpandedRemoteViews)
-            .setCustomHeadsUpContentView(smsExpandedRemoteViews)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(if (isPriority) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
@@ -334,21 +312,17 @@ object XenoNotificationHelper {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setVibrate(if (isPriority) longArrayOf(0, 350, 120, 350, 120, 500) else longArrayOf(0, 220, 120, 220))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(android.R.drawable.ic_menu_send, "Mark Read", markReadPendingIntent)
+            .addAction(android.R.drawable.ic_menu_send, "Reply", replyPendingIntent)
             .build()
 
-        var notifiedSystem = false
         try {
             val nm = NotificationManagerCompat.from(context)
             if (nm.areNotificationsEnabled()) {
                 nm.notify(notificationId, notification)
-                notifiedSystem = true
             }
         } catch (_: SecurityException) {
         } catch (_: Exception) {}
-
-        if (!notifiedSystem || (isPriority && !MainActivity.isAppInForeground)) {
-            XenoOverlayService.showSmsOverlay(context, resolvedName, senderNumber, body, threadId)
-        }
     }
 
     @Synchronized
@@ -485,7 +459,6 @@ object XenoNotificationHelper {
     }
 
     fun cancelSmsNotification(context: Context, threadId: Long, senderNumber: String = "") {
-        XenoOverlayService.dismissSmsOverlay(context)
         try {
             val nm = NotificationManagerCompat.from(context)
             if (senderNumber.isNotBlank()) {

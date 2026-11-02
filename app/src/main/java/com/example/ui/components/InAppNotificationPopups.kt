@@ -357,6 +357,15 @@ fun InAppSmsNotificationCard(
         onDismiss()
     }
 
+    val rawSender = popup.senderName.takeIf { !it.isNullOrBlank() && it != "$" } ?: popup.senderNumber
+    val senderInitial = rawSender.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "M"
+    val hasLink = remember(popup.body) {
+        android.util.Patterns.WEB_URL.matcher(popup.body).find() ||
+            popup.body.contains("http://", ignoreCase = true) ||
+            popup.body.contains("https://", ignoreCase = true) ||
+            popup.body.contains("www.", ignoreCase = true)
+    }
+
     Card(
         shape = RoundedCornerShape(26.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C)),
@@ -391,10 +400,10 @@ fun InAppSmsNotificationCard(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "$",
+                                text = senderInitial,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
+                                fontSize = 18.sp
                             )
                         }
 
@@ -416,9 +425,8 @@ fun InAppSmsNotificationCard(
                     }
 
                     // Sender • Messages • now
-                    val senderLabel = popup.senderName.takeIf { it.isNotBlank() } ?: "$"
                     Text(
-                        text = "$senderLabel • Messages • now",
+                        text = "$rawSender • Messages • now",
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
@@ -457,55 +465,57 @@ fun InAppSmsNotificationCard(
             )
 
             if (isExpanded) {
-                Spacer(modifier = Modifier.height(14.dp))
+                if (hasLink) {
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                // Action: "Open link" pill
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = Color(0xFF1E1E1E),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF555555)),
-                        modifier = Modifier
-                            .clickable { onOpenLink() }
-                            .testTag("sms_notification_open_link")
+                    // Action: "Open link" pill
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFF1E1E1E),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF555555)),
+                            modifier = Modifier
+                                .clickable { onOpenLink() }
+                                .testTag("sms_notification_open_link")
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFFE64A19)),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Public,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(14.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(Color(0xFFE64A19)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Public,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Open link",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
                                 )
                             }
-                            Text(
-                                text = "Open link",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color.White,
-                                    fontSize = 13.sp
-                                )
-                            )
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Bottom row: "Mark as read" + expand window icon
+                // Bottom row: "Mark as read" + optional expand window icon
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -523,16 +533,18 @@ fun InAppSmsNotificationCard(
                             .padding(vertical = 4.dp)
                     )
 
-                    IconButton(
-                        onClick = { onOpenLink() },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = "Open in Messages",
-                            tint = Color(0xFFAAAAAA),
-                            modifier = Modifier.size(16.dp)
-                        )
+                    if (hasLink) {
+                        IconButton(
+                            onClick = { onOpenLink() },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open in Messages",
+                                tint = Color(0xFFAAAAAA),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
