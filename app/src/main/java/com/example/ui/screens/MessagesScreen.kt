@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -115,7 +116,8 @@ fun MessagesScreen(
     onReplyNotification: (DeviceNotification, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    var threadToDelete by remember { mutableStateOf<SmsThread?>(null) }
+    var selectedThreadIds by remember { mutableStateOf(setOf<Long>()) }
+    val isSelectionMode = selectedThreadIds.isNotEmpty()
 
     val filteredThreads = remember(threads, searchQuery) {
         if (searchQuery.isBlank()) threads
@@ -129,14 +131,44 @@ fun MessagesScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("messages_screen")
-    ) {
-        // Default SMS Messages Content (Swipe down anywhere to open the App Alerts Drawer)
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Selection Action Bar
+            if (isSelectionMode) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { selectedThreadIds = emptySet() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
+                        }
+                        Text(
+                            text = "${selectedThreadIds.size} selected",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            selectedThreadIds.forEach { id ->
+                                val thread = threads.find { it.threadId == id }
+                                thread?.let { onDeleteThread(it) }
+                            }
+                            selectedThreadIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete selected")
+                        }
+                    }
+                }
+            } else {
                 // Search Bar
                 OutlinedTextField(
                     value = searchQuery,
@@ -165,108 +197,95 @@ fun MessagesScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp)
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                if (filteredThreads.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Filled.Message,
-                                contentDescription = null,
-                                modifier = Modifier.size(56.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = if (searchQuery.isBlank()) "No SMS conversations on device" else "No matching messages",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Tap the compose button below to start a new chat",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(
-                            items = filteredThreads,
-                            key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
-                            contentType = { _, _ -> "sms_thread_row" }
-                        ) { _, thread ->
-                            SmsThreadItem(
-                                thread = thread,
-                                onClick = { onOpenThread(thread) },
-                                onDeleteClick = { threadToDelete = thread }
-                            )
-                        }
-                    }
-                }
             }
 
-            // Start Chat FAB
-            FloatingActionButton(
-                onClick = onStartNewChat,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(20.dp)
-                    .testTag("start_chat_fab"),
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Edit,
-                    contentDescription = "Start new chat"
-                )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (filteredThreads.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Filled.Message,
+                            contentDescription = null,
+                            modifier = Modifier.size(56.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = if (searchQuery.isBlank()) "No SMS conversations on device" else "No matching messages",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap the compose button below to start a new chat",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(
+                        items = filteredThreads,
+                        key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
+                        contentType = { _, _ -> "sms_thread_row" }
+                    ) { _, thread ->
+                        val isSelected = thread.threadId in selectedThreadIds
+                        SmsThreadItem(
+                            thread = thread,
+                            isSelected = isSelected,
+                            onToggleSelection = {
+                                selectedThreadIds = if (isSelected) {
+                                    selectedThreadIds - thread.threadId
+                                } else {
+                                    selectedThreadIds + thread.threadId
+                                }
+                            },
+                            onClick = {
+                                if (isSelectionMode) {
+                                    selectedThreadIds = if (isSelected) {
+                                        selectedThreadIds - thread.threadId
+                                    } else {
+                                        selectedThreadIds + thread.threadId
+                                    }
+                                } else {
+                                    onOpenThread(thread)
+                                }
+                            }
+                        )
+                    }
+                }
             }
         }
-    }
 
-    // Delete Thread Confirmation Dialog
-    threadToDelete?.let { thread ->
-        AlertDialog(
-            onDismissRequest = { threadToDelete = null },
-            title = { Text("Delete Conversation") },
-            text = {
-                Text("Delete conversation with ${thread.displayName}? This will remove all messages in this thread.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteThread(thread)
-                        threadToDelete = null
-                    }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { threadToDelete = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
+        // Start Chat FAB
+        FloatingActionButton(
+            onClick = onStartNewChat,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp)
+                .testTag("start_chat_fab"),
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Edit,
+                contentDescription = "Start new chat"
+            )
+        }
     }
 }
 
-/**
- * Global Swipe-Down App Alerts Drawer that can be pulled down from any screen in the app
- * (Messages, Calls, Dialer, Contacts, Clone Space, Browser, Settings, and inside any Cloned App)
- * and closed via the small 'X' button.
- */
 @Composable
 fun AppAlertsDrawerOverlay(
     isOpen: Boolean,
@@ -828,18 +847,24 @@ fun NotificationCard(
 @Composable
 fun SmsThreadItem(
     thread: SmsThread,
+    isSelected: Boolean,
+    onToggleSelection: () -> Unit,
     onClick: () -> Unit,
-    onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = { onToggleSelection() },
+                    onTap = { onClick() }
+                )
+            }
             .testTag("sms_thread_${thread.threadId}"),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
@@ -850,7 +875,20 @@ fun SmsThreadItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            ContactAvatar(nameOrNumber = thread.displayName, size = 46.dp)
+            if (isSelected) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(46.dp),
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("✓", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    }
+                }
+            } else {
+                ContactAvatar(nameOrNumber = thread.displayName, size = 46.dp)
+            }
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(
@@ -891,7 +929,7 @@ fun SmsThreadItem(
                         modifier = Modifier.weight(1f)
                     )
 
-                    if (thread.unreadCount > 0) {
+                    if (thread.unreadCount > 0 && !isSelected) {
                         Surface(
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.primary,
@@ -906,20 +944,6 @@ fun SmsThreadItem(
                         }
                     }
                 }
-            }
-
-            IconButton(
-                onClick = onDeleteClick,
-                modifier = Modifier
-                    .size(36.dp)
-                    .testTag("delete_thread_${thread.threadId}")
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete thread",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    modifier = Modifier.size(18.dp)
-                )
             }
         }
     }

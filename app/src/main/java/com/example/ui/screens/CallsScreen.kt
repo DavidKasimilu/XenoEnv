@@ -164,6 +164,7 @@ fun CallsScreen(
         ContactHistoryView(
             contactCall = selectedCallForHistory!!,
             allLogs = callLogs,
+            availableSims = availableSims,
             onBack = { selectedCallForHistory = null },
             onCall = { num, name -> placeCall(num, name) },
             onMessage = { num, name -> onStartSms(num, name) },
@@ -416,6 +417,7 @@ fun CallsScreen(
                             RecentsCallCard(
                                 entry = entry,
                                 isExpanded = isExpanded,
+                                availableSims = availableSims,
                                 onClick = {
                                     expandedLogId = if (isExpanded) null else entry.id
                                 },
@@ -517,6 +519,7 @@ private fun FavoriteContactItem(
 private fun RecentsCallCard(
     entry: CallLogEntry,
     isExpanded: Boolean,
+    availableSims: List<SimCardInfo>,
     onClick: () -> Unit,
     onCallClick: () -> Unit,
     onMessageClick: () -> Unit,
@@ -604,8 +607,8 @@ private fun RecentsCallCard(
                         }
 
                         // SIM Name in pink (Screenshot 3 & 7)
-                        val simName = remember(entry.simSlot) {
-                            if (entry.simSlot == 1) "Saf 04284530" else "Airtel"
+                        val simName = remember(entry.simSlot, availableSims) {
+                            availableSims.find { it.subscriptionId == entry.simSlot }?.carrierName ?: "SIM ${entry.simSlot + 1}"
                         }
                         Text(
                             text = simName,
@@ -715,6 +718,7 @@ private fun RecentsCallCard(
 fun ContactHistoryView(
     contactCall: CallLogEntry,
     allLogs: List<CallLogEntry>,
+    availableSims: List<SimCardInfo>,
     onBack: () -> Unit,
     onCall: (String, String?) -> Unit,
     onMessage: (String, String?) -> Unit,
@@ -886,7 +890,7 @@ fun ContactHistoryView(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "Airtel",
+                                                text = availableSims.find { it.subscriptionId == log.simSlot }?.carrierName ?: "SIM ${log.simSlot + 1}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color(0xFFFF4081),
                                                 fontWeight = FontWeight.Medium

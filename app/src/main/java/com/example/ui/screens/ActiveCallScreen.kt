@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.telecom.CallPhase
 import com.example.telecom.OngoingCallHelper
+import com.example.telecom.TelecomHelper
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -241,8 +242,11 @@ fun ActiveCallScreen(
                             fontWeight = FontWeight.Normal
                         )
                     )
+                    val simCarrier = remember(context) {
+                        TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
+                    }
                     Text(
-                        text = "Airtel",
+                        text = simCarrier,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontSize = 15.sp,
                             color = Color(0xFFF06292), // Pink / Magenta carrier color

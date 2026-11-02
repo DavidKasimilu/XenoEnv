@@ -108,45 +108,18 @@ fun SpaceSandboxScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp)
             .testTag("space_sandbox_screen")
     ) {
-        // Minimal Header: Back button, Title, and + Icon
+        // Minimal Header: Title
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 28.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(
-                    onClick = onBackToBrowser,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to Browser"
-                    )
-                }
-                Text(
-                    text = "Clone Space",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            FilledTonalIconButton(
-                onClick = onOpenAddClone,
-                modifier = Modifier
-                    .size(42.dp)
-                    .testTag("add_clone_header_btn")
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = "Add Clone"
-                )
-            }
+            Text(
+                text = "Apps",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
         }
 
         // Clean, Minimal App Icon Grid
@@ -185,14 +158,6 @@ fun SpaceSandboxScreen(
         }
 
         Spacer(modifier = Modifier.height(36.dp))
-
-        Text(
-            text = "Tap an icon to launch • Long-press to edit or delete",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 

@@ -69,7 +69,7 @@ fun XenoBottomBar(
         ),
         BottomBarItem(
             tab = XenoTab.CLONE_SPACE,
-            label = "Clone Space",
+            label = "Space",
             selectedIcon = Icons.Filled.Layers,
             unselectedIcon = Icons.Outlined.Layers
         )

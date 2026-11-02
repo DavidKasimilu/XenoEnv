@@ -203,9 +203,11 @@ fun InAppCallNotificationCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
+                        val simCarrier = remember(context) {
+                            com.example.telecom.TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
+                        }
                         Text(
-                            text = "Calling via Airtel",
+                            text = "Calling via $simCarrier",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = Color(0xFFB0B0B0),
                                 fontSize = 13.sp
