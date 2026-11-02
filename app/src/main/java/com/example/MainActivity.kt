@@ -805,8 +805,8 @@ fun XenoApp(
             onMarkSmsRead = { viewModel.markSmsPopupAsRead(it) },
             onReplySms = { viewModel.replySmsPopup(it) },
             onDismissSms = { viewModel.dismissSmsPopup() },
-            onAcceptCall = { viewModel.answerIncomingCall() },
-            onDeclineCall = { viewModel.declineIncomingCall() },
+            onAcceptCall = { viewModel.acceptCallPopup(it) },
+            onDeclineCall = { viewModel.declineCallPopup(it) },
             onDismissCall = { viewModel.dismissIncomingCallPopup() },
             onExpandCall = { viewModel.openFullScreenIncomingCall(it.callerNumber, it.callerName) },
             modifier = Modifier

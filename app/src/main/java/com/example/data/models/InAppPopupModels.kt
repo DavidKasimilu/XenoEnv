@@ -15,5 +15,6 @@ data class IncomingCallPopup(
     val id: String = UUID.randomUUID().toString(),
     val callerName: String?,
     val callerNumber: String,
+    val carrierName: String? = null,
     val timestamp: Long = System.currentTimeMillis()
 )

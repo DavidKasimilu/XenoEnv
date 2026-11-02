@@ -243,14 +243,14 @@ fun ActiveCallScreen(
                         )
                     )
                     val simCarrier = remember(context) {
-                        TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
+                        TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM"
                     }
                     Text(
                         text = simCarrier,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontSize = 15.sp,
-                            color = Color(0xFFF06292), // Pink / Magenta carrier color
-                            fontWeight = FontWeight.Medium
+                            color = Color(0xFF66BB6A),
+                            fontWeight = FontWeight.Bold
                         )
                     )
                 }

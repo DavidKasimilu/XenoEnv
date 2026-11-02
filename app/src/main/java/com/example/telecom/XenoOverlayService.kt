@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
 import android.provider.Settings
+import android.telecom.TelecomManager
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -59,12 +60,22 @@ object XenoOverlayService {
             val overlayView = inflater.inflate(R.layout.notification_custom_call, container, false)
             container.addView(overlayView)
 
-            val badgeTv = overlayView.findViewById<TextView>(R.id.notif_call_badge)
             val avatarTv = overlayView.findViewById<TextView>(R.id.notif_call_avatar_text)
             val nameTv = overlayView.findViewById<TextView>(R.id.notif_caller_name)
             val numberTv = overlayView.findViewById<TextView>(R.id.notif_caller_number)
             val btnDecline = overlayView.findViewById<View>(R.id.btn_call_decline)
             val btnAnswer = overlayView.findViewById<View>(R.id.btn_call_answer)
+
+            val telecomManager = appContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            val carrierName = try {
+                val call = XenoInCallService.currentCall
+                val handle = call?.details?.accountHandle
+                if (handle != null) {
+                    telecomManager?.getPhoneAccount(handle)?.label?.toString()
+                } else null
+            } catch (_: Exception) {
+                null
+            } ?: "SIM 1"
 
             val rawName = if (!callerName.isNullOrBlank()) {
                 callerName
@@ -73,16 +84,13 @@ object XenoOverlayService {
             }
             val displayName = rawName
             val initials = XenoNotificationHelper.extractInitials(rawName, callerNumber)
-            val subtitle = if (rawName != callerNumber && callerNumber.isNotBlank()) {
-                "Incoming Voice Call • $callerNumber"
-            } else {
-                "Incoming Voice Call"
-            }
+            
+            val titleWithCarrier = "$displayName ($carrierName)"
+            val subtitleWithCarrier = "Incoming call via $carrierName"
 
-            badgeTv?.text = "INCOMING VOICE CALL"
             avatarTv?.text = initials
-            nameTv?.text = displayName
-            numberTv?.text = subtitle
+            nameTv?.text = titleWithCarrier
+            numberTv?.text = subtitleWithCarrier
 
             overlayView.setOnClickListener {
                 dismissCallOverlay(appContext)

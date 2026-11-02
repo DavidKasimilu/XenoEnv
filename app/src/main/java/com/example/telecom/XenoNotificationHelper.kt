@@ -11,6 +11,7 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
+import android.telecom.TelecomManager
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -398,22 +399,33 @@ object XenoNotificationHelper {
         )
 
         val displayTitle = resolvedName
-        val badgeText = "INCOMING VOICE CALL"
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+        val carrierName = try {
+            val call = XenoInCallService.currentCall
+            val handle = call?.details?.accountHandle
+            if (handle != null) {
+                telecomManager?.getPhoneAccount(handle)?.label?.toString()
+            } else null
+        } catch (_: Exception) {
+            null
+        } ?: "SIM 1"
+
+        val titleWithCarrier = "$displayTitle ($carrierName)"
+        val subtitleWithCarrier = "Incoming call via $carrierName"
 
         val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)
-            setTextViewText(R.id.notif_caller_name, displayTitle)
-            setTextViewText(R.id.notif_caller_number, subtitleText)
+            setTextViewText(R.id.notif_caller_name, titleWithCarrier)
+            setTextViewText(R.id.notif_caller_number, subtitleWithCarrier)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
             setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)
         }
 
         val callExpandedViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
-            setTextViewText(R.id.notif_call_badge, badgeText)
             setTextViewText(R.id.notif_call_avatar_text, initials)
             setTextViewText(R.id.notif_caller_name, displayTitle)
-            setTextViewText(R.id.notif_caller_number, subtitleText)
+            setTextViewText(R.id.notif_caller_number, subtitleWithCarrier)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
             setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)

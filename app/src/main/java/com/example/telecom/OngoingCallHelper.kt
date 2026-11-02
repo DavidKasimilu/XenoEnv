@@ -269,6 +269,8 @@ object OngoingCallHelper {
         val wakeForFullScreen = !showPopup || wasScreenOffOrLocked
         val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground
 
+        val carrierName = resolveCarrierName(context, XenoInCallService.currentCall)
+
         startIncomingSession(
             phoneNumber = cleanNumber,
             contactName = resolvedName,
@@ -277,7 +279,8 @@ object OngoingCallHelper {
 
         val popup = IncomingCallPopup(
             callerName = resolvedName,
-            callerNumber = cleanNumber
+            callerNumber = cleanNumber,
+            carrierName = carrierName
         )
 
         if (!wakeForFullScreen) {
@@ -313,10 +316,21 @@ object OngoingCallHelper {
         return popup
     }
 
-    fun showIncomingCallPopup(phoneNumber: String, contactName: String?): IncomingCallPopup {
+    private fun resolveCarrierName(context: Context, call: Call?): String? {
+        val handle = call?.details?.accountHandle ?: return null
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+        return try {
+            telecomManager?.getPhoneAccount(handle)?.label?.toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun showIncomingCallPopup(context: Context, phoneNumber: String, contactName: String?, carrierName: String? = null): IncomingCallPopup {
         val popup = IncomingCallPopup(
             callerName = contactName?.takeIf { it.isNotBlank() },
-            callerNumber = phoneNumber
+            callerNumber = phoneNumber,
+            carrierName = carrierName ?: resolveCarrierName(context, XenoInCallService.currentCall)
         )
         _incomingPopupFlow.value = popup
         return popup

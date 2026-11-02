@@ -89,6 +89,7 @@ fun InAppNotificationOverlay(
             incomingCall?.let { call ->
                 InAppCallNotificationCard(
                     popup = call,
+                    onAnswer = { onAcceptCall(call) },
                     onHangUp = { onDeclineCall(call) },
                     onExpand = { onExpandCall(call) }
                 )
@@ -120,18 +121,22 @@ fun InAppNotificationOverlay(
 @Composable
 fun InAppCallNotificationCard(
     popup: IncomingCallPopup,
+    onAnswer: () -> Unit,
     onHangUp: () -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var isExpanded by remember { mutableStateOf(true) }
     val displayName = popup.callerName?.takeIf { it.isNotBlank() } ?: popup.callerNumber
     val initial = displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "I"
+    
+    val simCarrier = remember(context) {
+        com.example.telecom.TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
+    }
 
     Card(
-        shape = RoundedCornerShape(26.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF303030)),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF222222)),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         modifier = modifier
             .fillMaxWidth()
@@ -141,195 +146,149 @@ fun InAppCallNotificationCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 20.dp, vertical = 18.dp)
         ) {
-            // Top Row: Avatar with Phone Badge + Name/Subtitle + Chevron
+            // Top Row: Avatar + Name/SIM + Status
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    // Avatar with phone badge
-                    Box(modifier = Modifier.size(46.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFB71C1C)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = initial,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
-                            )
-                        }
-
-                        // Bottom-right phone badge
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF212121))
-                                .align(Alignment.BottomEnd),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Call,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(11.dp)
-                            )
-                        }
+                // Avatar with red background and phone badge
+                Box(modifier = Modifier.size(54.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF8B1D1D)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = initial,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 24.sp
+                        )
                     }
 
-                    // Contact Name & Status
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "$displayName • Phone",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    fontSize = 15.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        val simCarrier = remember(context) {
-                            com.example.telecom.TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
-                        }
+                    // Overlapping phone badge (bottom right)
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF333333))
+                            .align(Alignment.BottomEnd)
+                            .border(1.dp, Color(0xFF222222), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "Calling via $simCarrier",
+                            text = "$displayName ($simCarrier)",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 17.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = " • Phone",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = Color(0xFFB0B0B0),
-                                fontSize = 13.sp
+                                color = Color(0xFFAAAAAA),
+                                fontSize = 14.sp
+                            )
+                        )
+                    }
+                    Text(
+                        text = "Incoming call via $simCarrier",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = Color(0xFFBBBBBB),
+                            fontSize = 15.sp
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Action Pills: Decline (Red) and Answer (Green)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Decline Button
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFFEF5350),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onHangUp() }
+                        .testTag("call_notification_decline")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CallEnd,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Decline",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                fontSize = 15.sp
                             )
                         )
                     }
                 }
 
-                IconButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.size(32.dp)
+                // Answer Button
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF66BB6A),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onAnswer() }
+                        .testTag("call_notification_answer")
                 ) {
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "Toggle notification details",
-                        tint = Color(0xFFCCCCCC),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            if (isExpanded) {
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Bottom Action Pills Row: Hang Up (Red), Speaker (Grey), Mute (Grey) (Screenshot 5)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 1. Hang Up Pill (Red)
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFFEF5350),
-                        modifier = Modifier
-                            .clickable { onHangUp() }
-                            .testTag("call_notification_hang_up")
+                    Row(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CallEnd,
-                                contentDescription = null,
-                                tint = Color.Black,
-                                modifier = Modifier.size(16.dp)
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Answer",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                fontSize = 15.sp
                             )
-                            Text(
-                                text = "Hang Up",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.Black,
-                                    fontSize = 13.sp
-                                )
-                            )
-                        }
-                    }
-
-                    // 2. Speaker Pill (Grey)
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFF4A4A4A),
-                        modifier = Modifier
-                            .clickable {
-                                OngoingCallHelper.toggleSpeaker(context)
-                            }
-                            .testTag("call_notification_speaker")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.VolumeUp,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Speaker",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color.White,
-                                    fontSize = 13.sp
-                                )
-                            )
-                        }
-                    }
-
-                    // 3. Mute Pill (Grey)
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFF4A4A4A),
-                        modifier = Modifier
-                            .clickable {
-                                OngoingCallHelper.toggleMute(context)
-                            }
-                            .testTag("call_notification_mute")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Mic,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Mute",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color.White,
-                                    fontSize = 13.sp
-                                )
-                            )
-                        }
+                        )
                     }
                 }
             }

@@ -85,7 +85,7 @@ data class FavoriteContact(
     val name: String,
     val number: String,
     val color: Color,
-    val simLabel: String = "Airtel"
+    val simLabel: String? = null
 )
 
 @Composable
