@@ -522,7 +522,7 @@ object OngoingCallHelper {
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
         configureCallAudioMode(context, active = true)
-        XenoInCallService.answerCall()
+        XenoInCallService.answerCall(context)
 
         val now = System.currentTimeMillis()
         val current = _sessionFlow.value
@@ -567,7 +567,7 @@ object OngoingCallHelper {
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
-        XenoInCallService.rejectCall()
+        XenoInCallService.rejectCall(context)
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()
@@ -586,7 +586,7 @@ object OngoingCallHelper {
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
-        XenoInCallService.endCall()
+        XenoInCallService.endCall(context)
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()

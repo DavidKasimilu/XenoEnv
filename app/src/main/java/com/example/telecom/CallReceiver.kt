@@ -21,12 +21,13 @@ class CallReceiver : BroadcastReceiver() {
 
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
-                    if (incomingNumber.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(incomingNumber)) {
+                    val phone = incomingNumber.trim().ifEmpty { "Unknown Caller" }
+                    if (OngoingCallHelper.shouldProcessIncomingCall(phone)) {
                         IncomingCallPopupHelper.handleIncomingCall(
                             context = context.applicationContext,
-                            phoneNumber = incomingNumber
+                            phoneNumber = phone
                         )
-                        XenoInCallService.onIncomingCallListener?.invoke(incomingNumber)
+                        XenoInCallService.onIncomingCallListener?.invoke(phone)
                     }
                 }
                 TelephonyManager.EXTRA_STATE_OFFHOOK -> {

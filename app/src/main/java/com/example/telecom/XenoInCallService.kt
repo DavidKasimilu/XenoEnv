@@ -1,11 +1,16 @@
 package com.example.telecom
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
+import android.telecom.TelecomManager
 import android.telecom.VideoProfile
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.MainActivity
 
 class XenoInCallService : InCallService() {
@@ -48,24 +53,59 @@ class XenoInCallService : InCallService() {
             }
         }
 
-        fun answerCall() {
+        fun answerCall(context: Context? = null) {
             try {
-                currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
+                if (currentCall != null) {
+                    currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
+                    Log.d("XenoInCallService", "Answered call via currentCall.answer()")
+                    return
+                }
             } catch (e: Exception) {
-                Log.w("XenoInCallService", "Failed to answer call: ${e.message}")
+                Log.w("XenoInCallService", "Failed to answer call via currentCall: ${e.message}")
+            }
+
+            // Fallback: TelecomManager.acceptRingingCall()
+            if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                    val hasPerm = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        telecomManager?.acceptRingingCall()
+                        Log.d("XenoInCallService", "Answered call via TelecomManager.acceptRingingCall()")
+                    }
+                } catch (e: Exception) {
+                    Log.w("XenoInCallService", "Failed to answer call via TelecomManager: ${e.message}")
+                }
             }
         }
 
-        fun rejectCall() {
+        fun rejectCall(context: Context? = null) {
             try {
-                currentCall?.reject(false, null)
+                if (currentCall != null) {
+                    currentCall?.reject(false, null)
+                    currentCall = null
+                    return
+                }
             } catch (e: Exception) {
-                Log.w("XenoInCallService", "Failed to reject call: ${e.message}")
+                Log.w("XenoInCallService", "Failed to reject call via currentCall: ${e.message}")
+            }
+
+            if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                    val hasPerm = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        telecomManager?.endCall()
+                        Log.d("XenoInCallService", "Rejected/ended call via TelecomManager.endCall()")
+                    }
+                } catch (e: Exception) {
+                    Log.w("XenoInCallService", "Failed to end call via TelecomManager: ${e.message}")
+                }
             }
             currentCall = null
         }
 
-        fun endCall() {
+        fun endCall(context: Context? = null) {
             try {
                 val call = currentCall
                 if (call != null) {
@@ -74,9 +114,23 @@ class XenoInCallService : InCallService() {
                     } else {
                         call.disconnect()
                     }
+                    currentCall = null
+                    return
                 }
             } catch (e: Exception) {
                 Log.w("XenoInCallService", "Failed to disconnect call: ${e.message}")
+            }
+
+            if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                    val hasPerm = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        telecomManager?.endCall()
+                    }
+                } catch (e: Exception) {
+                    Log.w("XenoInCallService", "Failed to end call via TelecomManager: ${e.message}")
+                }
             }
             currentCall = null
         }

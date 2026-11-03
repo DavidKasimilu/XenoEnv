@@ -368,13 +368,17 @@ fun XenoApp(
     // Handle intents (incoming calls, SMS reply, tel:, smsto:)
     LaunchedEffect(initialIntent, intentTriggerTick) {
         initialIntent?.let { intent ->
-            val incomingNumber = intent.getStringExtra("incoming_number")
-            if (!incomingNumber.isNullOrBlank()) {
+            val hasIncomingCallIntent = intent.hasExtra("incoming_number") ||
+                intent.getBooleanExtra("auto_answer", false) ||
+                intent.getBooleanExtra("open_full_screen_call", false)
+            if (hasIncomingCallIntent) {
+                val incomingNumber = intent.getStringExtra("incoming_number")?.takeIf { it.isNotBlank() } ?: "Unknown Caller"
                 val callerName = intent.getStringExtra("caller_name")
                 val autoAnswer = intent.getBooleanExtra("auto_answer", false)
                 intent.removeExtra("incoming_number")
                 intent.removeExtra("auto_answer")
                 intent.removeExtra("wake_full_screen_call")
+                intent.removeExtra("open_full_screen_call")
                 if (autoAnswer) {
                     viewModel.answerIncomingCallFromIntent(incomingNumber, callerName)
                 } else {
@@ -628,7 +632,7 @@ fun XenoApp(
                                 thread = uiState.activeChatThread!!,
                                 messages = uiState.activeChatMessages,
                                 onBackClick = { viewModel.closeChat() },
-                                onSendMessage = { viewModel.sendChatMessage(it) },
+                                onSendMessage = { text, sim -> viewModel.sendChatMessage(text, sim) },
                                 onDeleteMessage = { viewModel.deleteChatMessage(it) },
                                 onDeleteThread = {
                                     viewModel.deleteChatThread(uiState.activeChatThread!!)

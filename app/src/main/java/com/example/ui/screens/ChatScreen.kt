@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,11 +104,43 @@ fun ChatScreen(
     onStartCall: ((String, String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    ChatScreen(
+        thread = thread,
+        messages = messages,
+        onBackClick = onBackClick,
+        onSendMessage = { text, _ -> onSendMessage(text) },
+        onDeleteMessage = onDeleteMessage,
+        onDeleteThread = onDeleteThread,
+        onStartCall = onStartCall,
+        modifier = modifier
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChatScreen(
+    thread: SmsThread,
+    messages: List<SmsMessage>,
+    onBackClick: () -> Unit,
+    onSendMessage: (String, SimCardInfo?) -> Unit,
+    onDeleteMessage: (Long) -> Unit,
+    onDeleteThread: () -> Unit,
+    onStartCall: ((String, String?) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val systemClipboard = remember(context) {
         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     }
+
+    val prefs = remember(context) {
+        context.getSharedPreferences("xeno_sim_prefs", Context.MODE_PRIVATE)
+    }
+    var selectedSimSubId by remember {
+        mutableStateOf(prefs.getInt("default_sms_sub_id", -1))
+    }
+    var showSimPickerMenu by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
     var showMenu by remember { mutableStateOf(false) }
@@ -118,6 +151,14 @@ fun ChatScreen(
 
     LaunchedEffect(Unit) {
         availableSims = TelecomHelper.getAvailableSimCards(context)
+    }
+
+    val activeSim = remember(selectedSimSubId, availableSims) {
+        if (selectedSimSubId != -1) {
+            availableSims.find { it.subscriptionId == selectedSimSubId } ?: availableSims.firstOrNull()
+        } else {
+            availableSims.firstOrNull()
+        }
     }
 
     // Clipboard & Delivery Feedback UI state
@@ -443,7 +484,7 @@ fun ChatScreen(
                                 message = msg,
                                 availableSims = availableSims,
                                 onRetryClick = {
-                                    onSendMessage(msg.body)
+                                    onSendMessage(msg.body, activeSim)
                                 },
                                 onClick = {},
                                 onLongClick = { selectedMessageForAction = msg }
@@ -454,7 +495,7 @@ fun ChatScreen(
                             message = msg,
                             availableSims = availableSims,
                             onRetryClick = {
-                                onSendMessage(msg.body)
+                                onSendMessage(msg.body, activeSim)
                             },
                             onClick = {},
                             onLongClick = { selectedMessageForAction = msg }
@@ -558,7 +599,7 @@ fun ChatScreen(
                                             fontWeight = FontWeight.Bold,
                                             color = contentColor,
                                             modifier = Modifier.clickable {
-                                                onSendMessage(outgoing.body)
+                                                onSendMessage(outgoing.body, activeSim)
                                             }
                                         )
                                     }
@@ -607,6 +648,114 @@ fun ChatScreen(
                         maxLines = 4
                     )
 
+                    // Select SIM for SMS icon next to the send icon
+                    Box {
+                        Surface(
+                            modifier = Modifier
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .clickable { showSimPickerMenu = true }
+                                .testTag("chat_select_sim_button"),
+                            shape = RoundedCornerShape(22.dp),
+                            color = Color(0xFF28282D),
+                            border = BorderStroke(1.dp, Color(0xFF3E3E44))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SimCard,
+                                    contentDescription = "Select SIM for SMS",
+                                    tint = Color(0xFFFF4081),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                val activeIndex = if (activeSim != null) (availableSims.indexOf(activeSim).coerceAtLeast(0) + 1) else 1
+                                val label = activeSim?.carrierName?.takeIf { it.isNotBlank() && !it.startsWith("SIM ") }
+                                    ?: "SIM $activeIndex"
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Dropdown menu to select default SIM for SMS
+                        DropdownMenu(
+                            expanded = showSimPickerMenu,
+                            onDismissRequest = { showSimPickerMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Select Default SIM for SMS",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                onClick = {},
+                                enabled = false
+                            )
+                            HorizontalDivider()
+                            val simList = if (availableSims.isNotEmpty()) availableSims else listOf(
+                                SimCardInfo(
+                                    phoneAccountHandle = null,
+                                    carrierName = "SIM 1",
+                                    subscriptionId = 0
+                                )
+                            )
+                            simList.forEachIndexed { idx, sim ->
+                                val isSelected = (activeSim?.subscriptionId == sim.subscriptionId)
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Filled.SimCard,
+                                            contentDescription = null,
+                                            tint = if (isSelected) Color(0xFFFF4081) else Color.Gray,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = "Selected",
+                                                tint = Color(0xFFFF4081),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    },
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "SIM ${idx + 1}: ${sim.carrierName}",
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                            val phone = sim.phoneNumber?.takeIf { it.isNotBlank() }
+                                            if (phone != null) {
+                                                Text(
+                                                    text = phone,
+                                                    fontSize = 11.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedSimSubId = sim.subscriptionId
+                                        prefs.edit().putInt("default_sms_sub_id", sim.subscriptionId).apply()
+                                        showSimPickerMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     Surface(
                         modifier = Modifier
                             .size(48.dp)
@@ -618,7 +767,7 @@ fun ChatScreen(
                                 val messageToSend = inputText
                                 inputText = ""
                                 showDeliveryBanner = true
-                                onSendMessage(messageToSend)
+                                onSendMessage(messageToSend, activeSim)
                             }
                         }
                     ) {

@@ -541,6 +541,8 @@ class SmsRepository(
         text: String,
         currentThreadId: Long?,
         messageId: Long = System.nanoTime(),
+        subscriptionId: Int? = null,
+        simName: String? = null,
         onStatusUpdate: ((SmsDeliveryStatus) -> Unit)? = null
     ): Result<SmsMessage> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
@@ -560,7 +562,17 @@ class SmsRepository(
         // Attempt actual SmsManager dispatch if permission is available
         if (hasSendPermission) {
             try {
-                val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val smsManager: SmsManager = if (subscriptionId != null && subscriptionId != -1) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        context.getSystemService(SmsManager::class.java).createForSubscriptionId(subscriptionId)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                        @Suppress("DEPRECATION")
+                        SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        SmsManager.getDefault()
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     context.getSystemService(SmsManager::class.java)
                 } else {
                     @Suppress("DEPRECATION")
@@ -606,6 +618,10 @@ class SmsRepository(
                         if (currentThreadId != null && currentThreadId > 0) {
                             put(Telephony.Sms.THREAD_ID, currentThreadId)
                         }
+                        if (subscriptionId != null && subscriptionId != -1) {
+                            put("sub_id", subscriptionId)
+                            put("subscription_id", subscriptionId)
+                        }
                     }
                     contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
                 } catch (e: Exception) {
@@ -618,8 +634,20 @@ class SmsRepository(
 
         // Create the message object
         val availableSims = com.example.telecom.TelecomHelper.getAvailableSimCards(context)
-        val defaultSim = availableSims.firstOrNull { it.carrierName.isNotBlank() && !it.carrierName.startsWith("SIM ") }
+        val matchedSim = if (subscriptionId != null && subscriptionId != -1) {
+            availableSims.find { it.subscriptionId == subscriptionId }
+        } else null
+        val defaultSim = matchedSim
+            ?: availableSims.firstOrNull { it.carrierName.isNotBlank() && !it.carrierName.startsWith("SIM ") }
             ?: availableSims.firstOrNull()
+
+        val resolvedSimName = simName?.takeIf { it.isNotBlank() }
+            ?: defaultSim?.carrierName
+            ?: "SIM 1"
+        val resolvedSubId = subscriptionId?.takeIf { it != -1 }
+            ?: defaultSim?.subscriptionId
+            ?: 0
+
         val effectiveThreadId = currentThreadId ?: destinationAddress.hashCode().toLong()
         val newMessage = SmsMessage(
             id = messageId,
@@ -630,8 +658,8 @@ class SmsRepository(
             isSent = true,
             read = true,
             deliveryStatus = SmsDeliveryStatus.SENDING,
-            simName = defaultSim?.carrierName ?: "SIM 1",
-            subId = defaultSim?.subscriptionId ?: 0
+            simName = resolvedSimName,
+            subId = resolvedSubId
         )
 
         synchronized(inMemoryMessages) {

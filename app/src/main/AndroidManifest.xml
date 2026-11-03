@@ -217,8 +217,19 @@
             android:name="com.example.telecom.XenoNotificationActionReceiver"
             android:exported="true">
             <intent-filter>
+                <action android:name="com.example.telecom.ACTION_ANSWER_CALL" />
+                <action android:name="com.example.telecom.ACTION_DECLINE_CALL" />
                 <action android:name="com.example.telecom.ACTION_MARK_SMS_READ" />
                 <action android:name="com.example.telecom.ACTION_REPLY_SMS" />
+            </intent-filter>
+        </receiver>
+
+        <!-- CallReceiver for detecting phone state changes (incoming calls across apps and lockscreen) -->
+        <receiver
+            android:name="com.example.telecom.CallReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
             </intent-filter>
         </receiver>
 

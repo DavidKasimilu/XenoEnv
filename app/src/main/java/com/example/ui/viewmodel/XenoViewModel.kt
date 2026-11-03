@@ -808,10 +808,18 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun sendChatMessage(text: String) {
+    fun sendChatMessage(text: String, simCard: com.example.telecom.SimCardInfo? = null) {
         val activeThread = _uiState.value.activeChatThread ?: return
         val cleanText = text.trim()
         if (cleanText.isBlank()) return
+
+        val chosenSim = simCard ?: run {
+            val prefs = getApplication<android.app.Application>().getSharedPreferences("xeno_sim_prefs", Context.MODE_PRIVATE)
+            val subId = prefs.getInt("default_sms_sub_id", -1)
+            val available = com.example.telecom.TelecomHelper.getAvailableSimCards(getApplication())
+            if (subId != -1) available.find { it.subscriptionId == subId } ?: available.firstOrNull()
+            else available.firstOrNull()
+        }
 
         val msgId = System.nanoTime()
         val now = System.currentTimeMillis()
@@ -823,7 +831,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             date = now,
             isSent = true,
             read = true,
-            deliveryStatus = SmsDeliveryStatus.SENDING
+            deliveryStatus = SmsDeliveryStatus.SENDING,
+            simName = chosenSim?.carrierName ?: "SIM 1",
+            subId = chosenSim?.subscriptionId ?: 0
         )
 
         val initialList = _uiState.value.activeChatMessages + pendingMsg
@@ -845,6 +855,8 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 text = cleanText,
                 currentThreadId = activeThread.threadId,
                 messageId = msgId,
+                subscriptionId = chosenSim?.subscriptionId,
+                simName = chosenSim?.carrierName,
                 onStatusUpdate = { status ->
                     viewModelScope.launch(Dispatchers.Main) {
                         applyMessageDeliveryStatus(msgId, status)

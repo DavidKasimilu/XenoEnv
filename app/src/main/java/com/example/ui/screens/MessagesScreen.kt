@@ -375,28 +375,7 @@ fun AppAlertsDrawerOverlay(
             shape = shape
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Drawer Bar with Title and Speed Boost
-                Surface(
-                    tonalElevation = 2.dp,
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Header removed as requested
-
-
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                // Existing App Alerts Drawer Body with swipe-up-to-dismiss support
+                // Drawer Body with swipe-up-to-dismiss support
                 DeviceNotificationsWindow(
                     notifications = notifications,
                     hasNotificationAccess = hasNotificationAccess,
@@ -470,7 +449,7 @@ fun DeviceNotificationsWindow(
                 QuickTogglesPanel(modifier = Modifier.padding(bottom = 4.dp))
             }
 
-            // 2. Permission Notice / Status Banner
+            // Permission Notice / Status Banner
             item(key = "permission_status") {
                 if (!hasNotificationAccess) {
                     Card(
@@ -503,7 +482,7 @@ fun DeviceNotificationsWindow(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Android 14 restricts notification access on sideloaded apps. Follow these 3 simple steps:",
+                                text = "Android 14 restricts notification access on sideloaded apps. Follow these simple steps:",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                             )
@@ -542,10 +521,6 @@ fun DeviceNotificationsWindow(
                     }
                 }
             }
-
-            // Clean Header Bar with Total Count and Clear All
-            // Header and Power icon removed as requested
-
 
             // Alerts Items or Clean Empty State
             if (notifications.isEmpty()) {
