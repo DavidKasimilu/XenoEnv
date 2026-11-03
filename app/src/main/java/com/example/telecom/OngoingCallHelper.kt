@@ -38,6 +38,7 @@ enum class CallPhase {
 data class OngoingCallSession(
     val phoneNumber: String = "",
     val contactName: String? = null,
+    val carrierName: String? = null,
     val isIncoming: Boolean = false,
     val phase: CallPhase = CallPhase.IDLE,
     val connectedAtMillis: Long? = null,
@@ -292,7 +293,7 @@ object OngoingCallHelper {
         }
     }
 
-    fun startOutgoingSession(phoneNumber: String, contactName: String?) {
+    fun startOutgoingSession(phoneNumber: String, contactName: String?, carrierName: String? = null) {
         stopDurationTimer()
         _incomingPopupFlow.value = null
         val existingCall = XenoInCallService.currentCall
@@ -307,6 +308,7 @@ object OngoingCallHelper {
         _sessionFlow.value = OngoingCallSession(
             phoneNumber = phoneNumber,
             contactName = contactName,
+            carrierName = carrierName,
             isIncoming = false,
             phase = if (isAlreadyActive) CallPhase.ACTIVE else CallPhase.OUTGOING_DIALING,
             connectedAtMillis = connectTime,
@@ -327,6 +329,7 @@ object OngoingCallHelper {
     fun startIncomingSession(
         phoneNumber: String,
         contactName: String?,
+        carrierName: String? = null,
         openFullScreenImmediately: Boolean = false
     ) {
         val current = _sessionFlow.value
@@ -340,8 +343,10 @@ object OngoingCallHelper {
             } else {
                 current.contactName
             }
+            val updatedCarrier = carrierName ?: current.carrierName
             _sessionFlow.value = current.copy(
                 contactName = updatedName,
+                carrierName = updatedCarrier,
                 isFullScreenCallVisible = current.isFullScreenCallVisible || openFullScreenImmediately || isAlreadyActive
             )
             return
@@ -358,6 +363,7 @@ object OngoingCallHelper {
         _sessionFlow.value = OngoingCallSession(
             phoneNumber = phoneNumber,
             contactName = contactName ?: current.contactName,
+            carrierName = carrierName ?: current.carrierName,
             isIncoming = true,
             phase = if (isAlreadyActive) CallPhase.ACTIVE else CallPhase.INCOMING_RINGING,
             connectedAtMillis = connectTime,

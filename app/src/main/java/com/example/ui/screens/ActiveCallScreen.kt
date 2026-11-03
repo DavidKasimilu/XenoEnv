@@ -242,7 +242,7 @@ fun ActiveCallScreen(
                             fontWeight = FontWeight.Normal
                         )
                     )
-                    val simCarrier = remember(callSession.carrierName, context) {
+                    val simCarrier: String = remember(callSession.carrierName, context) {
                         callSession.carrierName?.takeIf { it.isNotBlank() }
                             ?: TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName
                             ?: "SIM"

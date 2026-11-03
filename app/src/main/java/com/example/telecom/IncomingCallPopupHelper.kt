@@ -118,6 +118,7 @@ object IncomingCallPopupHelper {
         OngoingCallHelper.startIncomingSession(
             phoneNumber = cleanNumber,
             contactName = callerName,
+            carrierName = carrierName,
             openFullScreenImmediately = false
         )
 
