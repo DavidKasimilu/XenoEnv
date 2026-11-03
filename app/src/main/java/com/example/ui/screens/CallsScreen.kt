@@ -7,8 +7,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,7 +35,9 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallMade
 import androidx.compose.material.icons.filled.CallMissed
 import androidx.compose.material.icons.filled.CallReceived
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -44,6 +48,9 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -113,6 +120,17 @@ fun CallsScreen(
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
     var callNameTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
+    var selectedCallIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    val isSelectionMode = selectedCallIds.isNotEmpty()
+
+    BackHandler(enabled = isSelectionMode) {
+        selectedCallIds = emptySet()
+    }
+
+    LaunchedEffect(Unit) {
+        availableSims = TelecomHelper.getAvailableSimCards(context)
+    }
 
     LaunchedEffect(Unit, callLogs.size) {
         onMarkMissedSeen()
@@ -218,64 +236,131 @@ fun CallsScreen(
             .testTag("calls_screen")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1. Top Search Bar (Screenshot 3 & 7)
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(28.dp),
-                color = Color(0xFF232529)
-            ) {
-                Row(
+            // 1. Top Bar: Contextual Selection Bar or Search Bar
+            if (isSelectionMode) {
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    color = Color(0xFF232529)
                 ) {
-                    IconButton(
-                        onClick = onOpenContacts,
-                        modifier = Modifier.size(36.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Menu,
-                            contentDescription = "Menu / Contacts",
-                            tint = Color(0xFFB0B0B4),
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { selectedCallIds = emptySet() },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Cancel selection",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Search contacts",
-                                color = Color(0xFF8E8E93),
-                                fontSize = 16.sp
+                                text = "${selectedCallIds.size} selected",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent,
-                            cursorColor = Color.White,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
 
-                    if (searchQuery.isNotEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    val allIds = filteredLogs.map { it.id }.toSet()
+                                    selectedCallIds = if (selectedCallIds.size == allIds.size) emptySet() else allIds
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SelectAll,
+                                    contentDescription = "Select all",
+                                    tint = Color(0xFFB0B0B4),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showDeleteConfirmDialog = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = "Delete selected calls",
+                                    tint = Color(0xFFFF5252),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    color = Color(0xFF232529)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         IconButton(
-                            onClick = { searchQuery = "" },
+                            onClick = onOpenContacts,
                             modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Clear search",
-                                tint = Color(0xFF8E8E93),
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Filled.Menu,
+                                contentDescription = "Menu / Contacts",
+                                tint = Color(0xFFB0B0B4),
+                                modifier = Modifier.size(22.dp)
                             )
+                        }
+
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = {
+                                Text(
+                                    text = "Search contacts",
+                                    color = Color(0xFF8E8E93),
+                                    fontSize = 16.sp
+                                )
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = Color.Transparent,
+                                cursorColor = Color.White,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Clear search",
+                                    tint = Color(0xFF8E8E93),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -414,16 +499,35 @@ fun CallsScreen(
                             key = { idx, item -> "call_${item.id}_${item.number}_$idx" }
                         ) { _, entry ->
                             val isExpanded = expandedLogId == entry.id
+                            val isSelected = entry.id in selectedCallIds
                             RecentsCallCard(
                                 entry = entry,
                                 isExpanded = isExpanded,
+                                isSelected = isSelected,
+                                isSelectionMode = isSelectionMode,
                                 availableSims = availableSims,
                                 onClick = {
-                                    expandedLogId = if (isExpanded) null else entry.id
+                                    if (isSelectionMode) {
+                                        selectedCallIds = if (isSelected) {
+                                            selectedCallIds - entry.id
+                                        } else {
+                                            selectedCallIds + entry.id
+                                        }
+                                    } else {
+                                        expandedLogId = if (isExpanded) null else entry.id
+                                    }
+                                },
+                                onLongClick = {
+                                    selectedCallIds = if (isSelected) {
+                                        selectedCallIds - entry.id
+                                    } else {
+                                        selectedCallIds + entry.id
+                                    }
                                 },
                                 onCallClick = { placeCall(entry.number, entry.displayName) },
                                 onMessageClick = { onStartSms(entry.number, entry.displayName) },
-                                onHistoryClick = { selectedCallForHistory = entry }
+                                onHistoryClick = { selectedCallForHistory = entry },
+                                onDeleteClick = { onDeleteCall(entry) }
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                         }
@@ -431,6 +535,39 @@ fun CallsScreen(
                 }
             }
         }
+    }
+
+    // Delete Multiple Selected Calls Confirmation Dialog
+    if (showDeleteConfirmDialog && selectedCallIds.isNotEmpty()) {
+        val count = selectedCallIds.size
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete Call History", color = Color.White) },
+            text = {
+                Text(
+                    "Delete $count selected ${if (count > 1) "calls" else "call"} from call history?",
+                    color = Color(0xFFD0D0D4)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = callLogs.filter { it.id in selectedCallIds }
+                        toDelete.forEach { onDeleteCall(it) }
+                        selectedCallIds = emptySet()
+                        showDeleteConfirmDialog = false
+                    }
+                ) {
+                    Text("Delete", color = Color(0xFFFF5252), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFFB0B0B4))
+                }
+            },
+            containerColor = Color(0xFF232529)
+        )
     }
 
     // Dual-SIM Selector
@@ -515,15 +652,20 @@ private fun FavoriteContactItem(
 /**
  * Recents Call Card matching Screenshot 3, expandable inline to show Message & History (Screenshot 7)
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecentsCallCard(
     entry: CallLogEntry,
     isExpanded: Boolean,
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
     availableSims: List<SimCardInfo>,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onCallClick: () -> Unit,
     onMessageClick: () -> Unit,
-    onHistoryClick: () -> Unit
+    onHistoryClick: () -> Unit,
+    onDeleteClick: () -> Unit
 ) {
     val avatarColor = remember(entry.displayName) {
         val colors = listOf(
@@ -539,10 +681,15 @@ private fun RecentsCallCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .testTag("call_item_${entry.id}"),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E22))
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) Color(0xFF2E2E36) else Color(0xFF1E1E22)
+        )
     ) {
         Column(
             modifier = Modifier
@@ -560,6 +707,15 @@ private fun RecentsCallCard(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.weight(1f)
                 ) {
+                    if (isSelectionMode) {
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                            contentDescription = if (isSelected) "Selected" else "Not selected",
+                            tint = if (isSelected) Color(0xFFFF4081) else Color(0xFF8E8E93),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
                     Surface(
                         modifier = Modifier.size(46.dp),
                         shape = CircleShape,
@@ -606,9 +762,12 @@ private fun RecentsCallCard(
                             )
                         }
 
-                        // SIM Name in pink (Screenshot 3 & 7)
-                        val simName = remember(entry.simSlot, availableSims) {
-                            availableSims.find { it.subscriptionId == entry.simSlot }?.carrierName ?: "SIM ${entry.simSlot + 1}"
+                        // SIM Name in pink (Screenshot 3 & 7) - detected carrier name
+                        val simName = remember(entry.simSlot, entry.simName, availableSims) {
+                            entry.simName?.takeIf { it.isNotBlank() }
+                                ?: availableSims.find { it.subscriptionId == entry.simSlot }?.carrierName
+                                ?: availableSims.firstOrNull()?.carrierName
+                                ?: "SIM ${entry.simSlot + 1}"
                         }
                         Text(
                             text = simName,
@@ -633,7 +792,7 @@ private fun RecentsCallCard(
                 }
             }
 
-            // Inline Expansion (Screenshot 7): Message & History Buttons
+            // Inline Expansion (Screenshot 7): Message & History Buttons & Delete option
             AnimatedVisibility(
                 visible = isExpanded,
                 enter = expandVertically() + fadeIn(),
@@ -700,6 +859,38 @@ private fun RecentsCallCard(
                             Text(
                                 text = "History",
                                 color = Color.White,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onDeleteClick),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF382326)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = null,
+                                tint = Color(0xFFFF6B6B),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Delete from history",
+                                color = Color(0xFFFF6B6B),
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 15.sp
                             )
@@ -888,9 +1079,14 @@ fun ContactHistoryView(
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFF9E9E9E)
                                             )
-                                            Spacer(modifier = Modifier.width(6.dp))
+                                            val simName = remember(log.simSlot, log.simName, availableSims) {
+                                                log.simName?.takeIf { it.isNotBlank() }
+                                                    ?: availableSims.find { it.subscriptionId == log.simSlot }?.carrierName
+                                                    ?: availableSims.firstOrNull()?.carrierName
+                                                    ?: "SIM ${log.simSlot + 1}"
+                                            }
                                             Text(
-                                                text = availableSims.find { it.subscriptionId == log.simSlot }?.carrierName ?: "SIM ${log.simSlot + 1}",
+                                                text = simName,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color(0xFFFF4081),
                                                 fontWeight = FontWeight.Medium

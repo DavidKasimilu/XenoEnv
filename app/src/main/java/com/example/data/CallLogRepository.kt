@@ -42,7 +42,10 @@ class CallLogRepository(private val context: Context) {
                         type = runCatching { CallType.valueOf(obj.optString("type", "OUTGOING")) }.getOrDefault(CallType.OUTGOING),
                         date = obj.optLong("date", 0L),
                         durationSeconds = obj.optLong("durationSeconds", 0L),
-                        photoUri = obj.optString("photoUri", "").takeIf { it.isNotBlank() }
+                        photoUri = obj.optString("photoUri", "").takeIf { it.isNotBlank() },
+                        simSlot = obj.optInt("simSlot", 0),
+                        simName = obj.optString("simName", "").takeIf { it.isNotBlank() },
+                        phoneAccountId = obj.optString("phoneAccountId", "").takeIf { it.isNotBlank() }
                     )
                 )
             }
@@ -68,6 +71,9 @@ class CallLogRepository(private val context: Context) {
                     put("date", e.date)
                     put("durationSeconds", e.durationSeconds)
                     put("photoUri", e.photoUri ?: "")
+                    put("simSlot", e.simSlot)
+                    put("simName", e.simName ?: "")
+                    put("phoneAccountId", e.phoneAccountId ?: "")
                 }
                 arr.put(obj)
             }
@@ -86,7 +92,16 @@ class CallLogRepository(private val context: Context) {
         }
 
         val entries = ArrayList<CallLogEntry>(150)
-        val projection = arrayOf(
+        val availableSims = com.example.telecom.TelecomHelper.getAvailableSimCards(context)
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
+
+        val detectedCarrierFallback = availableSims.firstOrNull { it.carrierName.isNotBlank() && !it.carrierName.startsWith("SIM ") }?.carrierName
+            ?: telephonyManager?.simOperatorName?.takeIf { it.isNotBlank() }
+            ?: telephonyManager?.networkOperatorName?.takeIf { it.isNotBlank() }
+            ?: availableSims.firstOrNull()?.carrierName
+
+        val projList = mutableListOf(
             CallLog.Calls._ID,
             CallLog.Calls.NUMBER,
             CallLog.Calls.CACHED_NAME,
@@ -95,6 +110,11 @@ class CallLogRepository(private val context: Context) {
             CallLog.Calls.DURATION,
             CallLog.Calls.CACHED_PHOTO_URI
         )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            projList.add(CallLog.Calls.PHONE_ACCOUNT_ID)
+            projList.add(CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME)
+        }
+        val projection = projList.toTypedArray()
 
         try {
             val cursor = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -127,6 +147,13 @@ class CallLogRepository(private val context: Context) {
                 val durationIdx = cur.getColumnIndex(CallLog.Calls.DURATION)
                 val photoIdx = cur.getColumnIndex(CallLog.Calls.CACHED_PHOTO_URI)
 
+                val phoneAccountIdx = cur.getColumnIndex(CallLog.Calls.PHONE_ACCOUNT_ID)
+                val phoneAccountCompIdx = cur.getColumnIndex(CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME)
+                val subIdColIdx = cur.getColumnIndex("sub_id").takeIf { it != -1 }
+                    ?: cur.getColumnIndex("subscription_id").takeIf { it != -1 }
+                    ?: cur.getColumnIndex("sim_id").takeIf { it != -1 }
+                    ?: cur.getColumnIndex("sim_slot")
+
                 while (cur.moveToNext() && entries.size < 150) {
                     val id = if (idIdx != -1) cur.getLong(idIdx) else 0L
                     val number = if (numberIdx != -1) cur.getString(numberIdx) ?: "" else ""
@@ -138,6 +165,62 @@ class CallLogRepository(private val context: Context) {
                     val duration = if (durationIdx != -1) cur.getLong(durationIdx) else 0L
                     val photoUri = if (photoIdx != -1) cur.getString(photoIdx) else null
 
+                    val phoneAccountId = if (phoneAccountIdx != -1) cur.getString(phoneAccountIdx) else null
+                    val phoneAccountComp = if (phoneAccountCompIdx != -1) cur.getString(phoneAccountCompIdx) else null
+                    val subIdFromCol = if (subIdColIdx != null && subIdColIdx != -1) cur.getInt(subIdColIdx) else -1
+
+                    var matchedSimSlot = if (subIdFromCol >= 0) subIdFromCol else 0
+                    var matchedSimName: String? = null
+
+                    if (!phoneAccountId.isNullOrBlank()) {
+                        val simMatch = availableSims.find { sim ->
+                            val handleId = sim.phoneAccountHandle?.id
+                            handleId == phoneAccountId ||
+                                sim.subscriptionId.toString() == phoneAccountId ||
+                                (handleId != null && handleId.contains(phoneAccountId)) ||
+                                (sim.phoneNumber != null && phoneAccountId.contains(sim.phoneNumber))
+                        }
+                        if (simMatch != null) {
+                            matchedSimSlot = simMatch.subscriptionId
+                            matchedSimName = simMatch.carrierName
+                        } else {
+                            try {
+                                if (phoneAccountComp != null && telecomManager != null) {
+                                    val component = android.content.ComponentName.unflattenFromString(phoneAccountComp)
+                                    if (component != null) {
+                                        val handle = android.telecom.PhoneAccountHandle(component, phoneAccountId)
+                                        val label = telecomManager.getPhoneAccount(handle)?.label?.toString()
+                                        if (!label.isNullOrBlank()) {
+                                            matchedSimName = label
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+
+                            val parsedInt = phoneAccountId.toIntOrNull()
+                            if (parsedInt != null) {
+                                matchedSimSlot = parsedInt
+                                val bySlot = availableSims.getOrNull(parsedInt) ?: availableSims.find { it.subscriptionId == parsedInt }
+                                if (bySlot != null && bySlot.carrierName.isNotBlank()) {
+                                    matchedSimName = bySlot.carrierName
+                                }
+                            }
+                        }
+                    } else if (subIdFromCol >= 0) {
+                        val bySub = availableSims.find { it.subscriptionId == subIdFromCol } ?: availableSims.getOrNull(subIdFromCol)
+                        if (bySub != null && bySub.carrierName.isNotBlank()) {
+                            matchedSimName = bySub.carrierName
+                            matchedSimSlot = bySub.subscriptionId
+                        }
+                    }
+
+                    if (matchedSimName.isNullOrBlank()) {
+                        matchedSimName = availableSims.getOrNull(matchedSimSlot)?.carrierName
+                            ?: availableSims.find { it.subscriptionId == matchedSimSlot }?.carrierName
+                            ?: detectedCarrierFallback
+                            ?: "SIM ${matchedSimSlot + 1}"
+                    }
+
                     entries.add(
                         CallLogEntry(
                             id = id,
@@ -146,7 +229,10 @@ class CallLogRepository(private val context: Context) {
                             type = CallType.fromCallLogType(rawType),
                             date = date,
                             durationSeconds = duration,
-                            photoUri = photoUri
+                            photoUri = photoUri,
+                            simSlot = matchedSimSlot,
+                            simName = matchedSimName,
+                            phoneAccountId = phoneAccountId
                         )
                     )
                 }
@@ -164,7 +250,9 @@ class CallLogRepository(private val context: Context) {
         number: String,
         name: String?,
         durationSeconds: Long,
-        type: CallType = CallType.OUTGOING
+        type: CallType = CallType.OUTGOING,
+        simSlot: Int = 0,
+        simName: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
@@ -181,6 +269,15 @@ class CallLogRepository(private val context: Context) {
                 put(CallLog.Calls.DATE, System.currentTimeMillis())
                 put(CallLog.Calls.DURATION, durationSeconds)
                 put(CallLog.Calls.NEW, 1)
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    val available = com.example.telecom.TelecomHelper.getAvailableSimCards(context)
+                    val sim = available.find { it.subscriptionId == simSlot } ?: available.getOrNull(simSlot) ?: available.firstOrNull()
+                    if (sim?.phoneAccountHandle != null) {
+                        put(CallLog.Calls.PHONE_ACCOUNT_ID, sim.phoneAccountHandle.id)
+                        put(CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME, sim.phoneAccountHandle.componentName.flattenToString())
+                    }
+                }
             }
             contentResolver.insert(CallLog.Calls.CONTENT_URI, values) != null
         } catch (e: Exception) {

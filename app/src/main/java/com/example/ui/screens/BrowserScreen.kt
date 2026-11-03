@@ -17,6 +17,7 @@ import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -1012,9 +1013,15 @@ fun BrowserScreen(
                                     }
 
                                     webViewClient = object : WebViewClient() {
-                                        override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                                            super.onReceivedError(view, errorCode, description, failingUrl)
-                                            onUpdateTabLoading(false, 100)
+                                        override fun onReceivedError(
+                                            view: WebView?,
+                                            request: WebResourceRequest?,
+                                            error: WebResourceError?
+                                        ) {
+                                            super.onReceivedError(view, request, error)
+                                            if (request?.isForMainFrame != false) {
+                                                onUpdateTabLoading(false, 100)
+                                            }
                                         }
 
                                         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {

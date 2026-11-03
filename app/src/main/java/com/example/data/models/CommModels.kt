@@ -73,7 +73,9 @@ data class CallLogEntry(
     val date: Long,
     val durationSeconds: Long,
     val photoUri: String? = null,
-    val simSlot: Int = 0
+    val simSlot: Int = 0,
+    val simName: String? = null,
+    val phoneAccountId: String? = null
 ) {
     val timestamp: Long get() = date
     val displayName: String
@@ -272,7 +274,9 @@ data class SmsMessage(
     val date: Long,
     val isSent: Boolean,
     val read: Boolean,
-    val deliveryStatus: SmsDeliveryStatus = SmsDeliveryStatus.DELIVERED
+    val deliveryStatus: SmsDeliveryStatus = SmsDeliveryStatus.DELIVERED,
+    val simName: String? = null,
+    val subId: Int = -1
 ) {
     val formattedTime: String
         get() = FastDateFormatter.formatTime(date)

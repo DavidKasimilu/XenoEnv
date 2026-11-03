@@ -430,7 +430,11 @@ class SmsRepository(
         }
 
         val messages = ArrayList<SmsMessage>()
-        val projection = arrayOf(
+        val availableSims = com.example.telecom.TelecomHelper.getAvailableSimCards(context)
+        val defaultSimName = availableSims.firstOrNull { it.carrierName.isNotBlank() && !it.carrierName.startsWith("SIM ") }?.carrierName
+            ?: availableSims.firstOrNull()?.carrierName
+
+        val projList = mutableListOf(
             Telephony.Sms._ID,
             Telephony.Sms.THREAD_ID,
             Telephony.Sms.ADDRESS,
@@ -440,6 +444,10 @@ class SmsRepository(
             Telephony.Sms.TYPE,
             Telephony.Sms.STATUS
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            projList.add(Telephony.Sms.SUBSCRIPTION_ID)
+        }
+        val projection = projList.toTypedArray()
 
         try {
             val selection = "${Telephony.Sms.THREAD_ID} = ? OR ${Telephony.Sms.ADDRESS} = ?"
@@ -459,6 +467,8 @@ class SmsRepository(
                 val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
                 val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
                 val statusIdx = cursor.getColumnIndex(Telephony.Sms.STATUS)
+                val subIdIdx = cursor.getColumnIndex("sub_id").takeIf { it != -1 }
+                    ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) cursor.getColumnIndex(Telephony.Sms.SUBSCRIPTION_ID) else -1
 
                 while (cursor.moveToNext()) {
                     val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
@@ -469,6 +479,16 @@ class SmsRepository(
                     val providerRead = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                     val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
                     val statusCol = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
+                    val subId = if (subIdIdx != -1) cursor.getInt(subIdIdx) else -1
+
+                    val resolvedSimName = if (subId >= 0) {
+                        availableSims.find { it.subscriptionId == subId }?.carrierName
+                            ?: availableSims.getOrNull(subId)?.carrierName
+                            ?: defaultSimName
+                            ?: "SIM ${subId + 1}"
+                    } else {
+                        defaultSimName ?: "SIM 1"
+                    }
 
                     val isSentMsg = type == Telephony.Sms.MESSAGE_TYPE_SENT ||
                         type == Telephony.Sms.MESSAGE_TYPE_OUTBOX ||
@@ -490,7 +510,9 @@ class SmsRepository(
                             date = date,
                             isSent = isSentMsg,
                             read = read,
-                            deliveryStatus = deliveryStatus
+                            deliveryStatus = deliveryStatus,
+                            simName = resolvedSimName,
+                            subId = subId
                         )
                     )
                 }
@@ -595,6 +617,9 @@ class SmsRepository(
         }
 
         // Create the message object
+        val availableSims = com.example.telecom.TelecomHelper.getAvailableSimCards(context)
+        val defaultSim = availableSims.firstOrNull { it.carrierName.isNotBlank() && !it.carrierName.startsWith("SIM ") }
+            ?: availableSims.firstOrNull()
         val effectiveThreadId = currentThreadId ?: destinationAddress.hashCode().toLong()
         val newMessage = SmsMessage(
             id = messageId,
@@ -604,7 +629,9 @@ class SmsRepository(
             date = now,
             isSent = true,
             read = true,
-            deliveryStatus = SmsDeliveryStatus.SENDING
+            deliveryStatus = SmsDeliveryStatus.SENDING,
+            simName = defaultSim?.carrierName ?: "SIM 1",
+            subId = defaultSim?.subscriptionId ?: 0
         )
 
         synchronized(inMemoryMessages) {

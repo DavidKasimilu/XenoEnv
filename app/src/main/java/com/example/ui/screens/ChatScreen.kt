@@ -116,6 +116,10 @@ fun ChatScreen(
     var callNumberTarget by remember { mutableStateOf<String?>(null) }
     var availableSims by remember { mutableStateOf<List<SimCardInfo>>(emptyList()) }
 
+    LaunchedEffect(Unit) {
+        availableSims = TelecomHelper.getAvailableSimCards(context)
+    }
+
     // Clipboard & Delivery Feedback UI state
     var clipboardFeedbackText by remember { mutableStateOf<String?>(null) }
     var lastCopiedMessageId by remember { mutableLongStateOf(-1L) }
@@ -252,23 +256,12 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1
                             )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = thread.address,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
-                                Icon(
-                                    imageVector = Icons.Outlined.ContentCopy,
-                                    contentDescription = "Copy number",
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
-                                )
-                            }
+                            Text(
+                                text = thread.address,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
                         }
                     }
                 },
@@ -284,16 +277,6 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { copyToClipboard("Phone number", thread.address) },
-                        modifier = Modifier.testTag("chat_copy_number_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy phone number",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
                             Icon(
@@ -458,28 +441,22 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.height(2.dp))
                             MessageBubble(
                                 message = msg,
-                                isCopied = isRecentlyCopied,
-                                onCopyClick = {
-                                    copyToClipboard("Message", msg.body, copiedMsgId = msg.id)
-                                },
+                                availableSims = availableSims,
                                 onRetryClick = {
                                     onSendMessage(msg.body)
                                 },
-                                onClick = { selectedMessageForAction = msg },
+                                onClick = {},
                                 onLongClick = { selectedMessageForAction = msg }
                             )
                         }
                     } else {
                         MessageBubble(
                             message = msg,
-                            isCopied = isRecentlyCopied,
-                            onCopyClick = {
-                                copyToClipboard("Message", msg.body, copiedMsgId = msg.id)
-                            },
+                            availableSims = availableSims,
                             onRetryClick = {
                                 onSendMessage(msg.body)
                             },
-                            onClick = { selectedMessageForAction = msg },
+                            onClick = {},
                             onLongClick = { selectedMessageForAction = msg }
                         )
                     }
@@ -671,14 +648,19 @@ fun ChatScreen(
                             )
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        val simName = msg.simName?.takeIf { it.isNotBlank() }
+                            ?: availableSims.find { it.subscriptionId == msg.subId }?.carrierName
+                            ?: availableSims.firstOrNull()?.carrierName
+                            ?: "SIM"
                         Text(
                             text = if (msg.isSent) {
-                                "Status: ${msg.deliveryStatus.label} • ${msg.formattedTime}"
+                                "Sent via $simName • ${msg.deliveryStatus.label} • ${msg.formattedTime}"
                             } else {
-                                "Received • ${msg.formattedTime}"
+                                "Received via $simName • ${msg.formattedTime}"
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFFFF4081),
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 },
@@ -777,22 +759,33 @@ fun ChatScreen(
 @Composable
 private fun MessageBubble(
     message: SmsMessage,
-    isCopied: Boolean,
-    onCopyClick: () -> Unit,
+    availableSims: List<SimCardInfo>,
     onRetryClick: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val isSent = message.isSent
     val bubbleContainerColor = if (isSent) {
-        MaterialTheme.colorScheme.primaryContainer
+        Color(0xFF1E3A2F) // Deep refined emerald slate
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        Color(0xFF222328) // Deep elegant dark charcoal
     }
     val bubbleTextColor = if (isSent) {
-        MaterialTheme.colorScheme.onPrimaryContainer
+        Color(0xFFF1F8F5)
     } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
+        Color(0xFFEDEDF2)
+    }
+    val bubbleBorderColor = if (isSent) {
+        Color(0xFF2E533E)
+    } else {
+        Color(0xFF33333C)
+    }
+
+    val displaySimName = remember(message.simName, message.subId, availableSims) {
+        message.simName?.takeIf { it.isNotBlank() }
+            ?: availableSims.find { it.subscriptionId == message.subId }?.carrierName
+            ?: availableSims.firstOrNull()?.carrierName
+            ?: "SIM"
     }
 
     Row(
@@ -807,6 +800,7 @@ private fun MessageBubble(
                 bottomEnd = if (isSent) 4.dp else 16.dp
             ),
             color = bubbleContainerColor,
+            border = BorderStroke(1.dp, bubbleBorderColor),
             modifier = Modifier
                 .widthIn(min = 110.dp, max = 295.dp)
                 .combinedClickable(
@@ -829,59 +823,33 @@ private fun MessageBubble(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    // Inline Quick Copy Button on every message bubble
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable(onClick = onCopyClick)
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                            .testTag("message_copy_button_${message.id}")
-                    ) {
-                        Icon(
-                            imageVector = if (isCopied) Icons.Filled.Check else Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy message text",
-                            modifier = Modifier.size(12.dp),
-                            tint = if (isCopied) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                bubbleTextColor.copy(alpha = 0.65f)
-                            }
+                    Text(
+                        text = displaySimName,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFFF4081)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "•",
+                        fontSize = 10.sp,
+                        color = bubbleTextColor.copy(alpha = 0.45f)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = message.formattedTime,
+                        fontSize = 10.sp,
+                        color = bubbleTextColor.copy(alpha = 0.7f)
+                    )
+                    if (isSent) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        DeliveryStatusBadge(
+                            status = message.deliveryStatus,
+                            baseColor = bubbleTextColor,
+                            onRetryClick = onRetryClick
                         )
-                        Text(
-                            text = if (isCopied) "Copied" else "Copy",
-                            fontSize = 10.sp,
-                            fontWeight = if (isCopied) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isCopied) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                bubbleTextColor.copy(alpha = 0.65f)
-                            }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Timestamp + Outgoing SMS Delivery Status Feedback
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = message.formattedTime,
-                            fontSize = 10.sp,
-                            color = bubbleTextColor.copy(alpha = 0.7f)
-                        )
-                        if (isSent) {
-                            DeliveryStatusBadge(
-                                status = message.deliveryStatus,
-                                baseColor = bubbleTextColor,
-                                onRetryClick = onRetryClick
-                            )
-                        }
                     }
                 }
             }
