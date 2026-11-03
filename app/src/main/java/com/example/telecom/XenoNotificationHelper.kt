@@ -28,6 +28,7 @@ object XenoNotificationHelper {
     const val CHANNEL_CALL_SILENT_ID = "xeno_call_channel_silent"
     const val CHANNEL_PRIORITY_SMS_ID = "xeno_priority_vip_sms_channel"
     const val CHANNEL_PRIORITY_CALL_ID = "xeno_priority_vip_call_channel"
+    const val CHANNEL_MISSED_CALL_ID = "xeno_missed_call_channel_v1"
 
     @Volatile
     private var lastSmsSignature: String = ""
@@ -189,6 +190,20 @@ object XenoNotificationHelper {
             notificationManager.createNotificationChannel(smsChannel)
             notificationManager.createNotificationChannel(callChannel)
             notificationManager.createNotificationChannel(callSilentChannel)
+
+            val missedCallChannel = NotificationChannel(
+                CHANNEL_MISSED_CALL_ID,
+                "Missed Calls",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications for missed phone calls"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 100, 250)
+                enableLights(true)
+                setShowBadge(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            }
+            notificationManager.createNotificationChannel(missedCallChannel)
 
             val alarmAudioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
@@ -502,6 +517,98 @@ object XenoNotificationHelper {
                 nm.cancel(getSmsNotificationId(senderNumber, threadId))
             }
             nm.cancel((threadId and 0x7FFFFFFF).toInt().coerceAtLeast(1001))
+        } catch (_: Exception) {}
+    }
+
+    fun showMissedCallNotification(
+        context: Context,
+        callerName: String?,
+        callerNumber: String,
+        timestampMs: Long = System.currentTimeMillis()
+    ) {
+        createNotificationChannels(context)
+
+        val resolvedName = if (!callerName.isNullOrBlank() && !PriorityContactManager.isSyntheticPriorityName(callerName)) {
+            callerName
+        } else {
+            resolveContactNameQuick(context, callerNumber) ?: callerNumber
+        }
+
+        val formattedTime = formatNotificationTime(timestampMs)
+        val notificationId = (normalizePhoneKey(callerNumber).hashCode() and 0x7FFFFFFF).coerceAtLeast(5001)
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("open_tab", "CALLS")
+            putExtra("incoming_number", callerNumber)
+            putExtra("caller_name", resolvedName)
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val callbackIntent = Intent(context, XenoNotificationActionReceiver::class.java).apply {
+            action = XenoNotificationActionReceiver.ACTION_CALLBACK_MISSED
+            putExtra(XenoNotificationActionReceiver.EXTRA_NUMBER, callerNumber)
+            putExtra(XenoNotificationActionReceiver.EXTRA_NAME, resolvedName)
+        }
+        val callbackPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId + 400,
+            callbackIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val messageIntent = Intent(context, XenoNotificationActionReceiver::class.java).apply {
+            action = XenoNotificationActionReceiver.ACTION_MESSAGE_MISSED
+            putExtra(XenoNotificationActionReceiver.EXTRA_NUMBER, callerNumber)
+            putExtra(XenoNotificationActionReceiver.EXTRA_NAME, resolvedName)
+        }
+        val messagePendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId + 500,
+            messageIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val carrierName = try {
+            val call = XenoInCallService.currentCall
+            val handle = call?.details?.accountHandle
+            if (handle != null) {
+                (context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)?.getPhoneAccount(handle)?.label?.toString()
+            } else null
+        } catch (_: Exception) {
+            null
+        } ?: "SIM 1"
+
+        val title = "Missed Call from $resolvedName"
+        val subtitle = "Missed call • $carrierName • $formattedTime"
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_MISSED_CALL_ID)
+            .setSmallIcon(android.R.drawable.sym_action_call)
+            .setContentTitle(title)
+            .setContentText("Number: $callerNumber ($carrierName)")
+            .setSubText("Missed Call • $formattedTime")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(android.R.drawable.sym_action_call, "Call Back", callbackPendingIntent)
+            .addAction(android.R.drawable.sym_action_chat, "Message", messagePendingIntent)
+            .build()
+
+        try {
+            val nm = NotificationManagerCompat.from(context)
+            if (nm.areNotificationsEnabled()) {
+                nm.notify(notificationId, notification)
+            }
+        } catch (_: SecurityException) {
         } catch (_: Exception) {}
     }
 }

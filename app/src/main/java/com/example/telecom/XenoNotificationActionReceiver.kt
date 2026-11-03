@@ -62,6 +62,29 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
 
                 XenoNotificationHelper.cancelSmsNotification(context, threadId, senderNumber)
             }
+
+            ACTION_CALLBACK_MISSED -> {
+                val callerNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
+                val callerName = intent.getStringExtra(EXTRA_NAME)
+                val appIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("open_tab", "CALLS")
+                    putExtra("dial_number", callerNumber)
+                    putExtra("caller_name", callerName)
+                }
+                context.startActivity(appIntent)
+            }
+
+            ACTION_MESSAGE_MISSED -> {
+                val callerNumber = intent.getStringExtra(EXTRA_NUMBER) ?: ""
+                val callerName = intent.getStringExtra(EXTRA_NAME)
+                val appIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("open_tab", "MESSAGES")
+                    putExtra("sender_number", callerNumber)
+                }
+                context.startActivity(appIntent)
+            }
         }
     }
 
@@ -70,6 +93,8 @@ class XenoNotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_DECLINE_CALL = "com.example.telecom.ACTION_DECLINE_CALL"
         const val ACTION_MARK_SMS_READ = "com.example.telecom.ACTION_MARK_SMS_READ"
         const val ACTION_REPLY_SMS = "com.example.telecom.ACTION_REPLY_SMS"
+        const val ACTION_CALLBACK_MISSED = "com.example.telecom.ACTION_CALLBACK_MISSED"
+        const val ACTION_MESSAGE_MISSED = "com.example.telecom.ACTION_MESSAGE_MISSED"
 
         const val EXTRA_THREAD_ID = "extra_thread_id"
         const val EXTRA_NUMBER = "extra_number"

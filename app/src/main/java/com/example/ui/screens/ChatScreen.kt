@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -650,38 +651,22 @@ fun ChatScreen(
 
                     // Select SIM for SMS icon next to the send icon
                     Box {
-                        Surface(
+                        IconButton(
+                            onClick = { showSimPickerMenu = true },
                             modifier = Modifier
-                                .height(44.dp)
-                                .clip(RoundedCornerShape(22.dp))
-                                .clickable { showSimPickerMenu = true }
-                                .testTag("chat_select_sim_button"),
-                            shape = RoundedCornerShape(22.dp),
-                            color = Color(0xFF28282D),
-                            border = BorderStroke(1.dp, Color(0xFF3E3E44))
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .testTag("chat_select_sim_button")
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.SimCard,
-                                    contentDescription = "Select SIM for SMS",
-                                    tint = Color(0xFFFF4081),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                val activeIndex = if (activeSim != null) (availableSims.indexOf(activeSim).coerceAtLeast(0) + 1) else 1
-                                val label = activeSim?.carrierName?.takeIf { it.isNotBlank() && !it.startsWith("SIM ") }
-                                    ?: "SIM $activeIndex"
-                                Text(
-                                    text = label,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
-                                    maxLines = 1
-                                )
-                            }
+                            val activeIndex = if (activeSim != null) (availableSims.indexOf(activeSim).coerceAtLeast(0) + 1) else 1
+                            val activeLabel = activeSim?.carrierName?.takeIf { it.isNotBlank() && !it.startsWith("SIM ") } ?: "SIM $activeIndex"
+                            Icon(
+                                imageVector = Icons.Filled.SimCard,
+                                contentDescription = "Select SIM for SMS ($activeLabel)",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
 
                         // Dropdown menu to select default SIM for SMS

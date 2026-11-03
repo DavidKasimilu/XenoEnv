@@ -569,6 +569,8 @@ object OngoingCallHelper {
             _incomingPopupFlow.value?.callerNumber.orEmpty()
         }
         val declinedName = _sessionFlow.value.contactName ?: _incomingPopupFlow.value?.callerName
+        val isIncomingCall = _sessionFlow.value.isIncoming || _sessionFlow.value.phase == CallPhase.INCOMING_RINGING || _incomingPopupFlow.value != null
+
         releaseIncomingWakeLock()
         silenceIncomingRinger(context)
         dismissIncomingCallPopup(context)
@@ -577,12 +579,20 @@ object OngoingCallHelper {
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()
+
         if (declinedNumber.isNotBlank()) {
+            if (isIncomingCall) {
+                XenoNotificationHelper.showMissedCallNotification(context, declinedName, declinedNumber)
+            }
             onCallDeclinedListener?.invoke(declinedNumber, declinedName)
         }
     }
 
     fun endCall(context: Context): Long {
+        val wasIncomingUnanswered = !_sessionFlow.value.isConnected && (_sessionFlow.value.isIncoming || _sessionFlow.value.phase == CallPhase.INCOMING_RINGING)
+        val endNumber = _sessionFlow.value.phoneNumber.ifBlank { _incomingPopupFlow.value?.callerNumber.orEmpty() }
+        val endName = _sessionFlow.value.contactName ?: _incomingPopupFlow.value?.callerName
+
         val finalDuration = if (_sessionFlow.value.isConnected) {
             getCurrentDurationSeconds().coerceAtLeast(1L)
         } else {
@@ -596,6 +606,11 @@ object OngoingCallHelper {
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()
+
+        if (wasIncomingUnanswered && endNumber.isNotBlank()) {
+            XenoNotificationHelper.showMissedCallNotification(context, endName, endNumber)
+        }
+
         return finalDuration
     }
 
