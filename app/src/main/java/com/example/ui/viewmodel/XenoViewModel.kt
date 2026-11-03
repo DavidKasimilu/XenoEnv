@@ -1684,30 +1684,16 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val shouldShowFullScreen = OngoingCallHelper.isScreenOffOrLocked(getApplication())
             val popup = OngoingCallHelper.handleIncomingCallEvent(
                 context = getApplication(),
                 phoneNumber = number,
-                contactName = contactName,
-                showPopup = !shouldShowFullScreen,
-                forceScreenOffState = shouldShowFullScreen
+                contactName = contactName
             )
 
-            if (shouldShowFullScreen) {
-                _uiState.value = _uiState.value.copy(
-                    incomingCallPopup = null,
-                    activeCallState = ActiveCallState(
-                        phoneNumber = number,
-                        contactName = contactName ?: OngoingCallHelper.sessionFlow.value.contactName,
-                        isIncoming = true
-                    )
-                )
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    incomingCallPopup = popup,
-                    activeCallState = null
-                )
-            }
+            _uiState.value = _uiState.value.copy(
+                incomingCallPopup = popup,
+                activeCallState = null
+            )
         }
     }
 

@@ -22,14 +22,9 @@ class CallReceiver : BroadcastReceiver() {
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
                     if (incomingNumber.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(incomingNumber)) {
-                        val shouldWakeFullScreen = OngoingCallHelper.isScreenOffOrLocked(context)
-                        val resolvedName = XenoNotificationHelper.resolveContactNameQuick(context, incomingNumber)
-                        OngoingCallHelper.handleIncomingCallEvent(
+                        IncomingCallPopupHelper.handleIncomingCall(
                             context = context.applicationContext,
-                            phoneNumber = incomingNumber,
-                            contactName = resolvedName,
-                            showPopup = !shouldWakeFullScreen,
-                            forceScreenOffState = shouldWakeFullScreen
+                            phoneNumber = incomingNumber
                         )
                         XenoInCallService.onIncomingCallListener?.invoke(incomingNumber)
                     }

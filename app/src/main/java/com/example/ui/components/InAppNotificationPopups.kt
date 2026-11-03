@@ -130,8 +130,10 @@ fun InAppCallNotificationCard(
     val displayName = popup.callerName?.takeIf { it.isNotBlank() } ?: popup.callerNumber
     val initial = displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "I"
     
-    val simCarrier = remember(context) {
-        com.example.telecom.TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName ?: "SIM 1"
+    val simCarrier = remember(context, popup.carrierName) {
+        popup.carrierName?.takeIf { it.isNotBlank() }
+            ?: com.example.telecom.TelecomHelper.getAvailableSimCards(context).firstOrNull()?.carrierName
+            ?: "SIM 1"
     }
 
     Card(

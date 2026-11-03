@@ -287,9 +287,11 @@ fun XenoApp(
         viewModel.checkDefaultAppStatus()
     }
 
-    // Automatic prompt to set app as default phone app upon opening it
+    var hasPromptedDialer by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.isDefaultDialer) {
-        if (!uiState.isDefaultDialer) {
+        if (!uiState.isDefaultDialer && !hasPromptedDialer) {
+            delay(2500L) // Fast launch speed: let the app open and render instantly before requesting role
+            hasPromptedDialer = true
             val dialerIntent = TelecomHelper.createRequestDefaultDialerIntent(context)
             if (dialerIntent != null) {
                 try {
@@ -307,7 +309,7 @@ fun XenoApp(
         viewModel.checkNotificationAccess()
     }
 
-    // Stop floating bubble service and cancel notification
+    // Stop floating bubble service in background
     LaunchedEffect(Unit) {
         try {
             com.example.floating.FloatingBubbleService.stop(context)
@@ -316,10 +318,13 @@ fun XenoApp(
         } catch (_: Exception) {}
     }
 
-    // Request permissions with a small delay to prioritize Frame 1 rendering and launch speed
+    var hasPromptedPerms by remember { mutableStateOf(false) }
+    // Request permissions after app is fully loaded to ensure zero launch delay
     LaunchedEffect(Unit) {
-        delay(800L) // Delay slightly to ensure smooth app entry animation
-        val perms = mutableListOf(
+        delay(2000L) // Instant launch speed: prioritize smooth opening animation
+        if (!hasPromptedPerms) {
+            hasPromptedPerms = true
+            val perms = mutableListOf(
             android.Manifest.permission.CALL_PHONE,
             android.Manifest.permission.READ_PHONE_STATE,
             android.Manifest.permission.READ_CALL_LOG,
@@ -356,6 +361,7 @@ fun XenoApp(
         }
         if (missingPerms.isNotEmpty()) {
             permissionsLauncher.launch(missingPerms.toTypedArray())
+        }
         }
     }
 

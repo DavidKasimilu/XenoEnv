@@ -3,7 +3,7 @@
     android:id="@+id/notif_call_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_notif_sms_card"
+    android:background="@drawable/bg_notif_call_card"
     android:orientation="vertical"
     android:paddingStart="20dp"
     android:paddingTop="18dp"

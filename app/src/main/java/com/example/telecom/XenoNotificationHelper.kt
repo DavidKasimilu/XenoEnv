@@ -25,6 +25,7 @@ import java.util.Locale
 object XenoNotificationHelper {
     const val CHANNEL_SMS_ID = "xeno_sms_channel_v2"
     const val CHANNEL_CALL_ID = "xeno_call_channel_v2"
+    const val CHANNEL_CALL_SILENT_ID = "xeno_call_channel_silent"
     const val CHANNEL_PRIORITY_SMS_ID = "xeno_priority_vip_sms_channel"
     const val CHANNEL_PRIORITY_CALL_ID = "xeno_priority_vip_call_channel"
 
@@ -174,8 +175,20 @@ object XenoNotificationHelper {
                 }
             }
 
+            val callSilentChannel = NotificationChannel(
+                CHANNEL_CALL_SILENT_ID,
+                "Ongoing Calls (Drawer Only)",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Silent call notification when in-app popup or floating overlay is active"
+                enableVibration(false)
+                setShowBadge(false)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            }
+
             notificationManager.createNotificationChannel(smsChannel)
             notificationManager.createNotificationChannel(callChannel)
+            notificationManager.createNotificationChannel(callSilentChannel)
 
             val alarmAudioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
@@ -331,7 +344,9 @@ object XenoNotificationHelper {
         context: Context,
         callerName: String?,
         callerNumber: String,
-        useFullScreenIntent: Boolean = OngoingCallHelper.isScreenOffOrLocked(context)
+        useFullScreenIntent: Boolean = OngoingCallHelper.isScreenOffOrLocked(context),
+        suppressHeadsUp: Boolean = false,
+        carrierNameOverride: String? = null
     ) {
         val normCaller = normalizePhoneKey(callerNumber)
         val now = System.currentTimeMillis()
@@ -400,7 +415,7 @@ object XenoNotificationHelper {
 
         val displayTitle = resolvedName
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-        val carrierName = try {
+        val carrierName = carrierNameOverride?.takeIf { it.isNotBlank() } ?: try {
             val call = XenoInCallService.currentCall
             val handle = call?.details?.accountHandle
             if (handle != null) {
@@ -424,34 +439,44 @@ object XenoNotificationHelper {
 
         val callExpandedViews = RemoteViews(context.packageName, R.layout.notification_custom_call).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)
-            setTextViewText(R.id.notif_caller_name, displayTitle)
+            setTextViewText(R.id.notif_caller_name, titleWithCarrier)
             setTextViewText(R.id.notif_caller_number, subtitleWithCarrier)
 
             setOnClickPendingIntent(R.id.btn_call_decline, declinePendingIntent)
             setOnClickPendingIntent(R.id.btn_call_answer, answerPendingIntent)
         }
 
-        val targetChannel = if (isPriority) CHANNEL_PRIORITY_CALL_ID else CHANNEL_CALL_ID
+        val targetChannel = when {
+            isPriority -> CHANNEL_PRIORITY_CALL_ID
+            suppressHeadsUp -> CHANNEL_CALL_SILENT_ID
+            else -> CHANNEL_CALL_ID
+        }
+
         val builder = NotificationCompat.Builder(context, targetChannel)
             .setSmallIcon(android.R.drawable.sym_action_call)
-            .setContentTitle(displayTitle)
-            .setContentText(subtitleText)
+            .setContentTitle(titleWithCarrier)
+            .setContentText(subtitleWithCarrier)
             .setCustomContentView(callCollapsedViews)
             .setCustomBigContentView(callExpandedViews)
-            .setCustomHeadsUpContentView(callExpandedViews)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setAutoCancel(false)
             .setOnlyAlertOnce(false)
             .setContentIntent(fullScreenPendingIntent)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOngoing(true)
-            .setVibrate(if (isPriority) longArrayOf(0, 600, 200, 600, 200, 800) else longArrayOf(0, 500, 250, 500, 250, 500))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
             .addAction(android.R.drawable.sym_action_call, "Answer", answerPendingIntent)
 
-        if (useFullScreenIntent) {
+        if (!suppressHeadsUp) {
+            builder.setCustomHeadsUpContentView(callExpandedViews)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setVibrate(if (isPriority) longArrayOf(0, 600, 200, 600, 200, 800) else longArrayOf(0, 500, 250, 500, 250, 500))
+        } else {
+            builder.setPriority(NotificationCompat.PRIORITY_LOW)
+        }
+
+        if (useFullScreenIntent && !suppressHeadsUp) {
             builder.setFullScreenIntent(fullScreenPendingIntent, true)
         }
 

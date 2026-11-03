@@ -251,86 +251,24 @@ object OngoingCallHelper {
         showPopup: Boolean = true,
         forceScreenOffState: Boolean? = null
     ): IncomingCallPopup {
-        val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
-        // Capture screen-off/locked state BEFORE waking the screen during priority bypass
-        val wasScreenOffOrLocked = forceScreenOffState ?: isScreenOffOrLocked(context)
-        val isPriority = PriorityContactManager.isPriorityNumber(cleanNumber, context)
-        if (isPriority) {
-            PriorityContactManager.enforceIncomingPriorityBypass(
-                context = context,
-                isCall = true,
-                wakeScreen = wasScreenOffOrLocked
-            )
-        }
-
-        val resolvedName = contactName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) }
-            ?: XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
-
-        val wakeForFullScreen = !showPopup || wasScreenOffOrLocked
-        val inAnotherAppWithScreenOn = !wakeForFullScreen && !MainActivity.isAppInForeground
-
-        val carrierName = resolveCarrierName(context, XenoInCallService.currentCall)
-
-        startIncomingSession(
-            phoneNumber = cleanNumber,
-            contactName = resolvedName,
-            openFullScreenImmediately = wakeForFullScreen
-        )
-
-        val popup = IncomingCallPopup(
-            callerName = resolvedName,
-            callerNumber = cleanNumber,
-            carrierName = carrierName
-        )
-
-        if (!wakeForFullScreen) {
-            _incomingPopupFlow.value = popup
-        } else {
-            _incomingPopupFlow.value = null
-            XenoOverlayService.dismissCallOverlay(context)
-        }
-
-        XenoNotificationHelper.showCallNotification(
+        return IncomingCallPopupHelper.handleIncomingCall(
             context = context,
-            callerName = resolvedName,
-            callerNumber = cleanNumber,
-            useFullScreenIntent = wakeForFullScreen
+            phoneNumber = phoneNumber,
+            rawCallerName = contactName,
+            call = XenoInCallService.currentCall
         )
-
-        if (wakeForFullScreen) {
-            launchFullScreenIncomingCallActivity(
-                context = context,
-                phoneNumber = cleanNumber,
-                contactName = resolvedName
-            )
-        } else if (inAnotherAppWithScreenOn) {
-            XenoOverlayService.showCallOverlay(
-                context = context,
-                callerName = resolvedName,
-                callerNumber = cleanNumber
-            )
-        } else {
-            XenoOverlayService.dismissCallOverlay(context)
-        }
-
-        return popup
     }
 
-    private fun resolveCarrierName(context: Context, call: Call?): String? {
-        val handle = call?.details?.accountHandle ?: return null
-        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-        return try {
-            telecomManager?.getPhoneAccount(handle)?.label?.toString()
-        } catch (_: Exception) {
-            null
-        }
+    fun dismissInAppPopupOnly() {
+        _incomingPopupFlow.value = null
     }
 
     fun showIncomingCallPopup(context: Context, phoneNumber: String, contactName: String?, carrierName: String? = null): IncomingCallPopup {
+        val detectedCarrier = carrierName ?: IncomingCallPopupHelper.resolveCarrierName(context, XenoInCallService.currentCall)
         val popup = IncomingCallPopup(
             callerName = contactName?.takeIf { it.isNotBlank() },
             callerNumber = phoneNumber,
-            carrierName = carrierName ?: resolveCarrierName(context, XenoInCallService.currentCall)
+            carrierName = detectedCarrier
         )
         _incomingPopupFlow.value = popup
         return popup

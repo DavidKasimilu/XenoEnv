@@ -38,7 +38,8 @@ object XenoOverlayService {
     fun showCallOverlay(
         context: Context,
         callerName: String?,
-        callerNumber: String
+        callerNumber: String,
+        carrierName: String? = null
     ) {
         if (!canDrawOverlays(context)) {
             Log.w("XenoOverlayService", "Overlay permission not granted, relying on system heads-up call notification")
@@ -66,8 +67,8 @@ object XenoOverlayService {
             val btnDecline = overlayView.findViewById<View>(R.id.btn_call_decline)
             val btnAnswer = overlayView.findViewById<View>(R.id.btn_call_answer)
 
-            val telecomManager = appContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-            val carrierName = try {
+            val resolvedCarrier = carrierName?.takeIf { it.isNotBlank() } ?: try {
+                val telecomManager = appContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
                 val call = XenoInCallService.currentCall
                 val handle = call?.details?.accountHandle
                 if (handle != null) {
@@ -85,8 +86,8 @@ object XenoOverlayService {
             val displayName = rawName
             val initials = XenoNotificationHelper.extractInitials(rawName, callerNumber)
             
-            val titleWithCarrier = "$displayName ($carrierName)"
-            val subtitleWithCarrier = "Incoming call via $carrierName"
+            val titleWithCarrier = "$displayName ($resolvedCarrier)"
+            val subtitleWithCarrier = "Incoming call via $resolvedCarrier"
 
             avatarTv?.text = initials
             nameTv?.text = titleWithCarrier
