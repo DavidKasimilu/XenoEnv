@@ -252,8 +252,20 @@ object TelecomHelper {
         return sims.find { it.subscriptionId == preferredSlot } ?: sims.firstOrNull()
     }
 
+    @Volatile
+    private var cachedSimList: List<SimCardInfo>? = null
+    @Volatile
+    private var lastSimCacheTs: Long = 0L
+
     @android.annotation.SuppressLint("MissingPermission")
     fun getAvailableSimCards(context: Context): List<SimCardInfo> {
+        val now = System.currentTimeMillis()
+        cachedSimList?.let { cached ->
+            if (now - lastSimCacheTs < 3_000L && cached.isNotEmpty()) {
+                return cached
+            }
+        }
+
         val simList = mutableListOf<SimCardInfo>()
         try {
             val hasPermission = ContextCompat.checkSelfPermission(
@@ -328,6 +340,10 @@ object TelecomHelper {
             }
         } catch (e: Exception) {
             android.util.Log.w("TelecomHelper", "getAvailableSimCards failed: ${e.message}")
+        }
+        if (simList.isNotEmpty()) {
+            cachedSimList = simList
+            lastSimCacheTs = System.currentTimeMillis()
         }
         return simList
     }

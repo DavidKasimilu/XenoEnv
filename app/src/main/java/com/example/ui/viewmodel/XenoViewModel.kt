@@ -372,21 +372,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
      * 3. Executes Call Log, Contacts, and SMS Thread sync concurrently on Dispatchers.IO.
      */
     fun boostAppPerformanceAndFastLoadHelper() {
-        // 1. Frame-1 instant snapshot seed (non-blocking)
-        viewModelScope.launch(Dispatchers.Default) {
-            val cachedCalls = callLogRepo.getCachedCallLogsSnapshot()
-            val cachedThreads = smsRepo.getCachedThreadsSnapshot()
-            val cachedContacts = contactsRepo.getCachedContactsSnapshot()
-            if (cachedCalls.isNotEmpty() || cachedThreads.isNotEmpty() || cachedContacts.isNotEmpty()) {
-                _uiState.value = _uiState.value.copy(
-                    callLogs = if (_uiState.value.callLogs.isEmpty()) cachedCalls else _uiState.value.callLogs,
-                    smsThreads = if (_uiState.value.smsThreads.isEmpty()) cachedThreads else _uiState.value.smsThreads,
-                    contacts = if (_uiState.value.contacts.isEmpty()) cachedContacts else _uiState.value.contacts
-                )
-            }
-        }
-
-        // 2. Priority live sync of Call History, Contacts, and SMS Conversations
+        // 1. Priority live sync of Call History, Contacts, and SMS Conversations
         loadAllData(forceRefresh = true)
 
         // 3. Offload secondary workspace/browser/storage initialization to background IO
@@ -511,9 +497,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun triggerPostCallHistorySync() {
         syncCallHistoryFast()
         viewModelScope.launch {
-            delay(350)
-            syncCallHistoryFast()
-            delay(750)
+            delay(500)
             syncCallHistoryFast()
         }
     }

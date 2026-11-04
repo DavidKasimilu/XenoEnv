@@ -1,88 +1,69 @@
-# Persistent Floating Window & Unstoppable Background Service Architecture
+# Implementation Plan: App Performance Audit & Optimization Recommendations
 
-Provide uninterrupted background persistence for the floating window overlay, ensuring no external memory killer or OS background limit pauses or stops the floating window and its background tasks until manually terminated by the user.
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> The following user preferences were confirmed during Phase 1:
-> - **System Overlay Behavior**: True system overlay (`TYPE_APPLICATION_OVERLAY`) hovering over all third-party apps and home screens.
-> - **Persistence Level**: Full persistence using sticky foreground service (`START_STICKY`), wake lock holding (`PowerManager.PARTIAL_WAKE_LOCK`), battery optimization exemption request (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`), and `BOOT_COMPLETED` receiver.
-> - **Manual Termination Controls**: Notification quick action button ("Stop Floating App") and an explicit power/exit button inside the floating window top bar.
+This document presents a comprehensive, categorized performance audit report and actionable recommendations for improving startup/launch speed, runtime operation smoothness, and cleaning up code redundancies across the application.
 
 ---
 
-## 1. Overview & Core Concept
+## 1. Startup & Launch Speed Optimizations
 
-- **What It Does**: Upgrades `FloatingBubbleService` into an unstoppable, persistent Android system overlay that runs continuously in the foreground. External app switches, task clearers, or low-memory pressure events cannot kill or freeze the floating window or background threads.
-- **Target Experience**: The floating icon / window remains rendered above all Android applications. The service runs as a sticky foreground process with an active ongoing system notification. The user can manually stop or dismiss the floating service at any time using either the notification quick action or the power button in the window header.
+### Findings & Analysis:
+1. **Main Thread I/O during ViewModel Instantiation**:
+   - `XenoViewModel` instantiates 11 repository objects (`contactsRepo`, `callLogRepo`, `smsRepo`, `browserRepo`, `galleryRepo`, `spaceRepo`, `gameSpaceRepo`, `passwordRepo`, `downloadRepo`, `documentRepo`, `musicRepo`) synchronously on the main thread during `init`.
+   - Repository constructors perform synchronous `getSharedPreferences(...)` queries and register broadcast receivers during app cold-start before the first frame renders.
+2. **Redundant Snapshot Seeding at Launch**:
+   - In `XenoViewModel.init`, lines 236-238 synchronously query `getCachedContactsSnapshot()`, `getCachedCallLogsSnapshot()`, and `getCachedThreadsSnapshot()`.
+   - Immediately afterward, `boostAppPerformanceAndFastLoadHelper()` is called on line 247, which re-queries the exact same snapshots on lines 377-379 via `viewModelScope.launch(Dispatchers.Default)`.
+3. **Eager Preloading of Off-Screen Resources**:
+   - `loadAllData(forceRefresh = true)` runs at app startup and queries gallery media items (`galleryRepo.getMediaItems()`) even when the user opens directly to the Calls or Messages tab.
+   - Deferring non-active tab resources (Gallery, Documents, Browser tabs) until those specific screens or features are accessed reduces initial memory allocation and CPU contention during cold boot.
+4. **Touch Dispatch Overhead in `MainActivity`**:
+   - `MainActivity.dispatchTouchEvent` intercepts every touch gesture window-wide to compute swipe-down gesture bounds for `GlobalSwipeDownTracker`. Performing density conversions and math calculations on every touch event adds unnecessary frame latency on 120Hz displays.
 
----
-
-## 2. User Experience & Visual Design
-
-- **Floating Top Bar Power Button**:
-  - Add a dedicated Power/Exit action icon (`Icons.Filled.PowerSettingsNew` / `Icons.Filled.Close`) in `FloatingWindowTopBar.kt`.
-  - Tapping this button presents a confirmation toast / dialog ("Stop Rabbit Service?"), allowing the user to shut down the persistent background service completely.
-- **Ongoing Persistent System Notification**:
-  - Displays a high-priority ongoing notification ("Rabbit Floating Engine Active") with a "Stop Service" action button (`PendingIntent` targeting `ACTION_STOP`).
-- **Battery Optimization Exemption Card in Settings**:
-  - Add a dedicated status card in `FloatingSettingsDialog.kt` indicating whether Battery Saver / Doze mode exemptions are granted, with a 1-tap button to launch `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
-
----
-
-## 3. Technical Architecture & Component Structure
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          Android OS System Layer                        │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                    BOOT_COMPLETED / App Launcher
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     FloatingBubbleService (Foreground)                  │
-│                                                                         │
-│  - START_STICKY onStartCommand()                                         │
-│  - Partial Wake Lock (PowerManager)                                     │
-│  - Ongoing Foreground Notification ("Rabbit Active")                    │
-│  - Quick Action "Stop Service" Intent                                   │
-│  - TYPE_APPLICATION_OVERLAY WindowManager View                         │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                 Taps Bubble
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        MainActivity Floating Window                     │
-│                                                                         │
-│  - Translucent System Card Frame                                        │
-│  - FloatingWindowTopBar (Minimize / Fit / Settings / Power Exit Button)  │
-│  - Active Tab View (Messages / Browser / Clone Space)                    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+### Proposed Recommendations:
+- **Lazy Repository Instantiation**: Convert secondary repositories (Gallery, Documents, Music, Passwords, Browser) to lazy delegates or initialized on-demand when navigating to those tabs.
+- **Unified 0ms Snapshot Preloader**: Combine snapshot seeding into a single IO-scheduled initialization pass that populates `_uiState` without duplicate SharedPreferences JSON parsing.
+- **Deferred Feature Loading**: Load media, browser history, and documents lazily when the user explicitly switches to those tabs/drawers rather than eagerly on cold start.
+- **Optimized Touch Tracking**: Restrict gesture calculation to top-edge drag events rather than calculating distance matrices on every touch move.
 
 ---
 
-## 4. Key Technical Decisions & Implementation Steps
+## 2. Operation Speed & Smoothness Optimizations
 
-### Step 1: Upgrade `FloatingBubbleService` Foreground Persistence
-- Configure `onStartCommand` to return `START_STICKY` so the Android OS automatically resurrects the service if killed under memory pressure.
-- Acquire a `PowerManager.WakeLock` (`PARTIAL_WAKE_LOCK`) inside `FloatingBubbleService` while active to prevent CPU sleeping during background network calls or clone tasks.
-- Add an explicit `ACTION_STOP` broadcast / intent handler to clean up wake locks, remove system overlay views, and invoke `stopSelf()`.
+### Findings & Analysis:
+1. **Monolithic `XenoUiState` Data Class**:
+   - `XenoUiState` contains 30+ properties across calls, SMS, contacts, browser tabs, media items, document folders, and notifications.
+   - Whenever any single field changes (e.g. dialpad digit input or duration update), a copy of the entire state object is emitted. While Compose skips unchanged composables, splitting high-frequency state (e.g., active call duration, typing text) prevents unnecessary top-level state recalculation.
+2. **Unbounded Memory Cache Accumulation**:
+   - `SmsRepository` maintains `inMemoryMessages` (`mutableListOf`) and `threadMessagesCache` (`ConcurrentHashMap`). During long sessions with heavy SMS activity, in-memory caches grow indefinitely without an LRU eviction strategy or memory pressure trimming (`onTrimMemory`).
+3. **Repeated Telephony System Queries**:
+   - `TelecomHelper.getAvailableSimCards(context)` queries `SubscriptionManager` and `TelecomManager` on multiple user interactions (call placement, chat SIM selector, carrier resolution).
+   - Caching the available SIM list in memory and invalidating only on `ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED` or `ACTION_SUBINFO_STATE_CHANGE` eliminates redundant system IPC calls.
+4. **Compose Recomposition & Derived State**:
+   - In `CallsScreen.kt` and `ChatScreen.kt`, derived lists and filtered log groupings should consistently leverage `@Stable` / `@Immutable` annotations and `derivedStateOf` to ensure smooth 60fps/120fps scrolling in LazyColumns.
 
-### Step 2: Add Notification Quick Action ("Stop Service")
-- Update `buildNotification()` in `FloatingBubbleService` to include a `NotificationCompat.Action` pointing to `ACTION_STOP`.
-- Ensure tapping "Stop Service" in the notification drawer cleanly stops the service and dismisses the floating bubble icon.
+### Proposed Recommendations:
+- **LRU Cache Capping**: Implement a max-capacity bound (e.g., 200 items per thread) on `SmsRepository.threadMessagesCache` and `inMemoryMessages`.
+- **System Service Caching**: Cache SIM info and active subscription handles with broadcast-driven invalidation.
+- **Compose Stability Polish**: Ensure all domain model lists passed into LazyColumn items use stable keys and derived state.
 
-### Step 3: Add In-Window Power/Exit Button in `FloatingWindowTopBar`
-- Update `FloatingWindowTopBar.kt` to include a Power/Close button on the far right.
-- Tapping this button invokes an `onStopApp` callback that sends `ACTION_STOP` to `FloatingBubbleService` and finishes `MainActivity`.
+---
 
-### Step 4: Battery Optimization Exemption Setup
-- Implement a helper function `isIgnoringBatteryOptimizations(context)` and `requestIgnoreBatteryOptimizations(context)` in `FloatingBubbleService`.
-- Add an interactive card in `FloatingSettingsDialog.kt` allowing the user to verify and request battery optimization exemption for uninterrupted execution during Doze mode.
+## 3. Code Redundancies & Cleanup Areas
 
-### Step 5: Service Resurrection Receiver (`BootReceiver`)
-- Create `FloatingBootReceiver` listening for `ACTION_BOOT_COMPLETED` and `ACTION_MY_PACKAGE_REPLACED` to automatically restart `FloatingBubbleService` on device reboot if enabled in preferences.
+### Findings & Analysis:
+1. **Duplicate Snapshot Seeding**:
+   - Remove redundant `getCached...Snapshot()` calls in `XenoViewModel.init` and consolidate snapshot loading inside `boostAppPerformanceAndFastLoadHelper()`.
+2. **Redundant Call History Post-Sync Timers**:
+   - In `XenoViewModel.triggerPostCallHistorySync()`, three explicit delayed coroutines (`delay(350)` and `delay(750)`) re-query call logs. Since `CallLogContentObserver` already listens to system provider updates, debouncing the content observer handles async system writes cleanly without speculative timers.
+3. **Duplicate Carrier Resolution Logic**:
+   - `IncomingCallPopupHelper.resolveCarrierName` and `XenoNotificationHelper` have duplicate fallbacks for determining SIM carrier names. Consolidate into `TelecomHelper.resolveCarrierName`.
+
+---
+
+## Verification & Testing Plan
+
+1. **Compilation Check**:
+   - Run `compile_applet` after refactoring to ensure build stability and zero regression.
+2. **Launch & Smoothness Benchmarking**:
+   - Verify zero-latency initial frame rendering from snapshot seed.
+   - Validate smooth tab switching and list scrolling in `CallsScreen` and `ChatScreen`.
