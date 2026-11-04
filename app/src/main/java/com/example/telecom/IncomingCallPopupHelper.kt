@@ -69,13 +69,13 @@ object IncomingCallPopupHelper {
 
     /**
      * Resolves the contact name for the caller number.
+     * Returns the saved contact name if found in the user's contacts, or null if the number is not saved.
      */
-    fun resolveCallerName(context: Context, phoneNumber: String): String {
+    fun resolveCallerName(context: Context, phoneNumber: String): String? {
         val cleanNumber = phoneNumber.trim()
-        if (cleanNumber.isBlank()) return "Unknown Caller"
+        if (cleanNumber.isBlank() || cleanNumber == "Unknown Caller") return null
         val resolved = XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
-        return resolved?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) }
-            ?: cleanNumber
+        return resolved?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
     }
 
     /**
@@ -88,15 +88,19 @@ object IncomingCallPopupHelper {
         call: Call? = null
     ): IncomingCallPopup {
         val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
-        val callerName = rawCallerName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) }
+        val telecomCallerName = call?.details?.callerDisplayName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
+        val resolvedName = rawCallerName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
+            ?: telecomCallerName
             ?: resolveCallerName(context, cleanNumber)
+
+        val callerName = resolvedName?.takeIf { it.isNotBlank() && it != cleanNumber }
         val carrierName = resolveCarrierName(context, call)
 
         val isScreenOffOrLocked = OngoingCallHelper.isScreenOffOrLocked(context)
         val isInApp = MainActivity.isAppInForeground && !isScreenOffOrLocked
         val canOverlay = XenoOverlayService.canDrawOverlays(context)
 
-        Log.d(TAG, "handleIncomingCall: isInApp=$isInApp, isScreenOffOrLocked=$isScreenOffOrLocked, canOverlay=$canOverlay, carrier=$carrierName")
+        Log.d(TAG, "handleIncomingCall: isInApp=$isInApp, isScreenOffOrLocked=$isScreenOffOrLocked, canOverlay=$canOverlay, carrier=$carrierName, callerName=$callerName")
 
         val popup = IncomingCallPopup(
             callerName = callerName,

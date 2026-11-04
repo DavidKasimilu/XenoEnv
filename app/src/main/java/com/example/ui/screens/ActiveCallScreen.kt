@@ -55,66 +55,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.telecom.CallPhase
 import com.example.telecom.OngoingCallHelper
 import com.example.telecom.TelecomHelper
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
-
-/**
- * Scalloped 12-lobed flower shape for the center caller avatar as seen in Screenshots 2 & 4.
- */
-val ScallopedFlowerShape = object : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density
-    ): Outline {
-        val path = Path()
-        val cx = size.width / 2f
-        val cy = size.height / 2f
-        val baseR = min(cx, cy)
-        val amplitude = baseR * 0.08f
-        val petalCount = 12
-
-        var first = true
-        var angle = 0.0
-        val maxAngle = 2.0 * Math.PI
-        val step = 0.02
-
-        while (angle <= maxAngle) {
-            val r = (baseR - amplitude) + amplitude * cos(petalCount * angle).toFloat()
-            val x = cx + r * cos(angle).toFloat()
-            val y = cy + r * sin(angle).toFloat()
-            if (first) {
-                path.moveTo(x, y)
-                first = false
-            } else {
-                path.lineTo(x, y)
-            }
-            angle += step
-        }
-        path.close()
-        return Outline.Generic(path)
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -298,11 +251,11 @@ fun ActiveCallScreen(
                 }
             }
 
-            // 2. Center Caller Avatar inside Scalloped Flower Shape (Screenshots 2 & 4)
+            // 2. Center Caller Avatar inside smooth CircleShape
             Box(
                 modifier = Modifier
                     .size(175.dp)
-                    .clip(ScallopedFlowerShape)
+                    .clip(CircleShape)
                     .background(Color(0xFF333333)),
                 contentAlignment = Alignment.Center
             ) {

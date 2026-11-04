@@ -1684,12 +1684,16 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 } else {
+                    val effectiveName = contactName?.takeIf { it.isNotBlank() && it != number }
+                        ?: currentSession.contactName?.takeIf { it != number }
                     val activePopup = OngoingCallHelper.incomingPopupFlow.value ?: IncomingCallPopup(
-                        callerName = contactName ?: currentSession.contactName,
+                        callerName = effectiveName,
                         callerNumber = number
                     )
                     _uiState.value = _uiState.value.copy(
-                        incomingCallPopup = activePopup,
+                        incomingCallPopup = activePopup.copy(
+                            callerName = effectiveName ?: activePopup.callerName?.takeIf { it != number }
+                        ),
                         activeCallState = null
                     )
                 }
@@ -1938,7 +1942,6 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val number = callerNumber ?: "+254712901245"
         val name = callerName
             ?: XenoNotificationHelper.resolveContactNameQuick(getApplication(), number)
-            ?: "VIP Contact"
         val isScreenOff = OngoingCallHelper.isScreenOffOrLocked(getApplication())
 
         val popup = OngoingCallHelper.handleIncomingCallEvent(

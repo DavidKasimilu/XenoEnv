@@ -18,6 +18,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.ContactsRepository
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -99,16 +100,24 @@ object XenoNotificationHelper {
 
     fun resolveContactNameQuick(context: Context, phoneNumber: String): String? {
         if (phoneNumber.isBlank()) return null
+        val trimmed = phoneNumber.trim()
+        if (PriorityContactManager.isSyntheticPriorityName(trimmed)) return null
+
+        // 1. Instant 0ms memory cache lookup
+        ContactsRepository.resolveFromCache(trimmed)?.let { return it }
+
+        // 2. Query system contacts if permission is available
         val hasContactsPerm = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.READ_CONTACTS
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasContactsPerm) return null
 
-        return try {
+        // 3. PhoneLookup with original and sanitized digits
+        try {
             val lookupUri = Uri.withAppendedPath(
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-                Uri.encode(phoneNumber)
+                Uri.encode(trimmed)
             )
             context.contentResolver.query(
                 lookupUri,
@@ -117,20 +126,60 @@ object XenoNotificationHelper {
                 null,
                 null
             )?.use { cursor ->
-                while (cursor.moveToNext()) {
+                if (cursor.moveToFirst()) {
                     val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
                     if (idx != -1) {
                         val name = cursor.getString(idx)?.takeIf {
                             it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
                         }
-                        if (name != null) return name
+                        if (name != null) {
+                            ContactsRepository.indexFast(trimmed, name)
+                            return name
+                        }
                     }
                 }
-                null
             }
-        } catch (_: Exception) {
-            null
+        } catch (_: Exception) {}
+
+        // 4. Secondary lookup in CommonDataKinds.Phone with digits matching
+        val digits = trimmed.filter { it.isDigit() }
+        if (digits.isNotEmpty()) {
+            try {
+                val selection = if (digits.length >= 7) {
+                    "${ContactsContract.CommonDataKinds.Phone.NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?"
+                } else {
+                    "${ContactsContract.CommonDataKinds.Phone.NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} = ?"
+                }
+                val selectionArgs = if (digits.length >= 7) {
+                    arrayOf(trimmed, digits, "%${digits.takeLast(9)}")
+                } else {
+                    arrayOf(trimmed, digits)
+                }
+
+                context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME),
+                    selection,
+                    selectionArgs,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                        if (idx != -1) {
+                            val name = cursor.getString(idx)?.takeIf {
+                                it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
+                            }
+                            if (name != null) {
+                                ContactsRepository.indexFast(trimmed, name)
+                                return name
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
+
+        return null
     }
 
     private fun createNotificationChannels(context: Context) {
@@ -374,13 +423,15 @@ object XenoNotificationHelper {
         createNotificationChannels(context)
 
         val isPriority = PriorityContactManager.isPriorityNumber(callerNumber, context)
-        val resolvedName = if (!callerName.isNullOrBlank() && !PriorityContactManager.isSyntheticPriorityName(callerName)) {
+        val isSaved = !callerName.isNullOrBlank() && !PriorityContactManager.isSyntheticPriorityName(callerName) && callerName != callerNumber
+        val resolvedName = if (isSaved) {
             callerName
         } else {
-            resolveContactNameQuick(context, callerNumber) ?: callerNumber
+            resolveContactNameQuick(context, callerNumber)
         }
+        val displayTitle = resolvedName ?: callerNumber
         val initials = extractInitials(resolvedName, callerNumber)
-        val subtitleText = if (resolvedName != callerNumber && callerNumber.isNotBlank()) {
+        val subtitleText = if (resolvedName != null && resolvedName != callerNumber && callerNumber.isNotBlank()) {
             "Incoming Voice Call • $callerNumber"
         } else {
             "Incoming Voice Call"
@@ -428,7 +479,6 @@ object XenoNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val displayTitle = resolvedName
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
         val carrierName = carrierNameOverride?.takeIf { it.isNotBlank() } ?: try {
             val call = XenoInCallService.currentCall
@@ -441,7 +491,11 @@ object XenoNotificationHelper {
         } ?: "SIM 1"
 
         val titleWithCarrier = "$displayTitle ($carrierName)"
-        val subtitleWithCarrier = "Incoming call via $carrierName"
+        val subtitleWithCarrier = if (resolvedName != null && resolvedName != callerNumber) {
+            "$callerNumber • via $carrierName"
+        } else {
+            "Incoming call via $carrierName"
+        }
 
         val callCollapsedViews = RemoteViews(context.packageName, R.layout.notification_custom_call_collapsed).apply {
             setTextViewText(R.id.notif_call_avatar_text, initials)

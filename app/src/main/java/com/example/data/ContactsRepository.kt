@@ -29,6 +29,48 @@ class ContactsRepository(private val context: Context) {
     private val phoneToNameCache = ConcurrentHashMap<String, String>()
     private val unresolvedPhonesCache = ConcurrentHashMap<String, Long>()
 
+    init {
+        getCachedContactsSnapshot()
+    }
+
+    companion object {
+        private val globalPhoneToNameCache = ConcurrentHashMap<String, String>()
+
+        fun indexFast(rawNumber: String, displayName: String) {
+            if (rawNumber.isBlank() || displayName.isBlank()) return
+            if (PriorityContactManager.isSyntheticPriorityName(displayName)) return
+            val trimmed = rawNumber.trim()
+            globalPhoneToNameCache[trimmed] = displayName
+            val digits = trimmed.filter { it.isDigit() }
+            if (digits.isNotEmpty()) {
+                globalPhoneToNameCache[digits] = displayName
+                if (digits.length >= 7) globalPhoneToNameCache[digits.takeLast(7)] = displayName
+                if (digits.length >= 9) globalPhoneToNameCache[digits.takeLast(9)] = displayName
+                if (digits.length >= 10) globalPhoneToNameCache[digits.takeLast(10)] = displayName
+            }
+        }
+
+        fun resolveFromCache(phoneNumber: String): String? {
+            if (phoneNumber.isBlank()) return null
+            val trimmed = phoneNumber.trim()
+            globalPhoneToNameCache[trimmed]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
+            val digits = trimmed.filter { it.isDigit() }
+            if (digits.isNotEmpty()) {
+                globalPhoneToNameCache[digits]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
+                if (digits.length >= 10) {
+                    globalPhoneToNameCache[digits.takeLast(10)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
+                }
+                if (digits.length >= 9) {
+                    globalPhoneToNameCache[digits.takeLast(9)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
+                }
+                if (digits.length >= 7) {
+                    globalPhoneToNameCache[digits.takeLast(7)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
+                }
+            }
+            return null
+        }
+    }
+
     /**
      * Returns an instant snapshot of Contacts from memory or lightweight disk cache
      * so Contacts and Call History names render immediately on Frame 1 with 0ms delay.
@@ -114,6 +156,7 @@ class ContactsRepository(private val context: Context) {
                 phoneToNameCache[digits.takeLast(10)] = displayName
             }
         }
+        indexFast(rawNumber, displayName)
     }
 
     /**
@@ -123,6 +166,7 @@ class ContactsRepository(private val context: Context) {
      */
     fun resolveContactNameFast(phoneNumber: String): String? {
         if (phoneNumber.isBlank()) return null
+        resolveFromCache(phoneNumber)?.let { return it }
         val trimmed = phoneNumber.trim()
         phoneToNameCache[trimmed]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
 

@@ -127,8 +127,14 @@ fun InAppCallNotificationCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val displayName = popup.callerName?.takeIf { it.isNotBlank() } ?: popup.callerNumber
-    val initial = displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "I"
+    val isSavedContact = !popup.callerName.isNullOrBlank() && popup.callerName != popup.callerNumber
+    val displayName = if (isSavedContact) popup.callerName!! else popup.callerNumber
+    val initial = if (isSavedContact) {
+        displayName.trim().firstOrNull { it.isLetter() }?.uppercaseChar()?.toString()
+            ?: displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "C"
+    } else {
+        popup.callerNumber.filter { it.isDigit() }.lastOrNull()?.toString() ?: "#"
+    }
     
     val simCarrier = remember(context, popup.carrierName) {
         popup.carrierName?.takeIf { it.isNotBlank() }
@@ -214,7 +220,7 @@ fun InAppCallNotificationCard(
                         )
                     }
                     Text(
-                        text = "Incoming call via $simCarrier",
+                        text = if (isSavedContact) "${popup.callerNumber} • via $simCarrier" else "Incoming call via $simCarrier",
                         style = MaterialTheme.typography.bodyMedium.copy(
                             color = Color(0xFFBBBBBB),
                             fontSize = 15.sp

@@ -266,8 +266,9 @@ object OngoingCallHelper {
 
     fun showIncomingCallPopup(context: Context, phoneNumber: String, contactName: String?, carrierName: String? = null): IncomingCallPopup {
         val detectedCarrier = carrierName ?: IncomingCallPopupHelper.resolveCarrierName(context, XenoInCallService.currentCall)
+        val cleanName = contactName?.takeIf { it.isNotBlank() && it != phoneNumber }
         val popup = IncomingCallPopup(
-            callerName = contactName?.takeIf { it.isNotBlank() },
+            callerName = cleanName,
             callerNumber = phoneNumber,
             carrierName = detectedCarrier
         )
@@ -383,14 +384,25 @@ object OngoingCallHelper {
     }
 
     fun updateContactNameIfMissing(phoneNumber: String, contactName: String?) {
-        if (contactName.isNullOrBlank()) return
+        if (contactName.isNullOrBlank() || contactName == phoneNumber) return
         val current = _sessionFlow.value
-        if (current.phoneNumber == phoneNumber && current.contactName.isNullOrBlank()) {
-            _sessionFlow.value = current.copy(contactName = contactName)
+        val normPhone = phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { phoneNumber.trim() }
+        val normCurrent = current.phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { current.phoneNumber.trim() }
+
+        if (normPhone.isNotEmpty() && normPhone == normCurrent) {
+            if (current.contactName.isNullOrBlank() || current.contactName == current.phoneNumber || current.contactName == phoneNumber) {
+                _sessionFlow.value = current.copy(contactName = contactName)
+            }
         }
+
         val currentPopup = _incomingPopupFlow.value
-        if (currentPopup != null && currentPopup.callerNumber == phoneNumber && currentPopup.callerName.isNullOrBlank()) {
-            _incomingPopupFlow.value = currentPopup.copy(callerName = contactName)
+        if (currentPopup != null) {
+            val normPopup = currentPopup.callerNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { currentPopup.callerNumber.trim() }
+            if (normPhone.isNotEmpty() && normPhone == normPopup) {
+                if (currentPopup.callerName.isNullOrBlank() || currentPopup.callerName == currentPopup.callerNumber || currentPopup.callerName == phoneNumber) {
+                    _incomingPopupFlow.value = currentPopup.copy(callerName = contactName)
+                }
+            }
         }
     }
 

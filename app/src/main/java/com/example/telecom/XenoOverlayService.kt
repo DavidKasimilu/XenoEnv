@@ -78,16 +78,13 @@ object XenoOverlayService {
                 null
             } ?: "SIM 1"
 
-            val rawName = if (!callerName.isNullOrBlank()) {
-                callerName
-            } else {
-                XenoNotificationHelper.resolveContactNameQuick(appContext, callerNumber) ?: callerNumber
-            }
-            val displayName = rawName
-            val initials = XenoNotificationHelper.extractInitials(rawName, callerNumber)
+            val isSaved = !callerName.isNullOrBlank() && callerName != callerNumber
+            val resolvedName = if (isSaved) callerName else XenoNotificationHelper.resolveContactNameQuick(appContext, callerNumber)
+            val displayName = resolvedName ?: callerNumber
+            val initials = XenoNotificationHelper.extractInitials(resolvedName, callerNumber)
             
             val titleWithCarrier = "$displayName ($resolvedCarrier)"
-            val subtitleWithCarrier = "Incoming call via $resolvedCarrier"
+            val subtitleWithCarrier = if (resolvedName != null) "$callerNumber • via $resolvedCarrier" else "Incoming call via $resolvedCarrier"
 
             avatarTv?.text = initials
             nameTv?.text = titleWithCarrier
@@ -102,7 +99,7 @@ object XenoOverlayService {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
-                    putExtra("caller_name", rawName)
+                    putExtra("caller_name", resolvedName)
                     putExtra("open_full_screen_call", true)
                 }
                 appContext.startActivity(intent)
@@ -116,7 +113,7 @@ object XenoOverlayService {
                 OngoingCallHelper.answerIncomingCallAndOpenFullScreen(
                     context = appContext,
                     phoneNumber = callerNumber,
-                    contactName = rawName
+                    contactName = resolvedName
                 )
 
                 val intent = Intent(appContext, MainActivity::class.java).apply {
@@ -125,7 +122,7 @@ object XenoOverlayService {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_tab", "CALLS")
                     putExtra("incoming_number", callerNumber)
-                    putExtra("caller_name", rawName)
+                    putExtra("caller_name", resolvedName)
                     putExtra("auto_answer", true)
                 }
                 appContext.startActivity(intent)
