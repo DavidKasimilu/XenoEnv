@@ -80,7 +80,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.models.CallLogEntry
+import com.example.data.models.CallLogGroup
 import com.example.data.models.CallType
+import com.example.data.models.groupConsecutiveCalls
 import com.example.telecom.PriorityContactManager
 import com.example.telecom.SimCardInfo
 import com.example.telecom.TelecomHelper
@@ -206,20 +208,21 @@ fun CallsScreen(
         }
     }
 
-    // Group logs into Today, Yesterday, Older (Screenshot 3)
+    // Group logs into consecutive 3-hour call bundles, then into Today, Yesterday, Older
     val groupedLogs = remember(filteredLogs) {
-        val today = mutableListOf<CallLogEntry>()
-        val yesterday = mutableListOf<CallLogEntry>()
-        val older = mutableListOf<CallLogEntry>()
+        val bundledGroups = groupConsecutiveCalls(filteredLogs, maxWindowMs = 3 * 60 * 60 * 1000L)
+        val today = mutableListOf<CallLogGroup>()
+        val yesterday = mutableListOf<CallLogGroup>()
+        val older = mutableListOf<CallLogGroup>()
         val now = System.currentTimeMillis()
         val oneDayMs = 24 * 60 * 60 * 1000L
 
-        for (entry in filteredLogs) {
-            val diff: Long = now - entry.date
+        for (group in bundledGroups) {
+            val diff: Long = now - group.latestEntry.date
             when {
-                diff < oneDayMs -> today.add(entry)
-                diff < 2 * oneDayMs -> yesterday.add(entry)
-                else -> older.add(entry)
+                diff < oneDayMs -> today.add(group)
+                diff < 2 * oneDayMs -> yesterday.add(group)
+                else -> older.add(group)
             }
         }
         listOf(
@@ -483,7 +486,7 @@ fun CallsScreen(
                         }
                     }
                 } else {
-                    groupedLogs.forEach { (sectionTitle, entries) ->
+                    groupedLogs.forEach { (sectionTitle, groups) ->
                         item(key = "header_$sectionTitle") {
                             Text(
                                 text = sectionTitle,
@@ -495,13 +498,15 @@ fun CallsScreen(
                         }
 
                         itemsIndexed(
-                            items = entries,
-                            key = { idx, item -> "call_${item.id}_${item.number}_$idx" }
-                        ) { _, entry ->
+                            items = groups,
+                            key = { idx, group -> "call_grp_${group.latestEntry.id}_${group.latestEntry.number}_${group.count}_$idx" }
+                        ) { _, group ->
+                            val entry = group.latestEntry
                             val isExpanded = expandedLogId == entry.id
                             val isSelected = entry.id in selectedCallIds
                             RecentsCallCard(
                                 entry = entry,
+                                callCount = group.count,
                                 isExpanded = isExpanded,
                                 isSelected = isSelected,
                                 isSelectionMode = isSelectionMode,
@@ -527,7 +532,9 @@ fun CallsScreen(
                                 onCallClick = { placeCall(entry.number, entry.displayName) },
                                 onMessageClick = { onStartSms(entry.number, entry.displayName) },
                                 onHistoryClick = { selectedCallForHistory = entry },
-                                onDeleteClick = { onDeleteCall(entry) }
+                                onDeleteClick = {
+                                    group.entries.forEach { onDeleteCall(it) }
+                                }
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                         }
@@ -656,6 +663,7 @@ private fun FavoriteContactItem(
 @Composable
 private fun RecentsCallCard(
     entry: CallLogEntry,
+    callCount: Int = 1,
     isExpanded: Boolean,
     isSelected: Boolean,
     isSelectionMode: Boolean,
@@ -674,6 +682,10 @@ private fun RecentsCallCard(
         )
         val hash = kotlin.math.abs(entry.displayName.hashCode())
         colors[hash % colors.size]
+    }
+
+    val titleText = remember(entry.displayName, callCount) {
+        if (callCount > 1) "${entry.displayName} ($callCount)" else entry.displayName
     }
 
     Card(
@@ -733,7 +745,7 @@ private fun RecentsCallCard(
 
                     Column {
                         Text(
-                            text = entry.displayName,
+                            text = titleText,
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,

@@ -127,13 +127,17 @@ fun InAppCallNotificationCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val isSavedContact = !popup.callerName.isNullOrBlank() && popup.callerName != popup.callerNumber
-    val displayName = if (isSavedContact) popup.callerName!! else popup.callerNumber
+    val cleanNumber = popup.callerNumber.trim()
+    val isSavedContact = !popup.callerName.isNullOrBlank() &&
+        popup.callerName != cleanNumber &&
+        popup.callerName != "Unknown Caller" &&
+        !com.example.telecom.PriorityContactManager.isSyntheticPriorityName(popup.callerName)
+    val displayName = if (isSavedContact) popup.callerName!! else cleanNumber
     val initial = if (isSavedContact) {
         displayName.trim().firstOrNull { it.isLetter() }?.uppercaseChar()?.toString()
             ?: displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "C"
     } else {
-        popup.callerNumber.filter { it.isDigit() }.lastOrNull()?.toString() ?: "#"
+        cleanNumber.filter { it.isDigit() }.lastOrNull()?.toString() ?: "#"
     }
     
     val simCarrier = remember(context, popup.carrierName) {
@@ -220,7 +224,7 @@ fun InAppCallNotificationCard(
                         )
                     }
                     Text(
-                        text = if (isSavedContact) "${popup.callerNumber} • via $simCarrier" else "Incoming call via $simCarrier",
+                        text = if (isSavedContact) "$cleanNumber • via $simCarrier" else "Incoming call via $simCarrier",
                         style = MaterialTheme.typography.bodyMedium.copy(
                             color = Color(0xFFBBBBBB),
                             fontSize = 15.sp

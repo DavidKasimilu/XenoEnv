@@ -289,13 +289,18 @@ object TelecomHelper {
                         val carrier = subInfo.carrierName?.toString()?.takeIf { it.isNotBlank() }
                             ?: subInfo.displayName?.toString()?.takeIf { it.isNotBlank() }
                             ?: "SIM ${slotIndex + 1}"
-                        val number = subInfo.number?.takeIf { it.isNotBlank() }
+                        val subPhone = try {
+                            subInfo.number?.takeIf { it.isNotBlank() }
+                        } catch (_: Exception) {
+                            null
+                        }
+                        val realSubId = subInfo.subscriptionId
                         simList.add(
                             SimCardInfo(
                                 phoneAccountHandle = matchedHandle,
                                 carrierName = carrier,
-                                subscriptionId = slotIndex,
-                                phoneNumber = number
+                                subscriptionId = realSubId,
+                                phoneNumber = subPhone
                             )
                         )
                     }

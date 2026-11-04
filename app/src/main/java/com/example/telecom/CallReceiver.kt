@@ -21,7 +21,9 @@ class CallReceiver : BroadcastReceiver() {
 
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
-                    val phone = incomingNumber.trim().ifEmpty { "Unknown Caller" }
+                    val phone = incomingNumber.trim().ifEmpty {
+                        OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
+                    }.ifEmpty { "Private Number" }
                     if (OngoingCallHelper.shouldProcessIncomingCall(phone)) {
                         IncomingCallPopupHelper.handleIncomingCall(
                             context = context.applicationContext,
@@ -37,6 +39,22 @@ class CallReceiver : BroadcastReceiver() {
                     }
                 }
                 TelephonyManager.EXTRA_STATE_IDLE -> {
+                    val currentSession = OngoingCallHelper.sessionFlow.value
+                    val wasRingingMissed = !OngoingCallHelper.userInitiatedDecline && 
+                        (currentSession.phase == CallPhase.INCOMING_RINGING || (currentSession.isIncoming && !currentSession.isConnected))
+                    val missedNumber = currentSession.phoneNumber.ifBlank {
+                        OngoingCallHelper.incomingPopupFlow.value?.callerNumber.orEmpty()
+                    }.ifBlank { incomingNumber.trim() }
+                    val missedName = currentSession.contactName ?: OngoingCallHelper.incomingPopupFlow.value?.callerName
+
+                    if (wasRingingMissed && missedNumber.isNotBlank() && missedNumber != "Private Number") {
+                        XenoNotificationHelper.showMissedCallNotification(
+                            context.applicationContext,
+                            missedName,
+                            missedNumber
+                        )
+                    }
+                    OngoingCallHelper.dismissIncomingCallPopup(context.applicationContext)
                     XenoInCallService.onCallEndedListener?.invoke()
                 }
             }

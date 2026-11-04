@@ -294,7 +294,11 @@ object OngoingCallHelper {
         }
     }
 
+    @Volatile
+    var userInitiatedDecline: Boolean = false
+
     fun startOutgoingSession(phoneNumber: String, contactName: String?, carrierName: String? = null) {
+        userInitiatedDecline = false
         stopDurationTimer()
         _incomingPopupFlow.value = null
         val existingCall = XenoInCallService.currentCall
@@ -333,6 +337,7 @@ object OngoingCallHelper {
         carrierName: String? = null,
         openFullScreenImmediately: Boolean = false
     ) {
+        userInitiatedDecline = false
         val current = _sessionFlow.value
         val existingCall = XenoInCallService.currentCall
         val isAlreadyActive = existingCall?.state == Call.STATE_ACTIVE
@@ -488,6 +493,10 @@ object OngoingCallHelper {
                 releaseIncomingWakeLock()
                 _incomingPopupFlow.value = null
                 val finalDuration = getCurrentDurationSeconds()
+                val wasRingingMissed = !userInitiatedDecline && (current.phase == CallPhase.INCOMING_RINGING || (current.isIncoming && !current.isConnected))
+                val missedNumber = current.phoneNumber.ifBlank { _incomingPopupFlow.value?.callerNumber.orEmpty() }
+                val missedName = current.contactName ?: _incomingPopupFlow.value?.callerName
+
                 stopDurationTimer()
                 _sessionFlow.value = current.copy(
                     phase = CallPhase.DISCONNECTED,
@@ -495,6 +504,14 @@ object OngoingCallHelper {
                     hasTelecomCall = false,
                     isFullScreenCallVisible = false
                 )
+
+                if (wasRingingMissed && missedNumber.isNotBlank()) {
+                    val appContext = call?.details?.accountHandle?.let { XenoInCallService.instance?.applicationContext }
+                        ?: XenoInCallService.instance?.applicationContext
+                    appContext?.let { ctx ->
+                        XenoNotificationHelper.showMissedCallNotification(ctx, missedName, missedNumber)
+                    }
+                }
             }
         }
     }
@@ -577,11 +594,11 @@ object OngoingCallHelper {
     }
 
     fun declineIncomingCall(context: Context) {
+        userInitiatedDecline = true
         val declinedNumber = _sessionFlow.value.phoneNumber.ifBlank {
             _incomingPopupFlow.value?.callerNumber.orEmpty()
         }
         val declinedName = _sessionFlow.value.contactName ?: _incomingPopupFlow.value?.callerName
-        val isIncomingCall = _sessionFlow.value.isIncoming || _sessionFlow.value.phase == CallPhase.INCOMING_RINGING || _incomingPopupFlow.value != null
 
         releaseIncomingWakeLock()
         silenceIncomingRinger(context)
@@ -593,18 +610,12 @@ object OngoingCallHelper {
         _sessionFlow.value = OngoingCallSession()
 
         if (declinedNumber.isNotBlank()) {
-            if (isIncomingCall) {
-                XenoNotificationHelper.showMissedCallNotification(context, declinedName, declinedNumber)
-            }
             onCallDeclinedListener?.invoke(declinedNumber, declinedName)
         }
     }
 
     fun endCall(context: Context): Long {
-        val wasIncomingUnanswered = !_sessionFlow.value.isConnected && (_sessionFlow.value.isIncoming || _sessionFlow.value.phase == CallPhase.INCOMING_RINGING)
-        val endNumber = _sessionFlow.value.phoneNumber.ifBlank { _incomingPopupFlow.value?.callerNumber.orEmpty() }
-        val endName = _sessionFlow.value.contactName ?: _incomingPopupFlow.value?.callerName
-
+        userInitiatedDecline = true
         val finalDuration = if (_sessionFlow.value.isConnected) {
             getCurrentDurationSeconds().coerceAtLeast(1L)
         } else {
@@ -618,10 +629,6 @@ object OngoingCallHelper {
         stopDurationTimer()
         resetAudioRouting(context)
         _sessionFlow.value = OngoingCallSession()
-
-        if (wasIncomingUnanswered && endNumber.isNotBlank()) {
-            XenoNotificationHelper.showMissedCallNotification(context, endName, endNumber)
-        }
 
         return finalDuration
     }

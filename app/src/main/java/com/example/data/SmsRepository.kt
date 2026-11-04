@@ -562,12 +562,21 @@ class SmsRepository(
         // Attempt actual SmsManager dispatch if permission is available
         if (hasSendPermission) {
             try {
-                val smsManager: SmsManager = if (subscriptionId != null && subscriptionId != -1) {
+                val effectiveSubId = if (subscriptionId != null && subscriptionId != -1) {
+                    subscriptionId
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    val defaultSmsSub = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+                    if (defaultSmsSub != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID && defaultSmsSub >= 0) {
+                        defaultSmsSub
+                    } else null
+                } else null
+
+                val smsManager: SmsManager = if (effectiveSubId != null) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        context.getSystemService(SmsManager::class.java).createForSubscriptionId(subscriptionId)
+                        context.getSystemService(SmsManager::class.java).createForSubscriptionId(effectiveSubId)
                     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                         @Suppress("DEPRECATION")
-                        SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+                        SmsManager.getSmsManagerForSubscriptionId(effectiveSubId)
                     } else {
                         @Suppress("DEPRECATION")
                         SmsManager.getDefault()

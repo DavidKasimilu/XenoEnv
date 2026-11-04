@@ -87,13 +87,17 @@ object IncomingCallPopupHelper {
         rawCallerName: String? = null,
         call: Call? = null
     ): IncomingCallPopup {
-        val cleanNumber = phoneNumber.trim().ifEmpty { "Unknown Caller" }
-        val telecomCallerName = call?.details?.callerDisplayName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
-        val resolvedName = rawCallerName?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
-            ?: telecomCallerName
-            ?: resolveCallerName(context, cleanNumber)
+        val cleanNumber = phoneNumber.trim().ifEmpty {
+            call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+        }.ifEmpty { "Private Number" }
+        val telecomCallerName = call?.details?.callerDisplayName?.takeIf { 
+            it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber && it != "Unknown Caller" 
+        }
+        val resolvedName = rawCallerName?.takeIf { 
+            it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber && it != "Unknown Caller" 
+        } ?: telecomCallerName ?: resolveCallerName(context, cleanNumber)
 
-        val callerName = resolvedName?.takeIf { it.isNotBlank() && it != cleanNumber }
+        val callerName = resolvedName?.takeIf { it.isNotBlank() && it != cleanNumber && it != "Unknown Caller" }
         val carrierName = resolveCarrierName(context, call)
 
         val isScreenOffOrLocked = OngoingCallHelper.isScreenOffOrLocked(context)
