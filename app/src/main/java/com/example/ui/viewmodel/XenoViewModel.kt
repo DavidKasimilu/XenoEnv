@@ -863,18 +863,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             )
-            result.onSuccess {
-                delay(420)
-                val currentAfterSend = _uiState.value.activeChatMessages.find { it.id == msgId }?.deliveryStatus
-                if (currentAfterSend == SmsDeliveryStatus.SENDING) {
-                    applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.SENT)
-                }
-                delay(650)
-                val currentBeforeDeliver = _uiState.value.activeChatMessages.find { it.id == msgId }?.deliveryStatus
-                if (currentBeforeDeliver == SmsDeliveryStatus.SENT || currentBeforeDeliver == SmsDeliveryStatus.SENDING) {
-                    applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.DELIVERED)
-                }
-            }.onFailure {
+            result.onFailure {
                 applyMessageDeliveryStatus(msgId, SmsDeliveryStatus.FAILED)
             }
         }

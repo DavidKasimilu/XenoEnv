@@ -553,7 +553,7 @@ fun ChatScreen(
                                             color = contentColor
                                         )
                                         Text(
-                                            text = "Sending SMS to ${thread.displayName}...",
+                                            text = "Sending...",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Medium,
                                             color = contentColor
@@ -567,7 +567,7 @@ fun ChatScreen(
                                             tint = contentColor
                                         )
                                         Text(
-                                            text = "SMS sent to carrier • Awaiting delivery report...",
+                                            text = "Sent",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Medium,
                                             color = contentColor
@@ -581,7 +581,7 @@ fun ChatScreen(
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                         Text(
-                                            text = "SMS delivered to ${thread.displayName} (${outgoing.formattedTime})",
+                                            text = "Delivered (${outgoing.formattedTime})",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = contentColor
@@ -595,7 +595,7 @@ fun ChatScreen(
                                             tint = MaterialTheme.colorScheme.error
                                         )
                                         Text(
-                                            text = "SMS delivery failed • Tap to retry",
+                                            text = "Failed to send • Tap to retry",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = contentColor,

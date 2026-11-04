@@ -167,17 +167,23 @@ class SmsRepository(
                 if (msgId == -1L) return
                 when (intent?.action) {
                     ACTION_SMS_SENT -> {
-                        val newStatus = if (resultCode == Activity.RESULT_OK) {
-                            SmsDeliveryStatus.SENT
-                        } else {
-                            SmsDeliveryStatus.FAILED
+                        val newStatus = when (resultCode) {
+                            Activity.RESULT_OK -> SmsDeliveryStatus.SENT
+                            SmsManager.RESULT_ERROR_GENERIC_FAILURE,
+                            SmsManager.RESULT_ERROR_NO_SERVICE,
+                            SmsManager.RESULT_ERROR_NULL_PDU,
+                            SmsManager.RESULT_ERROR_RADIO_OFF -> SmsDeliveryStatus.FAILED
+                            else -> if (resultCode == Activity.RESULT_OK) SmsDeliveryStatus.SENT else SmsDeliveryStatus.FAILED
                         }
                         updateMessageDeliveryStatus(msgId, newStatus)
                     }
                     ACTION_SMS_DELIVERED -> {
-                        if (resultCode == Activity.RESULT_OK) {
-                            updateMessageDeliveryStatus(msgId, SmsDeliveryStatus.DELIVERED)
+                        val newStatus = if (resultCode == Activity.RESULT_OK) {
+                            SmsDeliveryStatus.DELIVERED
+                        } else {
+                            SmsDeliveryStatus.FAILED
                         }
+                        updateMessageDeliveryStatus(msgId, newStatus)
                     }
                 }
             }
@@ -188,7 +194,7 @@ class SmsRepository(
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                context.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             } else {
                 context.applicationContext.registerReceiver(receiver, filter)
             }
@@ -637,8 +643,14 @@ class SmsRepository(
                     Log.d("SmsRepository", "Sent SMS stored in provider note: ${e.message}")
                 }
             } catch (e: Exception) {
-                Log.w("SmsRepository", "Carrier SMS send error: ${e.message}")
+                Log.e("SmsRepository", "Carrier SMS send error: ${e.message}", e)
+                updateMessageDeliveryStatus(messageId, SmsDeliveryStatus.FAILED)
+                return@withContext Result.failure(e)
             }
+        } else {
+            Log.w("SmsRepository", "SEND_SMS permission not granted")
+            updateMessageDeliveryStatus(messageId, SmsDeliveryStatus.FAILED)
+            return@withContext Result.failure(SecurityException("SEND_SMS permission not granted"))
         }
 
         // Create the message object
