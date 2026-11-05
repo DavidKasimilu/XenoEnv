@@ -813,7 +813,7 @@ private fun RecentsCallCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(end = 8.dp)
                 ) {
-                    // WhatsApp call filled green button
+                    // WhatsApp call green button
                     Surface(
                         onClick = onWhatsAppClick,
                         modifier = Modifier.size(36.dp),
@@ -830,18 +830,15 @@ private fun RecentsCallCard(
                         }
                     }
 
-                    // Normal call plain white icon
-                    IconButton(
-                        onClick = onCallClick,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Call,
-                            contentDescription = "Call",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+                    // Normal call white icon (no circle)
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = "Call",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable(onClick = onCallClick)
+                    )
                 }
             }
 

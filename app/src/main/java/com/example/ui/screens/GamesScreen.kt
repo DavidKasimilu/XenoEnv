@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
-import android.graphics.BitmapFactory
-import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -405,17 +404,17 @@ fun GamesScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 88.dp)
                 ) {
-                    items(installedGames, key = { it.packageName }) { game ->
-                        val appIcon = remember(game.packageName, game.iconPath) {
-                            try {
-                                if (!game.iconPath.isNullOrBlank() && File(game.iconPath).exists()) {
-                                    val bmp = BitmapFactory.decodeFile(game.iconPath)
-                                    if (bmp != null) BitmapDrawable(context.resources, bmp) else null
-                                } else {
-                                    pm.getApplicationIcon(game.packageName)
-                                }
-                            } catch (_: Exception) {
-                                null
+                    items(
+                        items = installedGames,
+                        key = { it.packageName },
+                        contentType = { "game_card" }
+                    ) { game ->
+                        // Use iconPath (File) or packageName (PM Drawable) as data for Coil
+                        val iconSource = remember(game.packageName, game.iconPath) {
+                            if (!game.iconPath.isNullOrBlank() && File(game.iconPath).exists()) {
+                                File(game.iconPath)
+                            } else {
+                                try { pm.getApplicationIcon(game.packageName) } catch (_: Exception) { null }
                             }
                         }
 
@@ -442,7 +441,7 @@ fun GamesScreen(
                                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
                                     AppIconImage(
-                                        iconDrawable = appIcon,
+                                        iconData = iconSource,
                                         fallbackName = game.appName,
                                         modifier = Modifier.size(54.dp)
                                     )
@@ -1017,7 +1016,7 @@ fun GamesScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     AppIconImage(
-                                        iconDrawable = app.icon,
+                                        iconData = app.icon,
                                         fallbackName = app.appName,
                                         modifier = Modifier.size(38.dp)
                                     )

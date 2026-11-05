@@ -465,7 +465,7 @@ fun CloneAppVisualIcon(
     ) {
         if (appIcon != null) {
             AppIconImage(
-                iconDrawable = appIcon,
+                iconData = appIcon,
                 fallbackName = instance.originalName,
                 modifier = Modifier.size(iconSize)
             )
@@ -637,7 +637,7 @@ fun CloneAppVisualIcon(
             }
         } else {
             AppIconImage(
-                iconDrawable = null,
+                iconData = null,
                 fallbackName = instance.originalName,
                 modifier = Modifier.size(iconSize)
             )

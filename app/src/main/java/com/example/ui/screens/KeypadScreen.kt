@@ -170,7 +170,8 @@ fun KeypadScreen(
             ) {
                 items(
                     items = suggestedContacts,
-                    key = { "sugg_${it.id}_${it.primaryNumber}" }
+                    key = { "sugg_${it.id}_${it.primaryNumber}" },
+                    contentType = { "contact_item" }
                 ) { contact ->
                     val avatarColor = remember(contact.displayName) {
                         val colors = listOf(

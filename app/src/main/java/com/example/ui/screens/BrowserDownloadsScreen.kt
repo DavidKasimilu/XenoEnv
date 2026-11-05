@@ -140,6 +140,7 @@ fun BrowserDownloadsScreen(
         onStartBrowsing()
     }
 
+    val dateSdf = remember { SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.getDefault()) }
     Box(modifier = modifier.fillMaxSize().testTag("browser_downloads_screen")) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Header
@@ -318,11 +319,16 @@ fun BrowserDownloadsScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredDownloads, key = { "dl_${it.id}_${it.fileName}" }) { item ->
+                    items(
+                        items = filteredDownloads,
+                        key = { "dl_${it.id}_${it.fileName}" },
+                        contentType = { "download_item" }
+                    ) { item ->
                         val isVideo = item.mimeType.contains("video", ignoreCase = true) ||
                                 listOf("mp4", "mkv", "webm", "avi", "3gp", "mov").any { item.fileName.lowercase().endsWith(".$it") }
                         DownloadItemCard(
                             item = item,
+                            dateSdf = dateSdf,
                             onOpen = {
                                 if (isVideo) {
                                     val safeUri = if (item.filePath != null && File(item.filePath).exists()) {
@@ -428,6 +434,7 @@ fun BrowserDownloadsScreen(
 @Composable
 private fun DownloadItemCard(
     item: DownloadItem,
+    dateSdf: SimpleDateFormat,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
@@ -438,9 +445,8 @@ private fun DownloadItemCard(
         if (item.fileSize > 0) Formatter.formatShortFileSize(context, item.fileSize) else "Unknown size"
     }
 
-    val formattedDate = remember(item.timestamp) {
-        val sdf = SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.getDefault())
-        sdf.format(Date(item.timestamp))
+    val formattedDate = remember(item.timestamp, dateSdf) {
+        dateSdf.format(Date(item.timestamp))
     }
 
     val fileIcon: ImageVector = remember(item.mimeType, item.fileName) {

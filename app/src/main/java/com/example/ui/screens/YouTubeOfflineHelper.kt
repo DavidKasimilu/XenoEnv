@@ -2318,6 +2318,7 @@ fun YouTubeOfflineDesktopView(
 
             // Desktop-Style Downloaded Videos List below Player
             if (!isFullscreenPlayer) {
+                val dateSdf = remember { SimpleDateFormat("MMM d, yyyy", Locale.US) }
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
@@ -2338,12 +2339,13 @@ fun YouTubeOfflineDesktopView(
 
                     items(
                         items = videos,
-                        key = { it.videoId }
+                        key = { it.videoId },
+                        contentType = { "offline_video" }
                     ) { item ->
-                        val isSelected = activePlayingVideo?.videoId == item.videoId
                         YouTubeOfflineVideoCard(
                             video = item,
-                            isSelected = isSelected,
+                            dateSdf = dateSdf,
+                            isSelected = activePlayingVideo?.videoId == item.videoId,
                             onClick = { onSelectVideo(item) },
                             onDelete = { onDeleteVideo(item.videoId) }
                         )
@@ -2357,6 +2359,7 @@ fun YouTubeOfflineDesktopView(
 @Composable
 private fun YouTubeOfflineVideoCard(
     video: YouTubeOfflineVideo,
+    dateSdf: SimpleDateFormat,
     isSelected: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit
@@ -2371,9 +2374,9 @@ private fun YouTubeOfflineVideoCard(
         }
     }
 
-    val dateStr = remember(video.downloadedAt) {
+    val dateStr = remember(video.downloadedAt, dateSdf) {
         try {
-            SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(video.downloadedAt))
+            dateSdf.format(Date(video.downloadedAt))
         } catch (_: Exception) {
             ""
         }

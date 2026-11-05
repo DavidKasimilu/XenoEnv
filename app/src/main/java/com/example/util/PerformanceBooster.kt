@@ -1,6 +1,5 @@
 package com.example.util
 
-import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.Build
 import android.util.Log
@@ -8,7 +7,6 @@ import com.example.data.models.SpeedBoostResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.random.Random
 
 object PerformanceBooster {
 
@@ -36,40 +34,25 @@ object PerformanceBooster {
             Log.w(TAG, "Error cleaning cache directories: ${e.message}")
         }
 
-        // 2. Clear WebView cache databases if available
-        try {
-            val webViewCache = File(context.cacheDir.parent, "app_webview")
-            if (webViewCache.exists()) {
-                cleanedFilesCount += deleteDirContents(webViewCache)
-            }
-        } catch (_: Exception) {}
-
-        // 3. Trigger System & Runtime Memory Trimming
-        try {
-            (context.applicationContext as? ComponentCallbacks2)?.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
-            System.gc()
-            Runtime.getRuntime().gc()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error trimming memory: ${e.message}")
-        }
-
         val runtimeAfter = Runtime.getRuntime()
         val totalMemAfter = runtimeAfter.totalMemory()
         val freeMemAfter = runtimeAfter.freeMemory()
         val usedMemAfterMb = ((totalMemAfter - freeMemAfter) / (1024 * 1024)).toInt()
 
         val actualFreedMb = (usedMemBeforeMb - usedMemAfterMb).coerceAtLeast(0)
-        val finalFreedMb = if (actualFreedMb > 20) actualFreedMb else Random.nextInt(120, 210)
-        val speedBoostPct = Random.nextInt(38, 52)
-        val initialRamPct = Random.nextInt(74, 88)
-        val boostedRamPct = (initialRamPct - Random.nextInt(28, 38)).coerceAtLeast(32)
+        
+        // Calculate percentages based on heap limits for "real" feedback
+        val maxMem = runtimeAfter.maxMemory() / (1024 * 1024)
+        val initialRamPct = ((usedMemBeforeMb.toFloat() / maxMem) * 100).toInt().coerceIn(0, 100)
+        val boostedRamPct = ((usedMemAfterMb.toFloat() / maxMem) * 100).toInt().coerceIn(0, 100)
+        val speedBoostPct = if (initialRamPct > boostedRamPct) (initialRamPct - boostedRamPct) else 0
 
         SpeedBoostResult(
-            freedMemoryMb = finalFreedMb,
+            freedMemoryMb = actualFreedMb,
             speedBoostPercent = speedBoostPct,
             initialRamPercent = initialRamPct,
             boostedRamPercent = boostedRamPct,
-            cleanedCacheFilesCount = cleanedFilesCount.coerceAtLeast(8)
+            cleanedCacheFilesCount = cleanedFilesCount
         )
     }
 

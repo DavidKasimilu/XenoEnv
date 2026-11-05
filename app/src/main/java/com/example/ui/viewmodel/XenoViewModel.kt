@@ -268,7 +268,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             XenoNotificationListenerService.notificationsFlow.collect { notifs ->
                 val dedup = notifs.distinctBy { "${it.packageName}::${it.title.trim()}::${it.text.trim()}" }
-                _uiState.value = _uiState.value.copy(deviceNotifications = dedup)
+                _uiState.update { it.copy(deviceNotifications = dedup) }
             }
         }
 
@@ -302,10 +302,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
         OngoingCallHelper.onCallDeclinedListener = { number, name ->
             if (_uiState.value.incomingCallPopup != null || _uiState.value.activeCallState != null) {
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     incomingCallPopup = null,
                     activeCallState = null
-                )
+                ) }
             }
             if (number.isNotBlank()) {
                 val now = System.currentTimeMillis()
@@ -335,17 +335,17 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 smsRepo.markThreadAsRead(threadId, senderNumber)
                 val threads = smsRepo.getConversations()
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     smsThreads = threads,
                     incomingSmsPopup = null
-                )
+                ) }
             }
         }
 
         viewModelScope.launch {
             OngoingCallHelper.incomingPopupFlow.collect { popup ->
                 if (_uiState.value.incomingCallPopup != popup) {
-                    _uiState.value = _uiState.value.copy(incomingCallPopup = popup)
+                    _uiState.update { it.copy(incomingCallPopup = popup) }
                 }
             }
         }
@@ -355,27 +355,27 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 when {
                     session.phase == CallPhase.IDLE -> {
                         if (_uiState.value.activeCallState != null || _uiState.value.incomingCallPopup != null) {
-                            _uiState.value = _uiState.value.copy(
+                            _uiState.update { it.copy(
                                 activeCallState = null,
                                 incomingCallPopup = null
-                            )
+                            ) }
                         }
                     }
                     session.isFullScreenCallVisible && session.phoneNumber.isNotBlank() && session.phase != CallPhase.DISCONNECTED -> {
                         val currentActive = _uiState.value.activeCallState
                         if (currentActive == null || currentActive.phoneNumber != session.phoneNumber) {
-                            _uiState.value = _uiState.value.copy(
+                            _uiState.update { it.copy(
                                 activeCallState = ActiveCallState(
                                     phoneNumber = session.phoneNumber,
                                     contactName = session.contactName,
                                     isIncoming = session.isIncoming
                                 ),
                                 incomingCallPopup = null
-                            )
+                            ) }
                         } else if (!session.contactName.isNullOrBlank() && currentActive.contactName.isNullOrBlank()) {
-                            _uiState.value = _uiState.value.copy(
+                            _uiState.update { it.copy(
                                 activeCallState = currentActive.copy(contactName = session.contactName)
-                            )
+                            ) }
                         }
                     }
                 }
@@ -413,7 +413,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val passwords = passwordRepo.getSavedPasswords()
         val trackedDownloads = downloadRepo.getTrackedDownloads()
         val games = gameSpaceRepo.loadUserGames()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             browserTabs = tabs,
             activeBrowserTabId = activeId,
             browserHistory = history,
@@ -422,7 +422,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             savedPasswords = passwords,
             downloads = trackedDownloads,
             installedGames = games
-        )
+        ) }
     }
 
     /**
@@ -509,10 +509,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     callLogs = enrichedLogs,
                     unseenMissedCallsCount = newUnseenCount
-                )
+                ) }
         }
     }
 
@@ -534,7 +534,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val newSeenTs = maxOf(now, maxCallDate)
         callPrefs.edit().putLong("last_seen_calls_ts", newSeenTs).apply()
         if (_uiState.value.unseenMissedCallsCount != 0) {
-            _uiState.value = _uiState.value.copy(unseenMissedCallsCount = 0)
+            _uiState.update { it.copy(unseenMissedCallsCount = 0) }
         }
         viewModelScope.launch(Dispatchers.IO) {
             callLogRepo.markMissedCallsAsRead()
@@ -554,11 +554,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val (tabs, activeId) = browserRepo.loadTabs()
             val history = browserRepo.loadHistory()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 browserTabs = tabs,
                 activeBrowserTabId = activeId,
                 browserHistory = history
-            )
+            ) }
         }
     }
 
@@ -571,13 +571,13 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             else -> _uiState.value.browserDualTab
         }
         val nextActiveSpaceId = if (tab == XenoTab.BROWSER) null else _uiState.value.activeSpaceInstanceId
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             currentTab = tab,
             browserDualTab = nextDualTab,
             activeSpaceInstanceId = nextActiveSpaceId,
-            unseenMissedCallsCount = if (isCalls) 0 else _uiState.value.unseenMissedCallsCount,
-            activeChatThread = if (!isMessages) null else _uiState.value.activeChatThread
-        )
+            unseenMissedCallsCount = if (isCalls) 0 else it.unseenMissedCallsCount,
+            activeChatThread = if (!isMessages) null else it.activeChatThread
+        ) }
         if (isCalls) {
             markMissedCallsAsSeen()
             syncCallHistoryFast()
@@ -594,10 +594,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val app = getApplication<Application>()
         val defaultDialer = TelecomHelper.isDefaultDialer(app)
         val defaultSms = TelecomHelper.isDefaultSmsApp(app)
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             isDefaultDialer = defaultDialer,
             isDefaultSms = defaultSms
-        )
+        ) }
     }
 
     fun loadAllData(forceRefresh: Boolean = false) {
@@ -638,18 +638,18 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     active
                 }
             }
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 contacts = contacts,
                 smsThreads = enrichedThreads,
                 activeChatThread = currentActiveChat
-            )
+            ) }
             // Re-enrich call log contact names in O(1) as soon as contacts are indexed
             syncCallHistoryFast()
         }
 
         viewModelScope.launch(Dispatchers.IO) {
             val threads = smsRepo.getConversations()
-            _uiState.value = _uiState.value.copy(smsThreads = threads)
+            _uiState.update { it.copy(smsThreads = threads) }
         }
 
         // 3. Load gallery media items only if needed or if gallery manager is open (avoids heavy MediaStore scan on cold startup)
@@ -657,33 +657,33 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             lastGalleryLoadMs = now
             viewModelScope.launch(Dispatchers.IO) {
                 val media = galleryRepo.getMediaItems()
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     isLoading = false,
                     mediaItems = media
-                )
+                ) }
             }
         }
     }
 
     // Call Log functions
     fun setCallFilter(filter: CallFilter) {
-        _uiState.value = _uiState.value.copy(callFilter = filter)
+        _uiState.update { it.copy(callFilter = filter) }
         if (filter == CallFilter.MISSED) {
             markMissedCallsAsSeen()
         }
     }
 
     fun selectCallLog(entry: CallLogEntry?) {
-        _uiState.value = _uiState.value.copy(selectedCallLog = entry)
+        _uiState.update { it.copy(selectedCallLog = entry) }
     }
 
     fun deleteCallLog(entry: CallLogEntry) {
         recentInMemoryCalls.removeAll { it.id == entry.id }
-        _uiState.value = _uiState.value.copy(
-            callLogs = _uiState.value.callLogs.filter { it.id != entry.id },
+        _uiState.update { it.copy(
+            callLogs = it.callLogs.filter { log -> log.id != entry.id },
             selectedCallLog = null,
             userNotice = "Call log entry deleted"
-        )
+        ) }
         viewModelScope.launch(Dispatchers.IO) {
             callLogRepo.deleteCallLog(entry.id)
         }
@@ -695,12 +695,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             it.type != CallType.MISSED && it.type != CallType.REJECTED
         }
         markMissedCallsAsSeen()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             callLogs = remainingLogs,
             unseenMissedCallsCount = 0,
             selectedCallLog = null,
             userNotice = "Missed calls cleared"
-        )
+        ) }
         viewModelScope.launch(Dispatchers.IO) {
             callLogRepo.clearMissedCallLogs()
             syncCallHistoryFast()
@@ -710,12 +710,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun clearAllCallLogs() {
         recentInMemoryCalls.clear()
         markMissedCallsAsSeen()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             callLogs = emptyList(),
             unseenMissedCallsCount = 0,
             selectedCallLog = null,
             userNotice = "Call history cleared"
-        )
+        ) }
         viewModelScope.launch(Dispatchers.IO) {
             callLogRepo.clearCallLogs()
         }
@@ -723,40 +723,40 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     // Contacts functions
     fun setContactSearchQuery(query: String) {
-        _uiState.value = _uiState.value.copy(contactSearchQuery = query)
+        _uiState.update { it.copy(contactSearchQuery = query) }
     }
 
     fun selectContact(contact: ContactItem?) {
-        _uiState.value = _uiState.value.copy(selectedContact = contact)
+        _uiState.update { it.copy(selectedContact = contact) }
     }
 
     // Dialpad functions
     fun appendDialpadDigit(char: Char) {
-        _uiState.value = _uiState.value.copy(
-            dialpadDigits = _uiState.value.dialpadDigits + char
-        )
+        _uiState.update { it.copy(
+            dialpadDigits = it.dialpadDigits + char
+        ) }
     }
 
     fun setDialpadDigits(digits: String) {
-        _uiState.value = _uiState.value.copy(dialpadDigits = digits)
+        _uiState.update { it.copy(dialpadDigits = digits) }
     }
 
     fun backspaceDialpad() {
         val current = _uiState.value.dialpadDigits
         if (current.isNotEmpty()) {
-            _uiState.value = _uiState.value.copy(
-                dialpadDigits = current.dropLast(1)
-            )
+            _uiState.update { it.copy(
+                dialpadDigits = it.dialpadDigits.dropLast(1)
+            ) }
         }
     }
 
     fun clearDialpad() {
-        _uiState.value = _uiState.value.copy(dialpadDigits = "")
+        _uiState.update { it.copy(dialpadDigits = "") }
     }
 
     // SMS & Chat functions
     fun setSmsSearchQuery(query: String) {
-        _uiState.value = _uiState.value.copy(smsSearchQuery = query)
+        _uiState.update { it.copy(smsSearchQuery = query) }
     }
 
     fun openChatThread(thread: SmsThread) {
@@ -766,18 +766,18 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedThreadsInMemory = _uiState.value.smsThreads.map {
             if (it.threadId == thread.threadId || it.address == thread.address) readThread else it
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             currentTab = XenoTab.MESSAGES,
             activeChatThread = readThread,
             activeChatMessages = instantMessages,
             smsThreads = updatedThreadsInMemory
-        )
+        ) }
 
         // 2. Background verification & read-state persistence without blocking UI
         viewModelScope.launch(Dispatchers.IO) {
             val freshMessages = smsRepo.getMessagesForThread(thread.threadId, thread.address)
             if (_uiState.value.activeChatThread?.threadId == thread.threadId && freshMessages != instantMessages) {
-                _uiState.value = _uiState.value.copy(activeChatMessages = freshMessages)
+                _uiState.update { it.copy(activeChatMessages = freshMessages) }
             }
             smsRepo.markThreadAsRead(thread.threadId, thread.address)
         }
@@ -798,17 +798,17 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             read = true
         )
         openChatThread(targetThread)
-        _uiState.value = _uiState.value.copy(showNewChatDialog = false)
+        _uiState.update { it.copy(showNewChatDialog = false) }
     }
 
     fun closeChat() {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeChatThread = null,
             activeChatMessages = emptyList()
-        )
+        ) }
         viewModelScope.launch(Dispatchers.IO) {
             val threads = smsRepo.getConversations()
-            _uiState.value = _uiState.value.copy(smsThreads = threads)
+            _uiState.update { it.copy(smsThreads = threads) }
         }
     }
 
@@ -817,9 +817,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedMessages = _uiState.value.activeChatMessages.map { msg ->
             if (msg.id == messageId) msg.copy(deliveryStatus = status) else msg
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeChatMessages = updatedMessages
-        )
+        ) }
     }
 
     fun sendChatMessage(text: String, simCard: com.example.telecom.SimCardInfo? = null) {
@@ -857,11 +857,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             read = true
         )
         val otherThreads = _uiState.value.smsThreads.filter { it.threadId != activeThread.threadId }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeChatThread = updatedThread,
             activeChatMessages = initialList,
             smsThreads = listOf(updatedThread) + otherThreads
-        )
+        ) }
 
         viewModelScope.launch {
             val result = smsRepo.sendSms(
@@ -888,40 +888,40 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             smsRepo.deleteMessage(messageId)
             val updatedMessages = _uiState.value.activeChatMessages.filter { it.id != messageId }
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 activeChatMessages = updatedMessages,
                 userNotice = "Message deleted"
-            )
+            ) }
         }
     }
 
     fun deleteChatThread(thread: SmsThread) {
         viewModelScope.launch {
             smsRepo.deleteThread(thread.threadId, thread.address)
-            _uiState.value = _uiState.value.copy(
-                smsThreads = _uiState.value.smsThreads.filter { it.threadId != thread.threadId },
-                activeChatThread = if (_uiState.value.activeChatThread?.threadId == thread.threadId) null else _uiState.value.activeChatThread,
+            _uiState.update { it.copy(
+                smsThreads = it.smsThreads.filter { thr -> thr.threadId != thread.threadId },
+                activeChatThread = if (it.activeChatThread?.threadId == thread.threadId) null else it.activeChatThread,
                 userNotice = "Conversation deleted"
-            )
+            ) }
         }
     }
 
     fun setShowNewChatDialog(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showNewChatDialog = show)
+        _uiState.update { it.copy(showNewChatDialog = show) }
     }
 
     fun clearUserNotice() {
-        _uiState.value = _uiState.value.copy(userNotice = null)
+        _uiState.update { it.copy(userNotice = null) }
     }
 
     fun showNotice(msg: String) {
-        _uiState.value = _uiState.value.copy(userNotice = msg)
+        _uiState.update { it.copy(userNotice = msg) }
     }
 
     fun refreshSms() {
         viewModelScope.launch {
             val threads = smsRepo.getConversations()
-            _uiState.value = _uiState.value.copy(smsThreads = threads)
+            _uiState.update { it.copy(smsThreads = threads) }
         }
     }
 
@@ -932,7 +932,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshContacts() {
         viewModelScope.launch {
             val contacts = contactsRepo.getContacts()
-            _uiState.value = _uiState.value.copy(contacts = contacts)
+            _uiState.update { it.copy(contacts = contacts) }
         }
     }
 
@@ -946,20 +946,20 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             url = url
         )
         val updatedTabs = _uiState.value.browserTabs + newTab
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             browserTabs = updatedTabs,
             activeBrowserTabId = newTab.id,
             showTabSwitcher = false
-        )
+        ) }
         persistBrowserTabs()
     }
 
     fun selectBrowserTab(tabId: String) {
         if (_uiState.value.browserTabs.any { it.id == tabId }) {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 activeBrowserTabId = tabId,
                 showTabSwitcher = false
-            )
+            ) }
             persistBrowserTabs()
         }
     }
@@ -976,10 +976,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 _uiState.value.activeBrowserTabId
             }
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 browserTabs = filtered,
                 activeBrowserTabId = nextActiveId
-            )
+            ) }
             persistBrowserTabs()
         }
     }
@@ -989,9 +989,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedTabs = _uiState.value.browserTabs.map {
             if (it.id == activeId) it.copy(url = url, title = title.ifBlank { it.title }) else it
         }
-        _uiState.value = _uiState.value.copy(browserTabs = updatedTabs)
+        _uiState.update { it.copy(browserTabs = updatedTabs) }
         browserRepo.addHistoryItem(title, url)
-        _uiState.value = _uiState.value.copy(browserHistory = browserRepo.loadHistory())
+        _uiState.update { it.copy(browserHistory = browserRepo.loadHistory()) }
         persistBrowserTabs()
     }
 
@@ -1000,7 +1000,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedTabs = _uiState.value.browserTabs.map {
             if (it.id == activeId) it.copy(isLoading = isLoading, progress = progress) else it
         }
-        _uiState.value = _uiState.value.copy(browserTabs = updatedTabs)
+        _uiState.update { it.copy(browserTabs = updatedTabs) }
     }
 
     fun updateActiveTabNavState(canGoBack: Boolean, canGoForward: Boolean) {
@@ -1008,7 +1008,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedTabs = _uiState.value.browserTabs.map {
             if (it.id == activeId) it.copy(canGoBack = canGoBack, canGoForward = canGoForward) else it
         }
-        _uiState.value = _uiState.value.copy(browserTabs = updatedTabs)
+        _uiState.update { it.copy(browserTabs = updatedTabs) }
     }
 
     fun toggleActiveTabDesktopMode() {
@@ -1016,21 +1016,21 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedTabs = _uiState.value.browserTabs.map {
             if (it.id == activeId) it.copy(isDesktopMode = !it.isDesktopMode) else it
         }
-        _uiState.value = _uiState.value.copy(browserTabs = updatedTabs)
+        _uiState.update { it.copy(browserTabs = updatedTabs) }
         persistBrowserTabs()
     }
 
     fun setShowTabSwitcher(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showTabSwitcher = show)
+        _uiState.update { it.copy(showTabSwitcher = show) }
     }
 
     fun setShowHistoryDialog(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showHistoryDialog = show)
+        _uiState.update { it.copy(showHistoryDialog = show) }
     }
 
     fun clearBrowserHistory() {
         browserRepo.clearHistory()
-        _uiState.value = _uiState.value.copy(browserHistory = emptyList(), userNotice = "Browser history cleared")
+        _uiState.update { it.copy(browserHistory = emptyList(), userNotice = "Browser history cleared") }
     }
 
     private fun persistBrowserTabs() {
@@ -1041,40 +1041,40 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     // Gallery functions (Images, Videos, Player)
     // ==========================================
     fun setMediaFilter(filter: MediaFilter) {
-        _uiState.value = _uiState.value.copy(mediaFilter = filter)
+        _uiState.update { it.copy(mediaFilter = filter) }
     }
 
     fun selectImageItem(item: MediaItem?) {
-        _uiState.value = _uiState.value.copy(selectedImageItem = item)
+        _uiState.update { it.copy(selectedImageItem = item) }
     }
 
     fun selectVideoItem(item: MediaItem?) {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             selectedVideoItem = item,
             isVideoControlsHidden = false
-        )
+        ) }
     }
 
     fun setVideoControlsHidden(hidden: Boolean) {
-        _uiState.value = _uiState.value.copy(isVideoControlsHidden = hidden)
+        _uiState.update { it.copy(isVideoControlsHidden = hidden) }
     }
 
     fun refreshMedia() {
         viewModelScope.launch {
             val media = galleryRepo.getMediaItems()
-            _uiState.value = _uiState.value.copy(mediaItems = media)
+            _uiState.update { it.copy(mediaItems = media) }
         }
     }
 
     fun setShowMediaManager(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showMediaManager = show)
+        _uiState.update { it.copy(showMediaManager = show) }
         if (show) {
             refreshMedia()
         }
     }
 
     fun setShowDocsManager(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showDocsManager = show)
+        _uiState.update { it.copy(showDocsManager = show) }
         if (show) {
             refreshDocumentFolders()
         }
@@ -1082,12 +1082,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshDocumentFolders() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoadingDocs = true)
+            _uiState.update { it.copy(isLoadingDocs = true) }
             val folders = documentRepo.scanDeviceDocumentFolders()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 documentFolders = folders,
                 isLoadingDocs = false
-            )
+            ) }
         }
     }
 
@@ -1099,7 +1099,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     // Clone Space Music Player Functions
     // ==========================================
     fun setShowMusicPlayer(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showMusicPlayer = show)
+        _uiState.update { it.copy(showMusicPlayer = show) }
         if (show) {
             refreshMusicTracks()
         }
@@ -1107,14 +1107,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshMusicTracks() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoadingMusic = true)
+            _uiState.update { it.copy(isLoadingMusic = true) }
             val tracks = musicRepo.scanDeviceMp3Files()
             val favs = musicRepo.getFavoriteTrackIds()
             MusicPlaybackController.setPlaylist(tracks, favs)
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 musicTracks = tracks,
                 isLoadingMusic = false
-            )
+            ) }
         }
     }
 
@@ -1125,24 +1125,24 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(isFavorite = updatedFavs.contains(it.id))
         }
         MusicPlaybackController.syncFavorites(updatedFavs)
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             musicTracks = updatedTracks,
             userNotice = if (isNowFav) "Added \"${track.title}\" to Favourites" else "Removed \"${track.title}\" from Favourites"
-        )
+        ) }
     }
 
     fun importMusicUris(uris: List<Uri>) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoadingMusic = true)
+            _uiState.update { it.copy(isLoadingMusic = true) }
             val count = musicRepo.importAudioUris(uris)
             val tracks = musicRepo.scanDeviceMp3Files()
             val favs = musicRepo.getFavoriteTrackIds()
             MusicPlaybackController.setPlaylist(tracks, favs)
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 musicTracks = tracks,
                 isLoadingMusic = false,
                 userNotice = if (count > 0) "Imported $count MP3 track${if (count == 1) "" else "s"}" else "Scanned audio library"
-            )
+            ) }
         }
     }
 
@@ -1150,25 +1150,25 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val item = galleryRepo.importMediaUri(uri, isVideo)
             val media = galleryRepo.getMediaItems()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 mediaItems = media,
                 userNotice = if (isVideo) "Video \"${item.displayName}\" added with thumbnail!" else "Photo added to gallery!"
-            )
+            ) }
         }
     }
 
     fun deleteMediaItem(item: MediaItem) {
         // Immediate optimistic removal so it vanishes instantly
-        _uiState.value = _uiState.value.copy(
-            mediaItems = _uiState.value.mediaItems.filter { it.id != item.id && it.uri != item.uri },
-            selectedImageItem = if (_uiState.value.selectedImageItem?.id == item.id) null else _uiState.value.selectedImageItem,
-            selectedVideoItem = if (_uiState.value.selectedVideoItem?.id == item.id) null else _uiState.value.selectedVideoItem,
+        _uiState.update { it.copy(
+            mediaItems = it.mediaItems.filter { m -> m.id != item.id && m.uri != item.uri },
+            selectedImageItem = if (it.selectedImageItem?.id == item.id) null else it.selectedImageItem,
+            selectedVideoItem = if (it.selectedVideoItem?.id == item.id) null else it.selectedVideoItem,
             userNotice = if (item.isVideo) "Video permanently deleted" else "Photo permanently deleted"
-        )
+        ) }
         viewModelScope.launch {
             galleryRepo.deleteMediaItem(item)
             val media = galleryRepo.getMediaItems()
-            _uiState.value = _uiState.value.copy(mediaItems = media)
+            _uiState.update { it.copy(mediaItems = media) }
         }
     }
 
@@ -1176,12 +1176,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             galleryRepo.deleteDemoMedia()
             val media = galleryRepo.getMediaItems()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 mediaItems = media,
                 selectedImageItem = null,
                 selectedVideoItem = null,
                 userNotice = "Demo pictures and videos deleted from gallery"
-            )
+            ) }
         }
     }
 
@@ -1197,13 +1197,13 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     // Notification functions
     // ==========================================
     fun setMessagesSubTab(subTab: MessagesSubTab) {
-        _uiState.value = _uiState.value.copy(messagesSubTab = subTab)
+        _uiState.update { it.copy(messagesSubTab = subTab) }
         checkNotificationAccess()
     }
 
     fun setAppAlertsDrawerOpen(open: Boolean) {
         if (_uiState.value.isAppAlertsDrawerOpen != open) {
-            _uiState.value = _uiState.value.copy(isAppAlertsDrawerOpen = open)
+            _uiState.update { it.copy(isAppAlertsDrawerOpen = open) }
             if (open) {
                 checkNotificationAccess()
             }
@@ -1212,7 +1212,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkNotificationAccess() {
         val granted = XenoNotificationListenerService.isNotificationAccessGranted(getApplication())
-        _uiState.value = _uiState.value.copy(hasNotificationAccess = granted)
+        _uiState.update { it.copy(hasNotificationAccess = granted) }
         if (granted) {
             XenoNotificationListenerService.tryRebind(getApplication())
         }
@@ -1243,35 +1243,35 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             BrowserDualTab.BROWSER, BrowserDualTab.DOWNLOADS ->
                 if (_uiState.value.currentTab == XenoTab.CLONE_SPACE) XenoTab.BROWSER else _uiState.value.currentTab
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             browserDualTab = tab,
             currentTab = nextMainTab
-        )
+        ) }
     }
 
     fun loadSpaceData() {
         val clones = spaceRepo.loadClonedInstances()
         val dock = spaceRepo.loadActiveDock()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             spaceClones = clones,
             activeSpaceDock = dock
-        )
+        ) }
     }
 
     fun openAddCloneDialog() {
-        _uiState.value = _uiState.value.copy(showAddCloneDialog = true)
+        _uiState.update { it.copy(showAddCloneDialog = true) }
     }
 
     fun closeAddCloneDialog() {
-        _uiState.value = _uiState.value.copy(showAddCloneDialog = false)
+        _uiState.update { it.copy(showAddCloneDialog = false) }
     }
 
     fun openEditCloneDialog(instance: ClonedAppInstance) {
-        _uiState.value = _uiState.value.copy(selectedCloneForEdit = instance)
+        _uiState.update { it.copy(selectedCloneForEdit = instance) }
     }
 
     fun closeEditCloneDialog() {
-        _uiState.value = _uiState.value.copy(selectedCloneForEdit = null)
+        _uiState.update { it.copy(selectedCloneForEdit = null) }
     }
 
     fun createAppClone(
@@ -1283,19 +1283,19 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val created = spaceRepo.addInstalledAppClone(packageName, appName, displayName, badgeTag, badgeColorHex)
         loadSpaceData()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             showAddCloneDialog = false,
             userNotice = "Sandboxed clone '${created.displayName}' created!"
-        )
+        ) }
     }
 
     fun updateAppClone(instance: ClonedAppInstance) {
         spaceRepo.updateClone(instance)
         loadSpaceData()
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             selectedCloneForEdit = null,
             userNotice = "Clone instance updated"
-        )
+        ) }
     }
 
     fun deleteAppClone(instanceId: String) {
@@ -1305,11 +1305,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         loadSpaceData()
         val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
         val nextActive = if (_uiState.value.activeSpaceInstanceId == instanceId) null else _uiState.value.activeSpaceInstanceId
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceInstanceId = nextActive,
             minimizedSpaceCloneIds = updatedMinimized,
             userNotice = "Removed '${instance?.displayName ?: "clone"}' from Space"
-        )
+        ) }
     }
 
     fun launchCloneWorkspace(instanceId: String) {
@@ -1319,13 +1319,13 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             spaceRepo.saveActiveDock(dock)
         }
         val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceInstanceId = instanceId,
             activeSpaceDock = dock,
             minimizedSpaceCloneIds = updatedMinimized,
             browserDualTab = BrowserDualTab.SPACE,
             currentTab = XenoTab.CLONE_SPACE
-        )
+        ) }
     }
 
     fun minimizeCloneWorkspace() {
@@ -1334,10 +1334,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         if (!currentMinimized.contains(currentId)) {
             currentMinimized.add(currentId)
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceInstanceId = null,
             minimizedSpaceCloneIds = currentMinimized
-        )
+        ) }
     }
 
     fun restoreMinimizedClone(instanceId: String) {
@@ -1353,7 +1353,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             dock.add(instanceId)
             spaceRepo.saveActiveDock(dock)
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceInstanceId = instanceId,
             activeSpaceDock = dock,
             minimizedSpaceCloneIds = updatedMinimized,
@@ -1363,15 +1363,15 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             showMediaManager = false,
             showMusicPlayer = false,
             activeChatThread = null
-        )
+        ) }
     }
 
     fun closeMinimizedClone(instanceId: String) {
         com.example.ui.screens.CloneWebViewPool.destroy(instanceId)
         val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             minimizedSpaceCloneIds = updatedMinimized
-        )
+        ) }
     }
 
     fun closeCloneWorkspace() {
@@ -1384,10 +1384,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             _uiState.value.minimizedSpaceCloneIds
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceInstanceId = null,
             minimizedSpaceCloneIds = updatedMinimized
-        )
+        ) }
     }
 
     fun closeCloneFromDock(instanceId: String) {
@@ -1396,11 +1396,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         spaceRepo.saveActiveDock(dock)
         val nextActive = if (_uiState.value.activeSpaceInstanceId == instanceId) null else _uiState.value.activeSpaceInstanceId
         val updatedMinimized = _uiState.value.minimizedSpaceCloneIds.filter { it != instanceId }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeSpaceDock = dock,
             activeSpaceInstanceId = nextActive,
             minimizedSpaceCloneIds = updatedMinimized
-        )
+        ) }
     }
 
     fun updateCloneCurrentUrl(instanceId: String, url: String) {
@@ -1409,7 +1409,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedList = _uiState.value.spaceClones.map {
             if (it.instanceId == instanceId) it.copy(lastUrl = url) else it
         }
-        _uiState.value = _uiState.value.copy(spaceClones = updatedList)
+        _uiState.update { it.copy(spaceClones = updatedList) }
         viewModelScope.launch(Dispatchers.IO) {
             spaceRepo.updateCloneUrl(instanceId, url)
         }
@@ -1420,24 +1420,24 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedList = _uiState.value.spaceClones.map {
             if (it.instanceId == instanceId) it.copy(isDesktopMode = newMode) else it
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             spaceClones = updatedList,
             userNotice = if (newMode) "Desktop mode enabled" else "Mobile mode enabled"
-        )
+        ) }
     }
 
     fun toggleBrowserHeader() {
-        _uiState.value = _uiState.value.copy(isBrowserHeaderHidden = !_uiState.value.isBrowserHeaderHidden)
+        _uiState.update { it.copy(isBrowserHeaderHidden = !it.isBrowserHeaderHidden) }
     }
 
     fun setBrowserFullscreenVideo(isFullscreen: Boolean) {
-        _uiState.value = _uiState.value.copy(isBrowserFullscreenVideo = isFullscreen)
+        _uiState.update { it.copy(isBrowserFullscreenVideo = isFullscreen) }
     }
 
     // Password Manager functions
     fun loadPasswords() {
         val list = passwordRepo.getSavedPasswords()
-        _uiState.value = _uiState.value.copy(savedPasswords = list)
+        _uiState.update { it.copy(savedPasswords = list) }
     }
 
     fun savePassword(domain: String, title: String, username: String, pass: String) {
@@ -1453,13 +1453,13 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowPasswordManager(show: Boolean) {
         if (show) loadPasswords()
-        _uiState.value = _uiState.value.copy(showPasswordManager = show)
+        _uiState.update { it.copy(showPasswordManager = show) }
     }
 
     // Download Manager functions
     fun loadDownloads() {
         val list = downloadRepo.getTrackedDownloads()
-        _uiState.value = _uiState.value.copy(downloads = list)
+        _uiState.update { it.copy(downloads = list) }
     }
 
     fun addDownloadItem(dmId: Long, url: String, fileName: String, mimeType: String, fileSize: Long) {
@@ -1492,20 +1492,20 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             OngoingCallHelper.startOutgoingSession(phoneNumber, contactName)
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeCallState = ActiveCallState(
                 phoneNumber = phoneNumber,
                 contactName = contactName,
                 isIncoming = isIncoming
             ),
             incomingCallPopup = null
-        )
+        ) }
     }
 
     fun endActiveCall(durationSeconds: Long = 0L) {
         val helperDuration = OngoingCallHelper.endCall(getApplication())
         val call = _uiState.value.activeCallState
-        _uiState.value = _uiState.value.copy(activeCallState = null)
+        _uiState.update { it.copy(activeCallState = null) }
         if (call != null) {
             val now = System.currentTimeMillis()
             val actualDuration = when {
@@ -1524,9 +1524,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 photoUri = null
             )
             recentInMemoryCalls.add(0, newEntry)
-            _uiState.value = _uiState.value.copy(
-                callLogs = listOf(newEntry) + _uiState.value.callLogs
-            )
+            _uiState.update { it.copy(
+                callLogs = listOf(newEntry) + it.callLogs
+            ) }
             viewModelScope.launch {
                 callLogRepo.insertCallLog(call.phoneNumber, call.contactName, actualDuration, callType)
                 triggerPostCallHistorySync()
@@ -1562,9 +1562,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
         // USSD code dialing should never bring up in-app call screen; executed directly via Android telephony
         if (isUssdCode(clean)) {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 userNotice = "Executing USSD code $clean..."
-            )
+            ) }
             if (!skipSystemCall) {
                 try {
                     if (effectiveSim != null) {
@@ -1592,9 +1592,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 .putInt("preferred_sim_slot", effectiveSim.subscriptionId)
                 .putString("preferred_sim_name", label)
                 .apply()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 userNotice = "Calling ${resolvedName ?: clean} via ${effectiveSim.carrierName} (SIM ${effectiveSim.subscriptionId + 1})"
-            )
+            ) }
         }
         if (!skipSystemCall) {
             try {
@@ -1642,7 +1642,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 (currentChat.threadId == threadId ||
                     XenoNotificationHelper.normalizePhoneKey(currentChat.address) == XenoNotificationHelper.normalizePhoneKey(address))
 
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 smsThreads = threads,
                 activeChatMessages = updatedMessages,
                 incomingSmsPopup = if (!isViewingSameThread) {
@@ -1653,9 +1653,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                         body = body
                     )
                 } else {
-                    _uiState.value.incomingSmsPopup
+                    it.incomingSmsPopup
                 }
-            )
+            ) }
         }
     }
 
@@ -1678,14 +1678,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
             if (alreadyHandledByHelper) {
                 if (currentSession.isFullScreenCallVisible) {
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { it.copy(
                         incomingCallPopup = null,
                         activeCallState = ActiveCallState(
                             phoneNumber = currentSession.phoneNumber.ifBlank { number },
                             contactName = contactName ?: currentSession.contactName,
                             isIncoming = true
                         )
-                    )
+                    ) }
                 } else {
                     val effectiveName = contactName?.takeIf { it.isNotBlank() && it != number }
                         ?: currentSession.contactName?.takeIf { it != number }
@@ -1693,12 +1693,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                         callerName = effectiveName,
                         callerNumber = number
                     )
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { it.copy(
                         incomingCallPopup = activePopup.copy(
                             callerName = effectiveName ?: activePopup.callerName?.takeIf { it != number }
                         ),
                         activeCallState = null
-                    )
+                    ) }
                 }
                 return@launch
             }
@@ -1709,10 +1709,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 contactName = contactName
             )
 
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 incomingCallPopup = popup,
                 activeCallState = null
-            )
+            ) }
+
         }
     }
 
@@ -1725,14 +1726,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 openFullScreenImmediately = true
             )
             OngoingCallHelper.expandIncomingCallToFullScreen(getApplication())
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 incomingCallPopup = null,
                 activeCallState = ActiveCallState(
                     phoneNumber = phoneNumber,
                     contactName = resolvedName,
                     isIncoming = true
                 )
-            )
+            ) }
         }
     }
 
@@ -1744,14 +1745,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 phoneNumber = phoneNumber,
                 contactName = resolvedName
             )
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 incomingCallPopup = null,
                 activeCallState = ActiveCallState(
                     phoneNumber = connectedSession.phoneNumber.ifBlank { phoneNumber },
                     contactName = connectedSession.contactName ?: resolvedName,
                     isIncoming = true
                 )
-            )
+            ) }
         }
     }
 
@@ -1762,23 +1763,23 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             phoneNumber = currentCall?.phoneNumber,
             contactName = currentCall?.contactName
         )
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingCallPopup = null,
             activeCallState = ActiveCallState(
                 phoneNumber = currentCall?.phoneNumber ?: connectedSession.phoneNumber,
                 contactName = currentCall?.contactName ?: connectedSession.contactName,
                 isIncoming = true
             )
-        )
+        ) }
     }
 
     fun declineActiveCall() {
         OngoingCallHelper.declineIncomingCall(getApplication())
         val call = _uiState.value.activeCallState
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeCallState = null,
             incomingCallPopup = null
-        )
+        ) }
         if (call != null) {
             val now = System.currentTimeMillis()
             val newEntry = CallLogEntry(
@@ -1795,10 +1796,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             if (isOnCallsTab) {
                 callPrefs.edit().putLong("last_seen_calls_ts", now).apply()
             }
-            _uiState.value = _uiState.value.copy(
-                callLogs = listOf(newEntry) + _uiState.value.callLogs,
-                unseenMissedCallsCount = if (isOnCallsTab) 0 else _uiState.value.unseenMissedCallsCount + 1
-            )
+            _uiState.update { it.copy(
+                callLogs = listOf(newEntry) + it.callLogs,
+                unseenMissedCallsCount = if (isOnCallsTab) 0 else it.unseenMissedCallsCount + 1
+            ) }
             viewModelScope.launch {
                 callLogRepo.insertCallLog(call.phoneNumber, call.contactName, 0L, CallType.MISSED)
                 triggerPostCallHistorySync()
@@ -1809,18 +1810,18 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissSmsPopup() {
-        _uiState.value = _uiState.value.copy(incomingSmsPopup = null)
+        _uiState.update { it.copy(incomingSmsPopup = null) }
     }
 
     fun markSmsPopupAsRead(popup: IncomingSmsPopup) {
         viewModelScope.launch {
             smsRepo.markThreadAsRead(popup.threadId, popup.senderNumber)
             val threads = smsRepo.getConversations()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 smsThreads = threads,
                 incomingSmsPopup = null,
                 userNotice = "Message marked as read"
-            )
+            ) }
         }
     }
 
@@ -1833,7 +1834,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissCallPopup() {
         OngoingCallHelper.dismissIncomingCallPopup(getApplication())
         XenoNotificationHelper.cancelCallNotification(getApplication())
-        _uiState.value = _uiState.value.copy(incomingCallPopup = null)
+        _uiState.update { it.copy(incomingCallPopup = null) }
     }
 
     fun dismissIncomingCallPopup() = dismissCallPopup()
@@ -1843,14 +1844,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun expandCallPopupToFullScreen(popup: IncomingCallPopup) {
         OngoingCallHelper.expandIncomingCallToFullScreen(getApplication())
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingCallPopup = null,
             activeCallState = ActiveCallState(
                 phoneNumber = popup.callerNumber,
                 contactName = popup.callerName,
                 isIncoming = true
             )
-        )
+        ) }
     }
 
     /**
@@ -1863,22 +1864,22 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             phoneNumber = popup.callerNumber,
             contactName = popup.callerName
         )
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingCallPopup = null,
             activeCallState = ActiveCallState(
                 phoneNumber = connectedSession.phoneNumber.ifBlank { popup.callerNumber },
                 contactName = connectedSession.contactName ?: popup.callerName,
                 isIncoming = true
             )
-        )
+        ) }
     }
 
     fun declineCallPopup(popup: IncomingCallPopup) {
         OngoingCallHelper.declineIncomingCall(getApplication())
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingCallPopup = null,
             activeCallState = null
-        )
+        ) }
         val now = System.currentTimeMillis()
         val newEntry = CallLogEntry(
             id = now,
@@ -1894,11 +1895,11 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         if (isOnCallsTab) {
             callPrefs.edit().putLong("last_seen_calls_ts", now).apply()
         }
-        _uiState.value = _uiState.value.copy(
-            callLogs = listOf(newEntry) + _uiState.value.callLogs,
-            unseenMissedCallsCount = if (isOnCallsTab) 0 else _uiState.value.unseenMissedCallsCount + 1,
+        _uiState.update { it.copy(
+            callLogs = listOf(newEntry) + it.callLogs,
+            unseenMissedCallsCount = if (isOnCallsTab) 0 else it.unseenMissedCallsCount + 1,
             userNotice = "Call declined"
-        )
+        ) }
         viewModelScope.launch {
             callLogRepo.insertCallLog(popup.callerNumber, popup.callerName, 0L, CallType.MISSED)
             triggerPostCallHistorySync()
@@ -1926,7 +1927,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             smsRepo.insertIncomingSms(number, messageText, System.currentTimeMillis())
             val threads = smsRepo.getConversations()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 smsThreads = threads,
                 incomingSmsPopup = IncomingSmsPopup(
                     threadId = threadId,
@@ -1934,7 +1935,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     senderNumber = number,
                     body = messageText
                 )
-            )
+            ) }
         }
     }
 
@@ -1956,19 +1957,20 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (isScreenOff) {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 incomingCallPopup = null,
                 activeCallState = ActiveCallState(
                     phoneNumber = number,
                     contactName = name,
                     isIncoming = true
                 )
-            )
+            ) }
         } else {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 incomingCallPopup = popup,
                 activeCallState = null
-            )
+            ) }
+
         }
     }
 
@@ -1977,7 +1979,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             val games = withContext(Dispatchers.IO) {
                 gameSpaceRepo.loadUserGames()
             }
-            _uiState.value = _uiState.value.copy(installedGames = games)
+            _uiState.update { it.copy(installedGames = games) }
         }
     }
 
@@ -1998,12 +2000,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 extractedTextures = emptyList(),
                 envProfile = game.envProfile
             )
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             activeGameItem = game,
             activeGameTitle = game.appName,
             activeGameUrl = resolvedUrl,
             activeGamePackage = game.packageName
-        )
+        ) }
     }
 
     fun updateActiveGameUrl(newUrl: String) {
@@ -2013,14 +2015,14 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 gameSpaceRepo.updateGameEntryUrl(pkg, newUrl)
                 val updatedList = gameSpaceRepo.loadUserGames()
                 val updatedItem = updatedList.find { it.packageName == pkg }
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     installedGames = updatedList,
-                    activeGameItem = updatedItem ?: _uiState.value.activeGameItem,
+                    activeGameItem = updatedItem ?: it.activeGameItem,
                     activeGameUrl = newUrl
-                )
+                ) }
             }
         } else {
-            _uiState.value = _uiState.value.copy(activeGameUrl = newUrl)
+            _uiState.update { it.copy(activeGameUrl = newUrl) }
         }
     }
 
@@ -2029,32 +2031,32 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             val updatedItem = gameSpaceRepo.updateGameEnvProfile(packageName, profile)
             val updatedList = gameSpaceRepo.loadUserGames()
             val isCurrentlyActive = _uiState.value.activeGamePackage == packageName
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 installedGames = updatedList,
-                activeGameItem = if (isCurrentlyActive && updatedItem != null) updatedItem else _uiState.value.activeGameItem,
-                activeGameUrl = if (isCurrentlyActive && updatedItem?.entryUrl != null) updatedItem.entryUrl else _uiState.value.activeGameUrl,
+                activeGameItem = if (isCurrentlyActive && updatedItem != null) updatedItem else it.activeGameItem,
+                activeGameUrl = if (isCurrentlyActive && updatedItem?.entryUrl != null) updatedItem.entryUrl else it.activeGameUrl,
                 userNotice = "Updated virtual environment profile for ${updatedItem?.appName ?: packageName}"
-            )
+            ) }
         }
     }
 
     fun clearVirtualGameData(packageName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             gameSpaceRepo.clearVirtualAppData(packageName)
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 userNotice = "Cleared isolated virtual storage for $packageName"
-            )
+            ) }
         }
     }
 
     fun dismissApkInstallModal() {
-        _uiState.value = _uiState.value.copy(apkInstallState = ApkInstallState())
+        _uiState.update { it.copy(apkInstallState = ApkInstallState()) }
     }
 
     fun installApk(uri: Uri, context: android.content.Context) {
         viewModelScope.launch {
             val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "package.apk"
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 apkInstallState = ApkInstallState(
                     isInstalling = true,
                     fileName = fileName,
@@ -2062,49 +2064,49 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     progress = 0.05f,
                     logs = listOf("[VirtualInstaller] Target APK: $fileName")
                 )
-            )
+            ) }
             val installedItem = withContext(Dispatchers.IO) {
                 gameSpaceRepo.installApkIntoGameSpace(uri) { step, progress, logLine ->
                     val currentLogs = _uiState.value.apkInstallState.logs
-                    _uiState.value = _uiState.value.copy(
-                        apkInstallState = _uiState.value.apkInstallState.copy(
+                    _uiState.update { it.copy(
+                        apkInstallState = it.apkInstallState.copy(
                             isInstalling = true,
                             currentStep = step,
                             progress = progress,
-                            logs = (currentLogs + logLine).takeLast(12)
+                            logs = (it.apkInstallState.logs + logLine).takeLast(12)
                         )
-                    )
+                    ) }
                 }
             }
             if (installedItem != null) {
                 val updatedGames = withContext(Dispatchers.IO) {
                     gameSpaceRepo.loadUserGames()
                 }
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { it.copy(
                     installedGames = updatedGames,
-                    apkInstallState = _uiState.value.apkInstallState.copy(
+                    apkInstallState = it.apkInstallState.copy(
                         isInstalling = false,
                         currentStep = "Installed & Virtualized Successfully",
                         progress = 1.0f,
                         completedItem = installedItem
                     ),
                     userNotice = "Installed ${installedItem.appName} into Virtual Game Space"
-                )
+                ) }
             } else {
-                _uiState.value = _uiState.value.copy(
-                    apkInstallState = _uiState.value.apkInstallState.copy(
+                _uiState.update { it.copy(
+                    apkInstallState = it.apkInstallState.copy(
                         isInstalling = false,
                         error = "Could not parse APK archive. Please select a valid .apk file."
                     ),
                     userNotice = "Could not parse APK file. Please select a valid .apk package."
-                )
+                ) }
             }
         }
     }
 
     fun importDeviceAppToGameSpace(packageName: String, appName: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 apkInstallState = ApkInstallState(
                     isInstalling = true,
                     fileName = "$packageName.apk",
@@ -2112,33 +2114,33 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     progress = 0.1f,
                     logs = listOf("[VirtualCloner] Cloning base APK for $appName ($packageName)")
                 )
-            )
+            ) }
             val added = withContext(Dispatchers.IO) {
                 gameSpaceRepo.addDeviceAppToGameSpace(packageName, appName) { step, progress, logLine ->
                     val currentLogs = _uiState.value.apkInstallState.logs
-                    _uiState.value = _uiState.value.copy(
-                        apkInstallState = _uiState.value.apkInstallState.copy(
+                    _uiState.update { it.copy(
+                        apkInstallState = it.apkInstallState.copy(
                             isInstalling = true,
                             currentStep = step,
                             progress = progress,
-                            logs = (currentLogs + logLine).takeLast(12)
+                            logs = (it.apkInstallState.logs + logLine).takeLast(12)
                         )
-                    )
+                    ) }
                 }
             }
             val updatedGames = withContext(Dispatchers.IO) {
                 gameSpaceRepo.loadUserGames()
             }
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 installedGames = updatedGames,
-                apkInstallState = _uiState.value.apkInstallState.copy(
+                apkInstallState = it.apkInstallState.copy(
                     isInstalling = false,
                     currentStep = "Virtual Container Ready",
                     progress = 1.0f,
                     completedItem = added
                 ),
                 userNotice = "Virtualized ${added.appName} into Game Space"
-            )
+            ) }
         }
     }
 
@@ -2150,83 +2152,83 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             val updatedGames = withContext(Dispatchers.IO) {
                 gameSpaceRepo.loadUserGames()
             }
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 installedGames = updatedGames,
                 userNotice = "Removed app and virtual environment from Game Space"
-            )
+            ) }
         }
     }
 
     fun setActiveGame(title: String?, url: String?) {
-        _uiState.value = _uiState.value.copy(
-            activeGameItem = if (url == null) null else _uiState.value.activeGameItem,
+        _uiState.update { it.copy(
+            activeGameItem = if (url == null) null else it.activeGameItem,
             activeGameTitle = title,
             activeGameUrl = url,
-            activeGamePackage = if (url == null) null else _uiState.value.activeGamePackage
-        )
+            activeGamePackage = if (url == null) null else it.activeGamePackage
+        ) }
     }
 
     fun replyToNotification(notification: DeviceNotification, replyText: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 userNotice = "Reply sent to ${notification.title.ifBlank { notification.appName }}: \"$replyText\""
-            )
+            ) }
         }
     }
 
     fun setPreventOverlayApps(prevent: Boolean) {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             preventOverlayApps = prevent,
             userNotice = if (prevent) "Anti-Overlay Active: No external apps can display over this app." else "Overlay protection disabled."
-        )
+        ) }
     }
 
     fun triggerSpeedBoost() {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             isBoosting = true,
             showSpeedBoostOverlay = true
-        )
+        ) }
         viewModelScope.launch {
             delay(1000)
             val result = com.example.util.PerformanceBooster.executeSuperBoost(getApplication())
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { it.copy(
                 isBoosting = false,
                 speedBoostResult = result,
                 userNotice = "Super Speed Boosted! ${result.freedMemoryMb} MB RAM Freed (+${result.speedBoostPercent}% Fast)"
-            )
+            ) }
         }
     }
 
     fun dismissSpeedBoostOverlay() {
-        _uiState.value = _uiState.value.copy(showSpeedBoostOverlay = false)
+        _uiState.update { it.copy(showSpeedBoostOverlay = false) }
     }
 
     fun setShowCameraApp(show: Boolean) {
-        _uiState.value = _uiState.value.copy(showCameraApp = show)
+        _uiState.update { it.copy(showCameraApp = show) }
     }
 
     fun simulateIncomingWhatsAppCall(name: String, number: String, isVideo: Boolean = false) {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingWhatsAppCall = WhatsAppCallState(callerName = name, callerNumber = number, isVideo = isVideo),
             isAppAlertsDrawerOpen = true,
             userNotice = "Incoming WhatsApp call from $name"
-        )
+        ) }
     }
 
     fun acceptWhatsAppCall(callState: WhatsAppCallState) {
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingWhatsAppCall = null,
             isAppAlertsDrawerOpen = false
-        )
+        ) }
         startCall(callState.callerNumber, "${callState.callerName} (WhatsApp)")
     }
 
     fun declineWhatsAppCall() {
         val currentCall = _uiState.value.incomingWhatsAppCall
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { it.copy(
             incomingWhatsAppCall = null,
             userNotice = "WhatsApp call declined"
-        )
+        ) }
         if (currentCall != null) {
             val now = System.currentTimeMillis()
             val missedEntry = CallLogEntry(
@@ -2282,7 +2284,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         context.startActivity(callIntent)
                         callLaunched = true
-                        _uiState.value = _uiState.value.copy(userNotice = "Calling $displayName via WhatsApp...")
+                        _uiState.update { it.copy(userNotice = "Calling $displayName via WhatsApp...") }
                         break
                     }
                 }
@@ -2301,7 +2303,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 context.startActivity(callIntent)
                 callLaunched = true
-                _uiState.value = _uiState.value.copy(userNotice = "Calling $displayName via WhatsApp...")
+                _uiState.update { it.copy(userNotice = "Calling $displayName via WhatsApp...") }
             } catch (_: Exception) {
                 try {
                     val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly")).apply {
@@ -2309,7 +2311,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(fallbackIntent)
-                    _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
+                    _uiState.update { it.copy(userNotice = "Opening WhatsApp call to $displayName...") }
                 } catch (_: Exception) {
                     startCall(phoneNumber, "$displayName (WhatsApp)")
                 }

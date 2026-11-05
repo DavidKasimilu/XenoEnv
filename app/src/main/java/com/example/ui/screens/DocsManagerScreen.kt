@@ -209,6 +209,7 @@ fun DocsManagerScreen(
             )
         }
     ) { innerPadding ->
+        val dateSdf = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -344,7 +345,11 @@ fun DocsManagerScreen(
                             }
                         }
 
-                        items(filteredFolders, key = { it.folderPath }) { folder ->
+                        items(
+                            items = filteredFolders,
+                            key = { it.folderPath },
+                            contentType = { "folder_card" }
+                        ) { folder ->
                             DocumentFolderCard(
                                 folder = folder,
                                 onClick = {
@@ -396,9 +401,14 @@ fun DocsManagerScreen(
                             }
                         }
 
-                        items(docsInFolder, key = { it.id }) { docItem ->
+                        items(
+                            items = docsInFolder,
+                            key = { it.id },
+                            contentType = { "file_card" }
+                        ) { docItem ->
                             DocumentFileRowCard(
                                 item = docItem,
+                                dateSdf = dateSdf,
                                 onClick = { selectedDocument = docItem }
                             )
                         }
@@ -619,6 +629,7 @@ private fun FormatCountPill(label: String, color: Color) {
 @Composable
 private fun DocumentFileRowCard(
     item: DocumentFileItem,
+    dateSdf: SimpleDateFormat,
     onClick: () -> Unit
 ) {
     val badgeColor = when (item.fileType) {
@@ -626,8 +637,8 @@ private fun DocumentFileRowCard(
         DocFileType.DOCX, DocFileType.DOC -> Color(0xFF2563EB)
         DocFileType.TXT -> Color(0xFF059669)
     }
-    val dateFormatted = remember(item.lastModified) {
-        SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(item.lastModified))
+    val dateFormatted = remember(item.lastModified, dateSdf) {
+        dateSdf.format(Date(item.lastModified))
     }
 
     Card(

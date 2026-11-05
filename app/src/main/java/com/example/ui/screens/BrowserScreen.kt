@@ -134,6 +134,39 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Global pool for Browser WebViews to persist session state and avoid expensive re-initialization
+ * when switching between multiple open tabs.
+ */
+object BrowserWebViewPool {
+    private val pool = mutableMapOf<String, WebView>()
+
+    fun getOrCreate(tabId: String, context: android.content.Context): WebView {
+        return pool.getOrPut(tabId) {
+            WebView(context.applicationContext).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            }
+        }
+    }
+
+    fun remove(tabId: String) {
+        pool.remove(tabId)?.let { wv ->
+            wv.stopLoading()
+            wv.loadUrl("about:blank")
+            wv.clearHistory()
+            wv.removeAllViews()
+            wv.destroy()
+        }
+    }
+
+    fun clear() {
+        pool.keys.toList().forEach { remove(it) }
+    }
+}
+
 private const val MOBILE_BROWSER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
@@ -976,7 +1009,10 @@ fun BrowserScreen(
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { ctx ->
-                                WebView(ctx).apply {
+                                val wv = BrowserWebViewPool.getOrCreate(tab.id, ctx)
+                                (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+                                
+                                wv.apply {
                                     try {
                                         setLayerType(android.view.View.LAYER_TYPE_NONE, null)
                                     } catch (_: Exception) {}
@@ -1214,20 +1250,18 @@ fun BrowserScreen(
                                             isUserGesture: Boolean,
                                             resultMsg: Message?
                                         ): Boolean {
-                                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                                            val tempWebView = WebView(view?.context ?: return false).apply {
-                                                settings.javaScriptEnabled = true
-                                                settings.domStorageEnabled = true
-                                                webViewClient = object : WebViewClient() {
-                                                    override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
-                                                        val url = req?.url?.toString() ?: return false
-                                                        view.loadUrl(url)
-                                                        return true
-                                                    }
+                                            val newWebView = WebView(ctx)
+                                            applyBrowserModeSettings(newWebView, tab.isDesktopMode)
+                                            newWebView.webViewClient = object : WebViewClient() {
+                                                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                                    val url = request?.url?.toString() ?: return false
+                                                    onOpenNewTab(url)
+                                                    return true
                                                 }
                                             }
-                                            transport.webView = tempWebView
-                                            resultMsg.sendToTarget()
+                                            val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                            transport?.webView = newWebView
+                                            resultMsg?.sendToTarget()
                                             return true
                                         }
 
@@ -1251,17 +1285,16 @@ fun BrowserScreen(
                                         }
                                     }
 
-                                    tag = tab.isDesktopMode
-                                    loadUrl(
-                                        tab.url,
-                                        if (tab.isDesktopMode) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS
-                                    )
-                                    activeWebView = this
+                                    // If it's a new WebView or about:blank, load the target URL
+                                    if (url.isNullOrBlank() || url == "about:blank") {
+                                        loadUrl(tab.url, if (tab.isDesktopMode) DESKTOP_BROWSER_HEADERS else MOBILE_BROWSER_HEADERS)
+                                    }
                                 }
+                                activeWebView = wv
+                                wv
                             },
-                            update = { webView ->
-                                webView.tag = tab.isDesktopMode
-                                activeWebView = webView
+                            update = { wv ->
+                                activeWebView = wv
                             }
                         )
                     }
@@ -1497,15 +1530,20 @@ fun BrowserScreen(
                 if (history.isEmpty()) {
                     Text("No browsing history saved yet.")
                 } else {
+                    val historyDateSdf = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 300.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(history, key = { "${it.id}_${it.timestamp}" }) { item ->
-                            val dateStr = remember(item.timestamp) {
-                                SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(item.timestamp))
+                        items(
+                            items = history,
+                            key = { "${it.id}_${it.timestamp}" },
+                            contentType = { "history_item" }
+                        ) { item ->
+                            val dateStr = remember(item.timestamp, historyDateSdf) {
+                                historyDateSdf.format(Date(item.timestamp))
                             }
                             Column(
                                 modifier = Modifier

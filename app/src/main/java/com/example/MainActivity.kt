@@ -247,6 +247,8 @@ fun XenoApp(
     val lifecycleOwner = LocalLifecycleOwner.current
     val callListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val contactListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val messagesListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val galleryGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     val activity = context as? Activity
     LaunchedEffect(uiState.preventOverlayApps) {
@@ -620,6 +622,7 @@ fun XenoApp(
                         color = MaterialTheme.colorScheme.background
                     ) {
                         GalleryScreen(
+                            gridState = galleryGridState,
                             mediaItems = uiState.mediaItems,
                             filter = uiState.mediaFilter,
                             selectedImageItem = uiState.selectedImageItem,
@@ -700,6 +703,7 @@ fun XenoApp(
                                 }
                                 XenoTab.MESSAGES -> {
                                     MessagesScreen(
+                                        listState = messagesListState,
                                         threads = uiState.smsThreads,
                                         searchQuery = uiState.smsSearchQuery,
                                         onSearchQueryChange = { viewModel.setSmsSearchQuery(it) },
@@ -733,7 +737,10 @@ fun XenoApp(
                                         showHistoryDialog = uiState.showHistoryDialog,
                                         onOpenNewTab = { viewModel.openNewBrowserTab(it) },
                                         onSelectTab = { viewModel.selectBrowserTab(it) },
-                                        onCloseTab = { viewModel.closeBrowserTab(it) },
+                                        onCloseTab = { 
+                                            com.example.ui.screens.BrowserWebViewPool.remove(it)
+                                            viewModel.closeBrowserTab(it) 
+                                        },
                                         onUpdateTabUrl = { url, title -> viewModel.updateActiveTabUrl(url, title) },
                                         onUpdateTabLoading = { isLoading, progress -> viewModel.updateActiveTabLoading(isLoading, progress) },
                                         onUpdateTabNavState = { back, fwd -> viewModel.updateActiveTabNavState(back, fwd) },

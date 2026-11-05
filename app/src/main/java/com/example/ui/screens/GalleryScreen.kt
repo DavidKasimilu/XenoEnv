@@ -124,6 +124,7 @@ fun GalleryScreen(
     onAddSampleVideos: (() -> Unit)? = null,
     onAddSamplePhotos: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
     modifier: Modifier = Modifier
 ) {
     var currentTab by remember { mutableStateOf(GalleryTab.VIDEOS) }
@@ -538,6 +539,7 @@ fun GalleryScreen(
                                 }
 
                                 LazyVerticalGrid(
+                                    state = gridState,
                                     columns = GridCells.Adaptive(minSize = 152.dp),
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -647,6 +649,7 @@ fun GalleryScreen(
 
                                 if (isVideoFolderMode) {
                                     LazyVerticalGrid(
+                                    state = gridState,
                                         columns = GridCells.Adaptive(minSize = 150.dp),
                                         modifier = Modifier
                                             .fillMaxSize()
@@ -669,6 +672,7 @@ fun GalleryScreen(
                                 } else {
                                     // Grouped by Folder: Videos arranged in a multi-column grid under each folder header
                                     LazyVerticalGrid(
+                                    state = gridState,
                                         columns = GridCells.Adaptive(minSize = 152.dp),
                                         modifier = Modifier
                                             .fillMaxSize()
@@ -796,6 +800,7 @@ fun GalleryScreen(
                                 }
 
                                 LazyVerticalGrid(
+                                    state = gridState,
                                     columns = GridCells.Adaptive(minSize = 108.dp),
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -858,6 +863,7 @@ fun GalleryScreen(
 
                                 if (isPhotoFolderMode) {
                                     LazyVerticalGrid(
+                                    state = gridState,
                                         columns = GridCells.Adaptive(minSize = 150.dp),
                                         modifier = Modifier
                                             .fillMaxSize()
@@ -879,6 +885,7 @@ fun GalleryScreen(
                                     }
                                 } else {
                                     LazyVerticalGrid(
+                                    state = gridState,
                                         columns = GridCells.Adaptive(minSize = 108.dp),
                                         modifier = Modifier
                                             .fillMaxSize()

@@ -118,6 +118,7 @@ fun MessagesScreen(
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
     onReplyNotification: (DeviceNotification, String) -> Unit = { _, _ -> },
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     modifier: Modifier = Modifier
 ) {
     var selectedThreadIds by remember { mutableStateOf(setOf<Long>()) }
@@ -235,6 +236,7 @@ fun MessagesScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)

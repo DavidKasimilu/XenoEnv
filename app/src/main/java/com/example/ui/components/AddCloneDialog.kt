@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -51,13 +52,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.drawable.toBitmap
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.InstalledAppsManager
 import com.example.data.models.InstalledAppItem
 import com.example.data.models.SpacePresets
@@ -221,7 +224,7 @@ fun AddCloneDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            AppIconImage(iconDrawable = app.icon, fallbackName = app.appName)
+                            AppIconImage(iconData = app.icon, fallbackName = app.appName)
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -383,7 +386,7 @@ fun InstalledAppListItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            AppIconImage(iconDrawable = app.icon, fallbackName = app.appName)
+            AppIconImage(iconData = app.icon, fallbackName = app.appName)
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -421,39 +424,40 @@ fun InstalledAppListItem(
 
 @Composable
 fun AppIconImage(
-    iconDrawable: android.graphics.drawable.Drawable?,
+    iconData: Any?,
     fallbackName: String,
     modifier: Modifier = Modifier
 ) {
-    val bitmap = remember(iconDrawable) {
-        try {
-            iconDrawable?.toBitmap(96, 96)?.asImageBitmap()
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = fallbackName,
-            modifier = modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(8.dp))
-        )
-    } else {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = modifier.size(40.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = fallbackName.take(1),
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 16.sp
-                )
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (iconData != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(iconData)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = fallbackName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = fallbackName.take(1),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp
+                    )
+                }
             }
         }
     }
