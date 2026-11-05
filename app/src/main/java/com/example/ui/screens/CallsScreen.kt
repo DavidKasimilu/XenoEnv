@@ -136,6 +136,13 @@ fun CallsScreen(
         availableSims = TelecomHelper.getAvailableSimCards(context)
     }
 
+    val simCarrierMap = remember(availableSims) {
+        availableSims.associate { it.subscriptionId to it.carrierName }
+    }
+    val defaultCarrierName = remember(availableSims) {
+        availableSims.firstOrNull()?.carrierName
+    }
+
     LaunchedEffect(Unit, callLogs.size) {
         onMarkMissedSeen()
     }
@@ -513,6 +520,8 @@ fun CallsScreen(
                                 isSelected = isSelected,
                                 isSelectionMode = isSelectionMode,
                                 availableSims = availableSims,
+                                simCarrierMap = simCarrierMap,
+                                defaultCarrierName = defaultCarrierName,
                                 onClick = {
                                     if (isSelectionMode) {
                                         selectedCallIds = if (isSelected) {
@@ -671,6 +680,8 @@ private fun RecentsCallCard(
     isSelected: Boolean,
     isSelectionMode: Boolean,
     availableSims: List<SimCardInfo>,
+    simCarrierMap: Map<Int, String> = emptyMap(),
+    defaultCarrierName: String? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onCallClick: () -> Unit,
@@ -778,11 +789,11 @@ private fun RecentsCallCard(
                             )
                         }
 
-                        // SIM Name in pink (Screenshot 3 & 7) - detected carrier name
-                        val simName = remember(entry.simSlot, entry.simName, availableSims) {
+                        // SIM Name in pink (Screenshot 3 & 7) - fast O(1) carrier lookup
+                        val simName = remember(entry.simSlot, entry.simName, simCarrierMap, defaultCarrierName) {
                             entry.simName?.takeIf { it.isNotBlank() }
-                                ?: availableSims.find { it.subscriptionId == entry.simSlot }?.carrierName
-                                ?: availableSims.firstOrNull()?.carrierName
+                                ?: simCarrierMap[entry.simSlot]
+                                ?: defaultCarrierName
                                 ?: "SIM ${entry.simSlot + 1}"
                         }
                         Text(

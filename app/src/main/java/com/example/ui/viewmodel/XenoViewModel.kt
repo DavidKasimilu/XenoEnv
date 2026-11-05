@@ -216,18 +216,19 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val contactsRepo = ContactsRepository(application)
     private val callLogRepo = CallLogRepository(application)
     private val smsRepo = SmsRepository(application, contactsRepo)
-    private val browserRepo = BrowserRepository(application)
-    private val galleryRepo = GalleryRepository(application)
-    private val spaceRepo = SpaceRepository(application)
-    private val gameSpaceRepo = GameSpaceRepository(application)
-    private val passwordRepo = PasswordRepository(application)
-    private val downloadRepo = DownloadRepository(application)
-    private val documentRepo = DocumentRepository(application)
-    private val musicRepo = MusicRepository(application)
+    private val browserRepo by lazy { BrowserRepository(application) }
+    private val galleryRepo by lazy { GalleryRepository(application) }
+    private val spaceRepo by lazy { SpaceRepository(application) }
+    private val gameSpaceRepo by lazy { GameSpaceRepository(application) }
+    private val passwordRepo by lazy { PasswordRepository(application) }
+    private val downloadRepo by lazy { DownloadRepository(application) }
+    private val documentRepo by lazy { DocumentRepository(application) }
+    private val musicRepo by lazy { MusicRepository(application) }
 
     private val callPrefs = application.getSharedPreferences("xeno_call_prefs", Context.MODE_PRIVATE)
     private val recentInMemoryCalls = CopyOnWriteArrayList<CallLogEntry>()
     private var callLogContentObserver: ContentObserver? = null
+    private val isSyncingCallHistory = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Volatile
     private var lastFullDataLoadMs: Long = 0L
@@ -243,16 +244,18 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
         }
 
-        // 0ms Synchronous Frame-1 Instant Seed from persistent fast snapshots
-        val initContacts = contactsRepo.getCachedContactsSnapshot()
-        val initCalls = callLogRepo.getCachedCallLogsSnapshot()
-        val initThreads = smsRepo.getCachedThreadsSnapshot()
-        if (initContacts.isNotEmpty() || initCalls.isNotEmpty() || initThreads.isNotEmpty()) {
-            _uiState.value = _uiState.value.copy(
-                contacts = initContacts,
-                callLogs = initCalls,
-                smsThreads = initThreads
-            )
+        // Fast Snapshot Seed offloaded from Main Thread to prevent frame drop
+        viewModelScope.launch(Dispatchers.IO) {
+            val initContacts = contactsRepo.getCachedContactsSnapshot()
+            val initCalls = callLogRepo.getCachedCallLogsSnapshot()
+            val initThreads = smsRepo.getCachedThreadsSnapshot()
+            if (initContacts.isNotEmpty() || initCalls.isNotEmpty() || initThreads.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    contacts = initContacts,
+                    callLogs = initCalls,
+                    smsThreads = initThreads
+                )
+            }
         }
 
         boostAppPerformanceAndFastLoadHelper()
@@ -386,28 +389,36 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         // 1. Priority live sync of Call History, Contacts, and SMS Conversations
         loadAllData(forceRefresh = true)
 
-        // 3. Offload secondary workspace/browser/storage initialization to background IO
+        // 2. Offload secondary workspace/browser/storage initialization to deferred background IO
         viewModelScope.launch(Dispatchers.IO) {
             checkDefaultAppStatus()
             checkNotificationAccess()
-            val (tabs, activeId) = browserRepo.loadTabs()
-            val history = browserRepo.loadHistory()
-            val clones = spaceRepo.loadClonedInstances()
-            val dock = spaceRepo.loadActiveDock()
-            val passwords = passwordRepo.getSavedPasswords()
-            val trackedDownloads = downloadRepo.getTrackedDownloads()
-            _uiState.value = _uiState.value.copy(
-                browserTabs = tabs,
-                activeBrowserTabId = activeId,
-                browserHistory = history,
-                spaceClones = clones,
-                activeSpaceDock = dock,
-                savedPasswords = passwords,
-                downloads = trackedDownloads
-            )
-            val games = gameSpaceRepo.loadUserGames()
-            _uiState.value = _uiState.value.copy(installedGames = games)
+            // Slight delay so the primary phone UI renders frame 1 with zero CPU/disk contention
+            kotlinx.coroutines.delay(600)
+            if (_uiState.value.spaceClones.isEmpty()) {
+                loadSecondaryWorkspaceImmediateInternal()
+            }
         }
+    }
+
+    private suspend fun loadSecondaryWorkspaceImmediateInternal() {
+        val (tabs, activeId) = browserRepo.loadTabs()
+        val history = browserRepo.loadHistory()
+        val clones = spaceRepo.loadClonedInstances()
+        val dock = spaceRepo.loadActiveDock()
+        val passwords = passwordRepo.getSavedPasswords()
+        val trackedDownloads = downloadRepo.getTrackedDownloads()
+        val games = gameSpaceRepo.loadUserGames()
+        _uiState.value = _uiState.value.copy(
+            browserTabs = tabs,
+            activeBrowserTabId = activeId,
+            browserHistory = history,
+            spaceClones = clones,
+            activeSpaceDock = dock,
+            savedPasswords = passwords,
+            downloads = trackedDownloads,
+            installedGames = games
+        )
     }
 
     /**
@@ -444,60 +455,67 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
      * via ContactsRepository's in-memory phone index, and updates unseen missed call badge state.
      */
     fun syncCallHistoryFast() {
+        if (!isSyncingCallHistory.compareAndSet(false, true)) {
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            val systemLogs = callLogRepo.getCallLogs()
+            try {
+                val systemLogs = callLogRepo.getCallLogs()
 
-            // Merge recent optimistic call entries not yet reflected in system provider
-            val now = System.currentTimeMillis()
-            recentInMemoryCalls.removeAll { now - it.date > 60_000L }
+                // Merge recent optimistic call entries not yet reflected in system provider
+                val now = System.currentTimeMillis()
+                recentInMemoryCalls.removeAll { now - it.date > 60_000L }
 
-            val merged = ArrayList<CallLogEntry>(systemLogs.size + recentInMemoryCalls.size)
-            for (localEntry in recentInMemoryCalls) {
-                val localDigits = localEntry.number.filter { it.isDigit() }.takeLast(7)
-                val alreadyInSystem = systemLogs.any { sys ->
-                    val sysDigits = sys.number.filter { it.isDigit() }.takeLast(7)
-                    (sysDigits == localDigits || sys.number == localEntry.number) &&
-                            Math.abs(sys.date - localEntry.date) < 15_000L
+                val merged = ArrayList<CallLogEntry>(systemLogs.size + recentInMemoryCalls.size)
+                for (localEntry in recentInMemoryCalls) {
+                    val localDigits = localEntry.number.filter { it.isDigit() }.takeLast(7)
+                    val alreadyInSystem = systemLogs.any { sys ->
+                        val sysDigits = sys.number.filter { it.isDigit() }.takeLast(7)
+                        (sysDigits == localDigits || sys.number == localEntry.number) &&
+                                Math.abs(sys.date - localEntry.date) < 15_000L
+                    }
+                    if (!alreadyInSystem) {
+                        merged.add(localEntry)
+                    }
                 }
-                if (!alreadyInSystem) {
-                    merged.add(localEntry)
-                }
-            }
-            merged.addAll(systemLogs)
-            merged.sortByDescending { it.date }
+                merged.addAll(systemLogs)
+                merged.sortByDescending { it.date }
 
-            val enrichedLogs = ArrayList<CallLogEntry>(merged.size)
-            for (entry in merged) {
-                if (entry.cachedName.isNullOrBlank() && entry.number.isNotBlank()) {
-                    val fastName = contactsRepo.resolveContactNameFast(entry.number)
-                    if (!fastName.isNullOrBlank()) {
-                        enrichedLogs.add(entry.copy(cachedName = fastName))
+                val enrichedLogs = ArrayList<CallLogEntry>(merged.size)
+                for (entry in merged) {
+                    if (entry.cachedName.isNullOrBlank() && entry.number.isNotBlank()) {
+                        val fastName = contactsRepo.resolveContactNameFast(entry.number)
+                        if (!fastName.isNullOrBlank()) {
+                            enrichedLogs.add(entry.copy(cachedName = fastName))
+                        } else {
+                            enrichedLogs.add(entry)
+                        }
                     } else {
                         enrichedLogs.add(entry)
                     }
+                }
+
+                callLogRepo.saveCallLogsSnapshot(enrichedLogs)
+
+                val isOnCallsTab = _uiState.value.currentTab == XenoTab.CALLS
+                val lastSeenTs = callPrefs.getLong("last_seen_calls_ts", 0L)
+                val newUnseenCount = if (isOnCallsTab) {
+                    val maxTs = maxOf(now, enrichedLogs.firstOrNull()?.date ?: now)
+                    callPrefs.edit().putLong("last_seen_calls_ts", maxTs).apply()
+                    0
                 } else {
-                    enrichedLogs.add(entry)
+                    enrichedLogs.count {
+                        (it.type == CallType.MISSED || it.type == CallType.REJECTED) && it.date > lastSeenTs
+                    }
                 }
+
+                _uiState.value = _uiState.value.copy(
+                    callLogs = enrichedLogs,
+                    unseenMissedCallsCount = newUnseenCount
+                )
+            } finally {
+                isSyncingCallHistory.set(false)
             }
-
-            callLogRepo.saveCallLogsSnapshot(enrichedLogs)
-
-            val isOnCallsTab = _uiState.value.currentTab == XenoTab.CALLS
-            val lastSeenTs = callPrefs.getLong("last_seen_calls_ts", 0L)
-            val newUnseenCount = if (isOnCallsTab) {
-                val maxTs = maxOf(now, enrichedLogs.firstOrNull()?.date ?: now)
-                callPrefs.edit().putLong("last_seen_calls_ts", maxTs).apply()
-                0
-            } else {
-                enrichedLogs.count {
-                    (it.type == CallType.MISSED || it.type == CallType.REJECTED) && it.date > lastSeenTs
-                }
-            }
-
-            _uiState.value = _uiState.value.copy(
-                callLogs = enrichedLogs,
-                unseenMissedCallsCount = newUnseenCount
-            )
         }
     }
 
@@ -568,6 +586,10 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             syncCallHistoryFast()
         } else if (isMessages && _uiState.value.smsThreads.isEmpty()) {
             refreshSms()
+        } else if ((tab == XenoTab.CLONE_SPACE || tab == XenoTab.BROWSER) && _uiState.value.spaceClones.isEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                loadSecondaryWorkspaceImmediateInternal()
+            }
         }
     }
 
@@ -633,8 +655,8 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(smsThreads = threads)
         }
 
-        // 3. Load gallery media items only if needed or if gallery manager is open (avoids heavy MediaStore scan on every resume)
-        if (_uiState.value.mediaItems.isEmpty() || _uiState.value.showMediaManager || (now - lastGalleryLoadMs) > 45_000L) {
+        // 3. Load gallery media items only if needed or if gallery manager is open (avoids heavy MediaStore scan on cold startup)
+        if (_uiState.value.showMediaManager || (_uiState.value.mediaItems.isNotEmpty() && (now - lastGalleryLoadMs) > 60_000L)) {
             lastGalleryLoadMs = now
             viewModelScope.launch(Dispatchers.IO) {
                 val media = galleryRepo.getMediaItems()

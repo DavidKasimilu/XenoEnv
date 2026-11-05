@@ -29,10 +29,6 @@ class ContactsRepository(private val context: Context) {
     private val phoneToNameCache = ConcurrentHashMap<String, String>()
     private val unresolvedPhonesCache = ConcurrentHashMap<String, Long>()
 
-    init {
-        getCachedContactsSnapshot()
-    }
-
     companion object {
         private val globalPhoneToNameCache = ConcurrentHashMap<String, String>()
 

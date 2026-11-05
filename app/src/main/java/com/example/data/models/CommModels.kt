@@ -284,25 +284,3 @@ data class SmsMessage(
     val formattedDate: String
         get() = FastDateFormatter.formatDayShortDate(date)
 }
-
-data class IncomingSmsPopupData(
-    val id: Long = System.currentTimeMillis(),
-    val threadId: Long,
-    val senderNumber: String,
-    val senderName: String?,
-    val messageBody: String,
-    val timestamp: Long = System.currentTimeMillis()
-) {
-    val displayName: String
-        get() = senderName?.takeIf { it.isNotBlank() } ?: senderNumber.takeIf { it.isNotBlank() } ?: "Unknown Sender"
-}
-
-data class IncomingCallPopupData(
-    val id: Long = System.currentTimeMillis(),
-    val phoneNumber: String,
-    val callerName: String?,
-    val timestamp: Long = System.currentTimeMillis()
-) {
-    val displayName: String
-        get() = callerName?.takeIf { it.isNotBlank() } ?: phoneNumber.takeIf { it.isNotBlank() } ?: "Unknown Caller"
-}
