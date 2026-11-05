@@ -847,7 +847,6 @@ fun XenoApp(
             incomingWhatsAppCall = uiState.incomingWhatsAppCall,
             onAcceptWhatsAppCall = { viewModel.acceptWhatsAppCall(it) },
             onDeclineWhatsAppCall = { viewModel.declineWhatsAppCall() },
-            onSimulateWhatsAppCall = { viewModel.simulateIncomingWhatsAppCall("Sarah Connor", "+1 555 019 2834") },
             onStopFloatingApp = {
                 (context as? Activity)?.finishAndRemoveTask()
             },

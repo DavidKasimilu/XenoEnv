@@ -307,7 +307,6 @@ fun AppAlertsDrawerOverlay(
     incomingWhatsAppCall: WhatsAppCallState? = null,
     onAcceptWhatsAppCall: (WhatsAppCallState) -> Unit = {},
     onDeclineWhatsAppCall: () -> Unit = {},
-    onSimulateWhatsAppCall: () -> Unit = {},
     onStopFloatingApp: (() -> Unit)? = null,
     onSpeedBoost: () -> Unit = {},
     shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp),
@@ -401,7 +400,6 @@ fun AppAlertsDrawerOverlay(
                     incomingWhatsAppCall = incomingWhatsAppCall,
                     onAcceptWhatsAppCall = onAcceptWhatsAppCall,
                     onDeclineWhatsAppCall = onDeclineWhatsAppCall,
-                    onSimulateWhatsAppCall = onSimulateWhatsAppCall,
                     onCloseDrawer = onCloseDrawer,
                     onStopFloatingApp = onStopFloatingApp,
                     modifier = Modifier
@@ -430,7 +428,6 @@ fun DeviceNotificationsWindow(
     incomingWhatsAppCall: WhatsAppCallState? = null,
     onAcceptWhatsAppCall: (WhatsAppCallState) -> Unit = {},
     onDeclineWhatsAppCall: () -> Unit = {},
-    onSimulateWhatsAppCall: () -> Unit = {},
     onCloseDrawer: (() -> Unit)? = null,
     onStopFloatingApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -631,31 +628,17 @@ fun DeviceNotificationsWindow(
             // Alerts Items or Clean Empty State
             if (notifications.isEmpty() && incomingWhatsAppCall == null) {
                 item(key = "empty_state") {
-                    Column(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 60.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                            .padding(vertical = 120.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "No active notifications",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
-                        OutlinedButton(
-                            onClick = onSimulateWhatsAppCall,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Phone,
-                                contentDescription = null,
-                                tint = Color(0xFF25D366),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Simulate WhatsApp Call")
-                        }
                     }
                 }
             } else {
