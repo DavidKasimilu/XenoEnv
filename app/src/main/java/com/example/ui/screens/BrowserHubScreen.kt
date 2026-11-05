@@ -105,6 +105,7 @@ fun BrowserHubScreen(
     onSavePassword: (domain: String, title: String, username: String, pass: String) -> Unit = { _, _, _, _ -> },
     onDeletePassword: (Long) -> Unit = {},
     onPlayVideo: (MediaItem) -> Unit = {},
+    onBackToHome: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -180,7 +181,8 @@ fun BrowserHubScreen(
                         onOpenDocs = { onSetShowDocsManager(true) },
                         onOpenMusic = { onSetShowMusicPlayer(true) },
                         onOpenCamera = onOpenCamera,
-                        onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) }
+                        onBackToBrowser = { onDualTabChanged(BrowserDualTab.BROWSER) },
+                        onBackToHome = onBackToHome
                     )
                 }
                 BrowserDualTab.DOWNLOADS -> {

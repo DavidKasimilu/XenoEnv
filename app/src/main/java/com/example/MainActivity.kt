@@ -785,7 +785,8 @@ fun XenoApp(
                                             viewModel.savePassword(domain, title, username, pass)
                                         },
                                         onDeletePassword = { viewModel.deletePassword(it) },
-                                        onPlayVideo = { viewModel.selectVideoItem(it) }
+                                        onPlayVideo = { viewModel.selectVideoItem(it) },
+                                        onBackToHome = { viewModel.selectTab(XenoTab.CALLS) }
                                     )
                                 }
                                 XenoTab.SETTINGS -> {

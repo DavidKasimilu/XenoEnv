@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
@@ -485,40 +486,50 @@ fun ContactItemRow(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // WhatsApp call icon with thin green circle
                 IconButton(
                     onClick = onWhatsAppClick,
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier
+                        .size(34.dp)
+                        .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Phone,
                         contentDescription = "WhatsApp Call",
                         tint = Color(0xFF25D366),
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
+                // Normal call icon with thin white circle
+                IconButton(
+                    onClick = onCallClick,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .border(width = 1.dp, color = Color.White, shape = CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = "Call",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // SMS Message icon
                 IconButton(
                     onClick = onSmsClick,
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Message,
                         contentDescription = "Message",
                         tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onCallClick,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Call,
-                        contentDescription = "Call",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

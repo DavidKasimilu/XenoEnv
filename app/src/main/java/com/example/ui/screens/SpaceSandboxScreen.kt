@@ -97,10 +97,11 @@ fun SpaceSandboxScreen(
     onOpenMusic: () -> Unit = {},
     onOpenCamera: () -> Unit = {},
     onBackToBrowser: () -> Unit = {},
+    onBackToHome: () -> Unit = onBackToBrowser,
     modifier: Modifier = Modifier
 ) {
     BackHandler {
-        onBackToBrowser()
+        onBackToHome()
     }
 
     Column(

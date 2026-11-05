@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -793,29 +794,37 @@ private fun RecentsCallCard(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // WhatsApp call icon with thin green circle
                     IconButton(
                         onClick = onWhatsAppClick,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier
+                            .size(34.dp)
+                            .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Phone,
                             contentDescription = "WhatsApp Call",
                             tint = Color(0xFF25D366),
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
-                    // Call icon button on the right
+                    // Normal call icon with thin white circle
                     IconButton(
                         onClick = onCallClick,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier
+                            .size(34.dp)
+                            .border(width = 1.dp, color = Color.White, shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Call,
                             contentDescription = "Call",
-                            tint = Color(0xFFB0B0B4),
-                            modifier = Modifier.size(22.dp)
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

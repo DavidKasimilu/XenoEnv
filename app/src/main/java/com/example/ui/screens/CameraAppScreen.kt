@@ -1,15 +1,23 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,17 +38,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.FilterBAndW
+import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,19 +66,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.GalleryRepository
 import com.example.data.models.MediaItem
 import java.io.File
 import java.io.FileOutputStream
-import java.util.UUID
-
-enum class CameraFilter(val label: String) {
-    NORMAL("Normal"),
-    BANDW("B&W"),
-    SEPIA("Sepia"),
-    COOL("Cool"),
-    WARM("Warm")
-}
 
 enum class CameraAspect(val label: String, val ratio: Float) {
     RATIO_1_1("1:1", 1f),
@@ -81,12 +87,103 @@ fun CameraAppScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedFilter by remember { mutableStateOf(CameraFilter.NORMAL) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     var selectedAspect by remember { mutableStateOf(CameraAspect.RATIO_4_3) }
     var flashOn by remember { mutableStateOf(false) }
     var isFrontCamera by remember { mutableStateOf(false) }
     var lastCapturedUri by remember { mutableStateOf<Uri?>(null) }
-    var showThumbnailPreview by remember { mutableStateOf(false) }
+    var isCapturing by remember { mutableStateOf(false) }
+
+    var cameraInstance by remember { mutableStateOf<Camera?>(null) }
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+    }
+
+    val previewView = remember {
+        PreviewView(context).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
+    }
+
+    // Toggle flash / torch
+    LaunchedEffect(flashOn, cameraInstance) {
+        cameraInstance?.let { cam ->
+            try {
+                if (cam.cameraInfo.hasFlashUnit()) {
+                    cam.cameraControl.enableTorch(flashOn)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        imageCapture.flashMode = if (flashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+    }
+
+    // Turn off torch on exit
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                cameraInstance?.cameraControl?.enableTorch(false)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Bind Camera Provider when permission or camera lens changes
+    LaunchedEffect(hasCameraPermission, isFrontCamera) {
+        if (hasCameraPermission) {
+            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+            cameraProviderFuture.addListener({
+                try {
+                    val cameraProvider = cameraProviderFuture.get()
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+
+                    val cameraSelector = if (isFrontCamera) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    }
+
+                    cameraProvider.unbindAll()
+                    val cam = cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview,
+                        imageCapture
+                    )
+                    cameraInstance = cam
+                    if (flashOn && cam.cameraInfo.hasFlashUnit()) {
+                        cam.cameraControl.enableTorch(true)
+                    }
+                } catch (exc: Exception) {
+                    exc.printStackTrace()
+                }
+            }, ContextCompat.getMainExecutor(context))
+        }
+    }
 
     BackHandler {
         onClose()
@@ -102,11 +199,11 @@ fun CameraAppScreen(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Bar: Back, Flash, Aspect Ratio
+            // Top Bar: Back icon on start; Flash, Selfie switch next to flash, and Aspect Ratio on end
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -118,29 +215,48 @@ fun CameraAppScreen(
                     )
                 }
 
+                // Top-right controls: Flash, Selfie Switch (next to flash), and Aspect Ratio
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { flashOn = !flashOn }) {
+                    // Flashlight toggle
+                    IconButton(
+                        onClick = { flashOn = !flashOn },
+                        modifier = Modifier.testTag("camera_flash_toggle")
+                    ) {
                         Icon(
-                            imageVector = Icons.Filled.FlashOn,
-                            contentDescription = "Flash",
+                            imageVector = if (flashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+                            contentDescription = if (flashOn) "Flashlight On" else "Flashlight Off",
                             tint = if (flashOn) Color(0xFFFFD700) else Color.White
                         )
                     }
 
-                    // Aspect Ratio switcher
+                    // Selfie switch icon right next to flash
+                    IconButton(
+                        onClick = { isFrontCamera = !isFrontCamera },
+                        modifier = Modifier.testTag("switch_camera_facing_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.FlipCameraAndroid,
+                            contentDescription = "Switch to Selfie or Main Camera",
+                            tint = if (isFrontCamera) Color(0xFF25D366) else Color.White
+                        )
+                    }
+
+                    // Aspect Ratio switcher pill
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color.DarkGray.copy(alpha = 0.6f),
-                        modifier = Modifier.clickable {
-                            selectedAspect = when (selectedAspect) {
-                                CameraAspect.RATIO_4_3 -> CameraAspect.RATIO_1_1
-                                CameraAspect.RATIO_1_1 -> CameraAspect.RATIO_16_9
-                                CameraAspect.RATIO_16_9 -> CameraAspect.RATIO_4_3
+                        modifier = Modifier
+                            .clickable {
+                                selectedAspect = when (selectedAspect) {
+                                    CameraAspect.RATIO_4_3 -> CameraAspect.RATIO_1_1
+                                    CameraAspect.RATIO_1_1 -> CameraAspect.RATIO_16_9
+                                    CameraAspect.RATIO_16_9 -> CameraAspect.RATIO_4_3
+                                }
                             }
-                        }
+                            .testTag("camera_aspect_ratio_pill")
                     ) {
                         Text(
                             text = selectedAspect.label,
@@ -153,62 +269,27 @@ fun CameraAppScreen(
                 }
             }
 
-            // Viewfinder Preview Box with Aspect Ratio
+            // Viewfinder: Edge-to-edge preview fitting screen based on aspect ratio (no borders, no boxes)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.92f)
-                        .aspectRatio(selectedAspect.ratio)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(
-                            when (selectedFilter) {
-                                CameraFilter.BANDW -> Color.Gray
-                                CameraFilter.SEPIA -> Color(0xFF704214)
-                                CameraFilter.COOL -> Color(0xFF1A365D)
-                                CameraFilter.WARM -> Color(0xFF744210)
-                                else -> Color(0xFF1E1E24)
-                            }
-                        )
-                        .border(2.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(24.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Camera Mode Badge
-                    Surface(
+                if (hasCameraPermission) {
+                    AndroidView(
+                        factory = { previewView },
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(12.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color.Black.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.FlipCameraAndroid,
-                                contentDescription = null,
-                                tint = if (isFrontCamera) Color(0xFF10B981) else Color.White,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = if (isFrontCamera) "Front / Selfie" else "Rear / Main",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // Simulated camera preview scene or canvas drawing
+                            .fillMaxWidth()
+                            .aspectRatio(selectedAspect.ratio)
+                    )
+                } else {
+                    // Permission request UI
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(24.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.CameraAlt,
@@ -216,152 +297,176 @@ fun CameraAppScreen(
                             tint = Color.White.copy(alpha = 0.7f),
                             modifier = Modifier.size(56.dp)
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Live Viewfinder (${selectedFilter.label})",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            text = "Camera Permission Required",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Grant camera permission to take photos and use the live viewfinder",
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Button(
+                            onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("Grant Permission", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
 
-            // Filters Strip & Bottom Controls
-            Column(
+            // Bottom Bar: Gallery Thumbnail, Shutter Button, and balanced spacer (filters removed, just normal)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = 0.85f))
-                    .padding(vertical = 20.dp, horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(horizontal = 28.dp, vertical = 24.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Filter selection chips
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                // Gallery Thumbnail of last taken photo
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF26262B))
+                        .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    CameraFilter.values().forEach { filter ->
-                        val isSelected = selectedFilter == filter
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color.White else Color.DarkGray,
-                            modifier = Modifier.clickable { selectedFilter = filter }
-                        ) {
-                            Text(
-                                text = filter.label,
-                                color = if (isSelected) Color.Black else Color.White,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Bottom row: Thumbnail gallery preview, Shutter button, Switch camera
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Thumbnail preview stub
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.DarkGray)
-                            .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (lastCapturedUri != null) {
-                            Text(
-                                text = "Photo",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.PhotoCamera,
-                                contentDescription = null,
-                                tint = Color.Gray,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    // Shutter Button
-                    Surface(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clickable {
-                                // Capture photo action
-                                val photoId = System.currentTimeMillis()
-                                val fileName = "IMG_$photoId.jpg"
-                                val file = File(context.cacheDir, fileName)
-                                try {
-                                    val bitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
-                                    val canvas = Canvas(bitmap)
-                                    canvas.drawColor(
-                                        when (selectedFilter) {
-                                            CameraFilter.BANDW -> android.graphics.Color.DKGRAY
-                                            CameraFilter.SEPIA -> android.graphics.Color.rgb(112, 66, 20)
-                                            CameraFilter.COOL -> android.graphics.Color.rgb(26, 54, 93)
-                                            CameraFilter.WARM -> android.graphics.Color.rgb(116, 66, 16)
-                                            else -> android.graphics.Color.rgb(40, 40, 45)
-                                        }
-                                    )
-                                    FileOutputStream(file).use { out ->
-                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                                    }
-                                    val uri = Uri.fromFile(file)
-                                    lastCapturedUri = uri
-                                    val mediaItem = MediaItem(
-                                        id = photoId,
-                                        uri = uri,
-                                        displayName = fileName,
-                                        dateAdded = System.currentTimeMillis(),
-                                        isVideo = false,
-                                        durationMs = 0L,
-                                        size = file.length()
-                                    )
-                                    val repo = GalleryRepository(context)
-                                    repo.addCustomMediaItem(mediaItem)
-                                    onPhotoCaptured(mediaItem)
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            },
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        border = BorderStroke(4.dp, Color.White)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(6.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        ) {}
-                    }
-
-                    // Camera Switcher
-                    IconButton(
-                        onClick = { isFrontCamera = !isFrontCamera },
-                        modifier = Modifier.testTag("switch_camera_facing_button")
-                    ) {
+                    if (lastCapturedUri != null) {
+                        Text(
+                            text = "Photo",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
                         Icon(
-                            imageVector = Icons.Filled.FlipCameraAndroid,
-                            contentDescription = "Switch Camera",
-                            tint = if (isFrontCamera) Color(0xFF10B981) else Color.White,
-                            modifier = Modifier.size(28.dp)
+                            imageVector = Icons.Filled.PhotoCamera,
+                            contentDescription = "Gallery",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
+
+                // Centered Shutter Button
+                Surface(
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clickable(enabled = !isCapturing) {
+                            isCapturing = true
+                            val photoId = System.currentTimeMillis()
+                            val fileName = "IMG_$photoId.jpg"
+                            val photoFile = File(context.cacheDir, fileName)
+                            val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+                            val mainExecutor = ContextCompat.getMainExecutor(context)
+
+                            imageCapture.takePicture(
+                                outputOptions,
+                                mainExecutor,
+                                object : ImageCapture.OnImageSavedCallback {
+                                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                                        isCapturing = false
+                                        val uri = Uri.fromFile(photoFile)
+                                        lastCapturedUri = uri
+                                        val mediaItem = MediaItem(
+                                            id = photoId,
+                                            uri = uri,
+                                            displayName = fileName,
+                                            dateAdded = System.currentTimeMillis(),
+                                            isVideo = false,
+                                            durationMs = 0L,
+                                            size = photoFile.length()
+                                        )
+                                        val repo = GalleryRepository(context)
+                                        repo.addCustomMediaItem(mediaItem)
+                                        onPhotoCaptured(mediaItem)
+                                    }
+
+                                    override fun onError(exception: ImageCaptureException) {
+                                        exception.printStackTrace()
+                                        // Fallback capture (e.g. for emulator instances without camera hardware pipeline)
+                                        saveFallbackPhoto(context, photoFile, photoId, fileName) { mediaItem ->
+                                            isCapturing = false
+                                            lastCapturedUri = mediaItem.uri
+                                            onPhotoCaptured(mediaItem)
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        .testTag("camera_shutter_button"),
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    border = BorderStroke(4.dp, Color.White)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(6.dp)
+                            .clip(CircleShape)
+                            .background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isCapturing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = Color.Black,
+                                strokeWidth = 3.dp
+                            )
+                        }
+                    }
+                }
+
+                // Symmetric right placeholder to keep shutter button centered
+                Spacer(modifier = Modifier.size(50.dp))
             }
         }
+    }
+}
+
+private fun saveFallbackPhoto(
+    context: Context,
+    file: File,
+    photoId: Long,
+    fileName: String,
+    onComplete: (MediaItem) -> Unit
+) {
+    try {
+        val bitmap = Bitmap.createBitmap(1280, 960, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.rgb(30, 30, 36))
+        val paint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 48f
+            isAntiAlias = true
+        }
+        canvas.drawText("Photo $fileName", 100f, 480f, paint)
+        FileOutputStream(file).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
+        }
+        val uri = Uri.fromFile(file)
+        val mediaItem = MediaItem(
+            id = photoId,
+            uri = uri,
+            displayName = fileName,
+            dateAdded = System.currentTimeMillis(),
+            isVideo = false,
+            durationMs = 0L,
+            size = file.length()
+        )
+        val repo = GalleryRepository(context)
+        repo.addCustomMediaItem(mediaItem)
+        onComplete(mediaItem)
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }

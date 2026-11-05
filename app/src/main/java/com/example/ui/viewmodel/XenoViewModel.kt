@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
+import android.provider.ContactsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.BrowserRepository
@@ -2229,33 +2230,82 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
         val digitsOnly = phoneNumber.filter { it.isDigit() }
         val displayName = contactName ?: phoneNumber
-        
+        val cleanDigits = digitsOnly.takeLast(8)
+
+        var callLaunched = false
+
+        // 1. Direct WhatsApp VoIP call via ContactsContract.Data
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly"))
-            intent.setPackage("com.whatsapp")
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-            _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
-        } catch (_: Exception) {
+            val resolver = context.contentResolver
+            val cursor = resolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data._ID, ContactsContract.Data.DATA1, ContactsContract.Data.MIMETYPE),
+                "${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf("vnd.android.cursor.item/vnd.com.whatsapp.voip.call"),
+                null
+            )
+
+            cursor?.use { c ->
+                val idIndex = c.getColumnIndex(ContactsContract.Data._ID)
+                val dataIndex = c.getColumnIndex(ContactsContract.Data.DATA1)
+                while (c.moveToNext()) {
+                    val dataId = c.getLong(idIndex)
+                    val rawData = if (dataIndex >= 0) c.getString(dataIndex) ?: "" else ""
+                    val rowDigits = rawData.filter { it.isDigit() }
+                    if (cleanDigits.isNotBlank() && (rowDigits.endsWith(cleanDigits) || cleanDigits.endsWith(rowDigits.takeLast(8)))) {
+                        val callIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(
+                                Uri.parse("content://com.android.contacts/data/$dataId"),
+                                "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
+                            )
+                            setPackage("com.whatsapp")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(callIntent)
+                        callLaunched = true
+                        _uiState.value = _uiState.value.copy(userNotice = "Calling $displayName via WhatsApp...")
+                        break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 2. Direct VoIP Call Intent fallback if contacts sync row is pending or unindexed
+        if (!callLaunched) {
             try {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly"))
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
+                val callIntent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("whatsapp://call?phone=$digitsOnly")
+                    setPackage("com.whatsapp")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(callIntent)
+                callLaunched = true
+                _uiState.value = _uiState.value.copy(userNotice = "Calling $displayName via WhatsApp...")
             } catch (_: Exception) {
                 try {
-                    val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
-                    if (intent != null) {
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
-                        _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp for $displayName...")
-                    } else {
-                        startCall(phoneNumber, "$displayName (WhatsApp)")
+                    val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly")).apply {
+                        setPackage("com.whatsapp")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
+                    context.startActivity(fallbackIntent)
+                    _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
                 } catch (_: Exception) {
                     startCall(phoneNumber, "$displayName (WhatsApp)")
                 }
             }
+        }
+
+        // Record WhatsApp call in recent call logs
+        viewModelScope.launch {
+            callLogRepo.insertCallLog(
+                phoneNumber,
+                "$displayName (WhatsApp)",
+                0L,
+                CallType.OUTGOING
+            )
+            triggerPostCallHistorySync()
         }
     }
 }
