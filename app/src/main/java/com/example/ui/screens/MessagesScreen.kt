@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ClearAll
@@ -44,10 +45,12 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.NotificationsNone
+import com.example.ui.viewmodel.WhatsAppCallState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -301,6 +304,10 @@ fun AppAlertsDrawerOverlay(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    incomingWhatsAppCall: WhatsAppCallState? = null,
+    onAcceptWhatsAppCall: (WhatsAppCallState) -> Unit = {},
+    onDeclineWhatsAppCall: () -> Unit = {},
+    onSimulateWhatsAppCall: () -> Unit = {},
     onStopFloatingApp: (() -> Unit)? = null,
     onSpeedBoost: () -> Unit = {},
     shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp),
@@ -391,6 +398,10 @@ fun AppAlertsDrawerOverlay(
                     onOpenAppDetailsSettings = onOpenAppDetailsSettings,
                     onSimulateSms = onSimulateSms,
                     onSimulateCall = onSimulateCall,
+                    incomingWhatsAppCall = incomingWhatsAppCall,
+                    onAcceptWhatsAppCall = onAcceptWhatsAppCall,
+                    onDeclineWhatsAppCall = onDeclineWhatsAppCall,
+                    onSimulateWhatsAppCall = onSimulateWhatsAppCall,
                     onCloseDrawer = onCloseDrawer,
                     onStopFloatingApp = onStopFloatingApp,
                     modifier = Modifier
@@ -416,6 +427,10 @@ fun DeviceNotificationsWindow(
     onOpenAppDetailsSettings: () -> Unit = {},
     onSimulateSms: () -> Unit = {},
     onSimulateCall: () -> Unit = {},
+    incomingWhatsAppCall: WhatsAppCallState? = null,
+    onAcceptWhatsAppCall: (WhatsAppCallState) -> Unit = {},
+    onDeclineWhatsAppCall: () -> Unit = {},
+    onSimulateWhatsAppCall: () -> Unit = {},
     onCloseDrawer: (() -> Unit)? = null,
     onStopFloatingApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -446,6 +461,95 @@ fun DeviceNotificationsWindow(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            incomingWhatsAppCall?.let { whatsappCall ->
+                item(key = "incoming_whatsapp_call_banner") {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("incoming_whatsapp_call_card"),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF25D366)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Phone,
+                                        contentDescription = "WhatsApp Call",
+                                        tint = Color.White
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Incoming WhatsApp ${if (whatsappCall.isVideo) "Video" else "Voice"} Call",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Text(
+                                        text = whatsappCall.callerName,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Text(
+                                        text = whatsappCall.callerNumber,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Button(
+                                    onClick = onDeclineWhatsAppCall,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        contentColor = MaterialTheme.colorScheme.onError
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("decline_whatsapp_call_button")
+                                ) {
+                                    Text("Decline")
+                                }
+                                Button(
+                                    onClick = { onAcceptWhatsAppCall(whatsappCall) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF25D366),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("accept_whatsapp_call_button")
+                                ) {
+                                    Text("Accept")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // 1. Quick Toggles
             item(key = "quick_toggles") {
                 QuickTogglesPanel(modifier = Modifier.padding(bottom = 4.dp))
@@ -525,19 +629,33 @@ fun DeviceNotificationsWindow(
             }
 
             // Alerts Items or Clean Empty State
-            if (notifications.isEmpty()) {
+            if (notifications.isEmpty() && incomingWhatsAppCall == null) {
                 item(key = "empty_state") {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 120.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(vertical = 60.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Text(
-                            text = "No notifications",
+                            text = "No active notifications",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
+                        OutlinedButton(
+                            onClick = onSimulateWhatsAppCall,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Phone,
+                                contentDescription = null,
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Simulate WhatsApp Call")
+                        }
                     }
                 }
             } else {

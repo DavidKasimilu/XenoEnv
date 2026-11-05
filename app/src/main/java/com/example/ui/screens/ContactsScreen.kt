@@ -20,11 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Person
@@ -71,6 +73,7 @@ fun ContactsScreen(
     onSearchQueryChange: (String) -> Unit,
     onStartSms: (String, String?) -> Unit,
     onStartCall: (String, String?) -> Unit,
+    onWhatsAppCall: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -189,7 +192,8 @@ fun ContactsScreen(
                             contact = contact,
                             onClick = { selectedContact = contact },
                             onCallClick = { placeCall(contact.primaryNumber, contact.displayName) },
-                            onSmsClick = { onStartSms(contact.primaryNumber, contact.displayName) }
+                            onSmsClick = { onStartSms(contact.primaryNumber, contact.displayName) },
+                            onWhatsAppClick = { onWhatsAppCall(contact.primaryNumber, contact.displayName) }
                         )
                     }
                 }
@@ -284,7 +288,7 @@ fun ContactsScreen(
                         Text("Call", style = MaterialTheme.typography.labelSmall)
                     }
 
-                    // SMS
+                    // Message
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Surface(
                             shape = CircleShape,
@@ -306,6 +310,30 @@ fun ContactsScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text("Message", style = MaterialTheme.typography.labelSmall)
+                    }
+
+                    // WhatsApp Call
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF25D366).copy(alpha = 0.2f),
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clickable {
+                                    onWhatsAppCall(contact.primaryNumber, contact.displayName)
+                                    selectedContact = null
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Phone,
+                                    contentDescription = "WhatsApp Call",
+                                    tint = Color(0xFF25D366)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("WhatsApp", style = MaterialTheme.typography.labelSmall)
                     }
 
                     // Copy
@@ -421,6 +449,7 @@ fun ContactItemRow(
     onClick: () -> Unit,
     onCallClick: () -> Unit,
     onSmsClick: () -> Unit,
+    onWhatsAppClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -457,6 +486,18 @@ fun ContactItemRow(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(
+                    onClick = onWhatsAppClick,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Phone,
+                        contentDescription = "WhatsApp Call",
+                        tint = Color(0xFF25D366),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
                 IconButton(
                     onClick = onSmsClick,
                     modifier = Modifier.size(38.dp)

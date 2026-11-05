@@ -29,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -93,6 +95,7 @@ fun SpaceSandboxScreen(
     onOpenMedia: () -> Unit = {},
     onOpenDocs: () -> Unit = {},
     onOpenMusic: () -> Unit = {},
+    onOpenCamera: () -> Unit = {},
     onBackToBrowser: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -154,6 +157,10 @@ fun SpaceSandboxScreen(
 
             MusicShortcutIconItem(
                 onClick = onOpenMusic
+            )
+
+            CameraShortcutIconItem(
+                onClick = onOpenCamera
             )
         }
 
@@ -917,5 +924,58 @@ private fun CloneAppIconItem(
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun CameraShortcutIconItem(
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(96.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp)
+            .testTag("clone_space_camera_shortcut")
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(68.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF10B981),
+                                Color(0xFF047857)
+                            )
+                        )
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PhotoCamera,
+                    contentDescription = "Camera",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Camera",
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }

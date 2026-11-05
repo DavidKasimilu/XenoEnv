@@ -179,7 +179,11 @@ data class XenoUiState(
     // Super Speed Boost state
     val isBoosting: Boolean = false,
     val speedBoostResult: SpeedBoostResult? = null,
-    val showSpeedBoostOverlay: Boolean = false
+    val showSpeedBoostOverlay: Boolean = false,
+
+    // Camera & WhatsApp Call state
+    val showCameraApp: Boolean = false,
+    val incomingWhatsAppCall: WhatsAppCallState? = null
 ) {
     val activeBrowserTab: WebTab?
         get() = browserTabs.find { it.id == activeBrowserTabId } ?: browserTabs.firstOrNull()
@@ -198,6 +202,12 @@ data class ActiveCallState(
     val phoneNumber: String,
     val contactName: String?,
     val isIncoming: Boolean = false
+)
+
+data class WhatsAppCallState(
+    val callerName: String,
+    val callerNumber: String,
+    val isVideo: Boolean = false
 )
 
 class XenoViewModel(application: Application) : AndroidViewModel(application) {
@@ -2169,5 +2179,83 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissSpeedBoostOverlay() {
         _uiState.value = _uiState.value.copy(showSpeedBoostOverlay = false)
+    }
+
+    fun setShowCameraApp(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showCameraApp = show)
+    }
+
+    fun simulateIncomingWhatsAppCall(name: String, number: String, isVideo: Boolean = false) {
+        _uiState.value = _uiState.value.copy(
+            incomingWhatsAppCall = WhatsAppCallState(callerName = name, callerNumber = number, isVideo = isVideo),
+            isAppAlertsDrawerOpen = true,
+            userNotice = "Incoming WhatsApp call from $name"
+        )
+    }
+
+    fun acceptWhatsAppCall(callState: WhatsAppCallState) {
+        _uiState.value = _uiState.value.copy(
+            incomingWhatsAppCall = null,
+            isAppAlertsDrawerOpen = false
+        )
+        startCall(callState.callerNumber, "${callState.callerName} (WhatsApp)")
+    }
+
+    fun declineWhatsAppCall() {
+        val currentCall = _uiState.value.incomingWhatsAppCall
+        _uiState.value = _uiState.value.copy(
+            incomingWhatsAppCall = null,
+            userNotice = "WhatsApp call declined"
+        )
+        if (currentCall != null) {
+            val now = System.currentTimeMillis()
+            val missedEntry = CallLogEntry(
+                id = now,
+                number = currentCall.callerNumber,
+                cachedName = "${currentCall.callerName} (WhatsApp)",
+                type = CallType.MISSED,
+                date = now,
+                durationSeconds = 0L,
+                photoUri = null
+            )
+            recentInMemoryCalls.add(0, missedEntry)
+            viewModelScope.launch {
+                callLogRepo.insertCallLog(currentCall.callerNumber, "${currentCall.callerName} (WhatsApp)", 0L, CallType.MISSED)
+                triggerPostCallHistorySync()
+            }
+        }
+    }
+
+    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
+        val digitsOnly = phoneNumber.filter { it.isDigit() }
+        val displayName = contactName ?: phoneNumber
+        
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly"))
+            intent.setPackage("com.whatsapp")
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
+        } catch (_: Exception) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly"))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp call to $displayName...")
+            } catch (_: Exception) {
+                try {
+                    val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
+                    if (intent != null) {
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                        _uiState.value = _uiState.value.copy(userNotice = "Opening WhatsApp for $displayName...")
+                    } else {
+                        startCall(phoneNumber, "$displayName (WhatsApp)")
+                    }
+                } catch (_: Exception) {
+                    startCall(phoneNumber, "$displayName (WhatsApp)")
+                }
+            }
+        }
     }
 }

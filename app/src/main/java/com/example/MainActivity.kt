@@ -68,7 +68,9 @@ import com.example.ui.screens.ActiveCallScreen
 import com.example.ui.screens.AppAlertsDrawerOverlay
 import com.example.ui.screens.BrowserHubScreen
 import com.example.ui.screens.CallsScreen
+import com.example.ui.screens.CameraAppScreen
 import com.example.ui.screens.ChatScreen
+import com.example.ui.screens.ContactsScreen
 import com.example.ui.screens.DocsManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
@@ -462,7 +464,9 @@ fun XenoApp(
 
     // Back handling for standard navigation stack
     BackHandler {
-        if (uiState.activeChatThread != null) {
+        if (uiState.showCameraApp) {
+            viewModel.setShowCameraApp(false)
+        } else if (uiState.activeChatThread != null) {
             viewModel.closeChat()
         } else if (uiState.isAppAlertsDrawerOpen) {
             viewModel.setAppAlertsDrawerOpen(false)
@@ -563,7 +567,20 @@ fun XenoApp(
                     .padding(effectivePadding)
                     .nestedScroll(rootNestedScrollConnection)
             ) {
-                if (uiState.selectedVideoItem != null) {
+                if (uiState.showCameraApp) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        CameraAppScreen(
+                            onClose = { viewModel.setShowCameraApp(false) },
+                            onPhotoCaptured = { media ->
+                                viewModel.addCustomMedia(media.uri, media.isVideo, media.displayName)
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                } else if (uiState.selectedVideoItem != null) {
                     VideoPlayerModal(
                         videoItem = uiState.selectedVideoItem!!,
                         isControlsHidden = uiState.isVideoControlsHidden,
@@ -650,9 +667,10 @@ fun XenoApp(
                                         onClearMissedCalls = { viewModel.clearMissedCallLogs() },
                                         onMarkMissedSeen = { viewModel.markMissedCallsAsSeen() },
                                         onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
-                                        onOpenContacts = { viewModel.selectTab(XenoTab.KEYPAD) },
+                                        onOpenContacts = { viewModel.selectTab(XenoTab.CONTACTS) },
                                         onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
                                         onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        onWhatsAppCall = { number, name -> viewModel.initiateWhatsAppCall(context, number, name) },
                                         onSpeedBoost = { viewModel.triggerSpeedBoost() },
                                         modifier = Modifier.fillMaxSize()
                                     )
@@ -668,6 +686,17 @@ fun XenoApp(
                                         onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
                                         onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
                                         onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                XenoTab.CONTACTS -> {
+                                    ContactsScreen(
+                                        contacts = uiState.contacts,
+                                        searchQuery = uiState.contactSearchQuery,
+                                        onSearchQueryChange = { viewModel.setContactSearchQuery(it) },
+                                        onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
+                                        onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
+                                        onWhatsAppCall = { number, name -> viewModel.initiateWhatsAppCall(context, number, name) },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
@@ -751,11 +780,29 @@ fun XenoApp(
                                         onSetShowMediaManager = { viewModel.setShowMediaManager(it) },
                                         onSetShowDocsManager = { viewModel.setShowDocsManager(it) },
                                         onSetShowMusicPlayer = { viewModel.setShowMusicPlayer(it) },
+                                        onOpenCamera = { viewModel.setShowCameraApp(true) },
                                         onSavePassword = { domain, title, username, pass ->
                                             viewModel.savePassword(domain, title, username, pass)
                                         },
                                         onDeletePassword = { viewModel.deletePassword(it) },
                                         onPlayVideo = { viewModel.selectVideoItem(it) }
+                                    )
+                                }
+                                XenoTab.SETTINGS -> {
+                                    SettingsScreen(
+                                        isDefaultDialer = uiState.isDefaultDialer,
+                                        isDefaultSms = uiState.isDefaultSms,
+                                        onRequestDefaultDialer = {
+                                            TelecomHelper.createRequestDefaultDialerIntent(context)?.let { context.startActivity(it) }
+                                        },
+                                        onRequestDefaultSms = {
+                                            TelecomHelper.createRequestDefaultSmsIntent(context)?.let { context.startActivity(it) }
+                                        },
+                                        onPermissionsUpdated = { viewModel.loadAllData(forceRefresh = true) },
+                                        onSimulateSms = { viewModel.simulateIncomingSms() },
+                                        preventOverlayApps = uiState.preventOverlayApps,
+                                        onTogglePreventOverlayApps = { viewModel.setPreventOverlayApps(it) },
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
                                 else -> {
@@ -768,9 +815,10 @@ fun XenoApp(
                                         onClearMissedCalls = { viewModel.clearMissedCallLogs() },
                                         onMarkMissedSeen = { viewModel.markMissedCallsAsSeen() },
                                         onStartSms = { number, name -> viewModel.startChatWithNumber(number, name) },
-                                        onOpenContacts = { viewModel.selectTab(XenoTab.KEYPAD) },
+                                        onOpenContacts = { viewModel.selectTab(XenoTab.CONTACTS) },
                                         onStartCall = { number, name -> viewModel.startCall(number = number, name = name) },
                                         onStartCallWithSim = { number, name, sim -> viewModel.startCall(number = number, name = name, simCard = sim) },
+                                        onWhatsAppCall = { number, name -> viewModel.initiateWhatsAppCall(context, number, name) },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
@@ -796,6 +844,10 @@ fun XenoApp(
             onSimulateAlert = { viewModel.simulateIncomingAlert(it) },
             onOpenAppDetailsSettings = { XenoNotificationListenerService.openAppDetailsSettings(context) },
             onSimulateSms = { viewModel.simulateIncomingSms() },
+            incomingWhatsAppCall = uiState.incomingWhatsAppCall,
+            onAcceptWhatsAppCall = { viewModel.acceptWhatsAppCall(it) },
+            onDeclineWhatsAppCall = { viewModel.declineWhatsAppCall() },
+            onSimulateWhatsAppCall = { viewModel.simulateIncomingWhatsAppCall("Sarah Connor", "+1 555 019 2834") },
             onStopFloatingApp = {
                 (context as? Activity)?.finishAndRemoveTask()
             },

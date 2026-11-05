@@ -110,6 +110,7 @@ fun CallsScreen(
     onOpenContacts: () -> Unit,
     onStartCall: (String, String?) -> Unit,
     onStartCallWithSim: (String, String?, SimCardInfo?) -> Unit = { num, name, _ -> onStartCall(num, name) },
+    onWhatsAppCall: (String, String?) -> Unit = { _, _ -> },
     onSimulateIncomingCall: () -> Unit = {},
     onSpeedBoost: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -531,6 +532,7 @@ fun CallsScreen(
                                 },
                                 onCallClick = { placeCall(entry.number, entry.displayName) },
                                 onMessageClick = { onStartSms(entry.number, entry.displayName) },
+                                onWhatsAppClick = { onWhatsAppCall(entry.number, entry.displayName) },
                                 onHistoryClick = { selectedCallForHistory = entry },
                                 onDeleteClick = {
                                     group.entries.forEach { onDeleteCall(it) }
@@ -672,6 +674,7 @@ private fun RecentsCallCard(
     onLongClick: () -> Unit,
     onCallClick: () -> Unit,
     onMessageClick: () -> Unit,
+    onWhatsAppClick: () -> Unit = {},
     onHistoryClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
@@ -790,17 +793,31 @@ private fun RecentsCallCard(
                     }
                 }
 
-                // Call icon button on the right
-                IconButton(
-                    onClick = onCallClick,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Call,
-                        contentDescription = "Call",
-                        tint = Color(0xFFB0B0B4),
-                        modifier = Modifier.size(22.dp)
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    IconButton(
+                        onClick = onWhatsAppClick,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Phone,
+                            contentDescription = "WhatsApp Call",
+                            tint = Color(0xFF25D366),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Call icon button on the right
+                    IconButton(
+                        onClick = onCallClick,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = "Call",
+                            tint = Color(0xFFB0B0B4),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
 
