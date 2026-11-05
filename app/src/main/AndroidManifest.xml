@@ -196,17 +196,6 @@
             </intent-filter>
         </service>
 
-        <!-- Floating Bubble Overlay Service -->
-        <service
-            android:name="com.example.floating.FloatingBubbleService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Floating window and overlay icon manager" />
-        </service>
-
         <!-- Notification Listener Service for System Notifications -->
         <service
             android:name="com.example.telecom.XenoNotificationListenerService"

@@ -809,11 +809,11 @@ private fun RecentsCallCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // WhatsApp call icon with smaller thin green circle
+                    // WhatsApp call icon with smaller thin green circle (20% bigger than 15dp icon = 18dp)
                     IconButton(
                         onClick = onWhatsAppClick,
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(18.dp)
                             .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                     ) {
                         Icon(
@@ -824,11 +824,11 @@ private fun RecentsCallCard(
                         )
                     }
 
-                    // Normal call icon with smaller thin white circle
+                    // Normal call icon with smaller thin white circle (20% bigger than 15dp icon = 18dp)
                     IconButton(
                         onClick = onCallClick,
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(18.dp)
                             .border(width = 1.dp, color = Color.White, shape = CircleShape)
                     ) {
                         Icon(

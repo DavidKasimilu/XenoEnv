@@ -401,7 +401,6 @@ fun AppAlertsDrawerOverlay(
                     onAcceptWhatsAppCall = onAcceptWhatsAppCall,
                     onDeclineWhatsAppCall = onDeclineWhatsAppCall,
                     onCloseDrawer = onCloseDrawer,
-                    onStopFloatingApp = onStopFloatingApp,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -429,7 +428,6 @@ fun DeviceNotificationsWindow(
     onAcceptWhatsAppCall: (WhatsAppCallState) -> Unit = {},
     onDeclineWhatsAppCall: () -> Unit = {},
     onCloseDrawer: (() -> Unit)? = null,
-    onStopFloatingApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()

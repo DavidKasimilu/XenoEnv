@@ -75,7 +75,6 @@ import com.example.ui.screens.DocsManagerScreen
 import com.example.ui.screens.GalleryScreen
 import com.example.ui.screens.KeypadScreen
 import com.example.ui.screens.MessagesScreen
-import com.example.ui.screens.MinimizedCloneFloatingOverlay
 import com.example.ui.screens.MusicPlayerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -309,15 +308,6 @@ fun XenoApp(
     ) {
         viewModel.loadAllData()
         viewModel.checkNotificationAccess()
-    }
-
-    // Stop floating bubble service in background
-    LaunchedEffect(Unit) {
-        try {
-            com.example.floating.FloatingBubbleService.stop(context)
-            val nm = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-            nm?.cancel(4099)
-        } catch (_: Exception) {}
     }
 
     var hasPromptedPerms by remember { mutableStateOf(false) }
@@ -847,9 +837,6 @@ fun XenoApp(
             incomingWhatsAppCall = uiState.incomingWhatsAppCall,
             onAcceptWhatsAppCall = { viewModel.acceptWhatsAppCall(it) },
             onDeclineWhatsAppCall = { viewModel.declineWhatsAppCall() },
-            onStopFloatingApp = {
-                (context as? Activity)?.finishAndRemoveTask()
-            },
             onSpeedBoost = { viewModel.triggerSpeedBoost() },
             shape = RoundedCornerShape(0.dp),
             modifier = Modifier
