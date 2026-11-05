@@ -511,8 +511,9 @@ fun CallsScreen(
                             key = { idx, group -> "call_grp_${group.latestEntry.id}_${group.latestEntry.number}_${group.count}_$idx" }
                         ) { _, group ->
                             val entry = group.latestEntry
-                            val isExpanded = expandedLogId == entry.id
-                            val isSelected = entry.id in selectedCallIds
+                            val isExpanded = remember(expandedLogId, entry.id) { expandedLogId == entry.id }
+                            val isSelected = remember(selectedCallIds, entry.id) { entry.id in selectedCallIds }
+                            
                             RecentsCallCard(
                                 entry = entry,
                                 callCount = group.count,
@@ -806,14 +807,14 @@ private fun RecentsCallCard(
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // WhatsApp call icon with smaller thin green circle (20% bigger than 15dp icon = 18dp)
+                    // WhatsApp call icon with smaller thin green circle (16dp size)
                     IconButton(
                         onClick = onWhatsAppClick,
                         modifier = Modifier
-                            .size(18.dp)
+                            .size(16.dp)
                             .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                     ) {
                         Icon(
@@ -824,11 +825,11 @@ private fun RecentsCallCard(
                         )
                     }
 
-                    // Normal call icon with smaller thin white circle (20% bigger than 15dp icon = 18dp)
+                    // Normal call icon with smaller thin white circle (16dp size)
                     IconButton(
                         onClick = onCallClick,
                         modifier = Modifier
-                            .size(18.dp)
+                            .size(16.dp)
                             .border(width = 1.dp, color = Color.White, shape = CircleShape)
                     ) {
                         Icon(

@@ -256,7 +256,6 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        syncCallHistoryFast()
         boostAppPerformanceAndFastLoadHelper()
         registerCallLogSyncHelper()
 
