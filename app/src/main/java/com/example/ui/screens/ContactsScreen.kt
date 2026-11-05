@@ -487,36 +487,37 @@ fun ContactItemRow(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(end = 8.dp)
             ) {
-                // WhatsApp call icon with smaller thin green circle (16dp size)
+                // WhatsApp call icon (10dp size)
                 IconButton(
                     onClick = onWhatsAppClick,
                     modifier = Modifier
-                        .size(16.dp)
+                        .size(10.dp)
                         .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Phone,
                         contentDescription = "WhatsApp Call",
                         tint = Color(0xFF25D366),
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(8.dp)
                     )
                 }
 
-                // Normal call icon with smaller thin white circle (16dp size)
+                // Normal call icon (10dp size)
                 IconButton(
                     onClick = onCallClick,
                     modifier = Modifier
-                        .size(16.dp)
+                        .size(10.dp)
                         .border(width = 1.dp, color = Color.White, shape = CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Call,
                         contentDescription = "Call",
                         tint = Color.White,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(8.dp)
                     )
                 }
 
