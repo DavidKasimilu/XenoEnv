@@ -813,33 +813,33 @@ private fun RecentsCallCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(end = 8.dp)
                 ) {
-                    // WhatsApp call icon with smaller thin green circle (10dp size)
-                    IconButton(
+                    // WhatsApp call filled green button
+                    Surface(
                         onClick = onWhatsAppClick,
-                        modifier = Modifier
-                            .size(10.dp)
-                            .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
+                        modifier = Modifier.size(36.dp),
+                        shape = CircleShape,
+                        color = Color(0xFF25D366)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Phone,
-                            contentDescription = "WhatsApp Call",
-                            tint = Color(0xFF25D366),
-                            modifier = Modifier.size(8.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Phone,
+                                contentDescription = "WhatsApp Call",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
-                    // Normal call icon with smaller thin white circle (10dp size)
+                    // Normal call plain white icon
                     IconButton(
                         onClick = onCallClick,
-                        modifier = Modifier
-                            .size(10.dp)
-                            .border(width = 1.dp, color = Color.White, shape = CircleShape)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Call,
                             contentDescription = "Call",
                             tint = Color.White,
-                            modifier = Modifier.size(8.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }

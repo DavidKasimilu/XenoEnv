@@ -245,12 +245,8 @@ fun XenoApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
-    val callListState = androidx.compose.foundation.lazy.rememberLazyListState(
-        saver = androidx.compose.foundation.lazy.LazyListState.Saver
-    )
-    val contactListState = androidx.compose.foundation.lazy.rememberLazyListState(
-        saver = androidx.compose.foundation.lazy.LazyListState.Saver
-    )
+    val callListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val contactListState = androidx.compose.foundation.lazy.rememberLazyListState()
 
     val activity = context as? Activity
     LaunchedEffect(uiState.preventOverlayApps) {
