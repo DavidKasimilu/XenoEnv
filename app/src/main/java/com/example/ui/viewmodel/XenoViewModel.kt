@@ -244,20 +244,19 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
         }
 
-        // Fast Snapshot Seed offloaded from Main Thread to prevent frame drop
-        viewModelScope.launch(Dispatchers.IO) {
-            val initContacts = contactsRepo.getCachedContactsSnapshot()
-            val initCalls = callLogRepo.getCachedCallLogsSnapshot()
-            val initThreads = smsRepo.getCachedThreadsSnapshot()
-            if (initContacts.isNotEmpty() || initCalls.isNotEmpty() || initThreads.isNotEmpty()) {
-                _uiState.value = _uiState.value.copy(
-                    contacts = initContacts,
-                    callLogs = initCalls,
-                    smsThreads = initThreads
-                )
-            }
+        // 1. Instant Synchronous Frame-1 Seed: load cached call history immediately on open
+        val initCalls = callLogRepo.getCachedCallLogsSnapshot()
+        val initContacts = contactsRepo.getCachedContactsSnapshot()
+        val initThreads = smsRepo.getCachedThreadsSnapshot()
+        if (initCalls.isNotEmpty() || initContacts.isNotEmpty() || initThreads.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                callLogs = initCalls,
+                contacts = initContacts,
+                smsThreads = initThreads
+            )
         }
 
+        syncCallHistoryFast()
         boostAppPerformanceAndFastLoadHelper()
         registerCallLogSyncHelper()
 
@@ -455,12 +454,8 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
      * via ContactsRepository's in-memory phone index, and updates unseen missed call badge state.
      */
     fun syncCallHistoryFast() {
-        if (!isSyncingCallHistory.compareAndSet(false, true)) {
-            return
-        }
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val systemLogs = callLogRepo.getCallLogs()
+            val systemLogs = callLogRepo.getCallLogs()
 
                 // Merge recent optimistic call entries not yet reflected in system provider
                 val now = System.currentTimeMillis()
@@ -513,9 +508,6 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     callLogs = enrichedLogs,
                     unseenMissedCallsCount = newUnseenCount
                 )
-            } finally {
-                isSyncingCallHistory.set(false)
-            }
         }
     }
 

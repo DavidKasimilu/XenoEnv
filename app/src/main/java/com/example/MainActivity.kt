@@ -321,9 +321,8 @@ fun XenoApp(
     }
 
     var hasPromptedPerms by remember { mutableStateOf(false) }
-    // Request permissions after app is fully loaded to ensure zero launch delay
     LaunchedEffect(Unit) {
-        delay(2000L) // Instant launch speed: prioritize smooth opening animation
+        viewModel.syncCallHistoryFast()
         if (!hasPromptedPerms) {
             hasPromptedPerms = true
             val perms = mutableListOf(

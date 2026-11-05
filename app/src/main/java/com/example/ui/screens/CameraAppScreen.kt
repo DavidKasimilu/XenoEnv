@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -10,6 +11,7 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -23,25 +25,26 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,7 +63,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -69,15 +74,16 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import coil.compose.AsyncImage
 import com.example.data.GalleryRepository
 import com.example.data.models.MediaItem
 import java.io.File
 import java.io.FileOutputStream
 
-enum class CameraAspect(val label: String, val ratio: Float) {
-    RATIO_1_1("1:1", 1f),
-    RATIO_4_3("4:3", 4f / 3f),
-    RATIO_16_9("16:9", 16f / 9f)
+enum class CameraAspect(val label: String, val ratio: Float, val cameraXAspect: Int) {
+    RATIO_1_1("1:1", 1f, AspectRatio.RATIO_4_3),
+    RATIO_4_3("4:3", 3f / 4f, AspectRatio.RATIO_4_3),
+    RATIO_16_9("16:9", 9f / 16f, AspectRatio.RATIO_16_9)
 }
 
 @Composable
@@ -112,13 +118,23 @@ fun CameraAppScreen(
     var isFrontCamera by remember { mutableStateOf(false) }
     var lastCapturedUri by remember { mutableStateOf<Uri?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
+    var showFullPhotoPreview by remember { mutableStateOf(false) }
+
+    // Seed last captured photo from gallery on launch so the photo box shows recent photo
+    LaunchedEffect(Unit) {
+        if (lastCapturedUri == null) {
+            try {
+                val repo = GalleryRepository(context)
+                val recent = repo.getMediaItems().firstOrNull { !it.isVideo }
+                if (recent != null) {
+                    lastCapturedUri = recent.uri
+                }
+            } catch (_: Exception) {}
+        }
+    }
 
     var cameraInstance by remember { mutableStateOf<Camera?>(null) }
-    val imageCapture = remember {
-        ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .build()
-    }
+    var currentImageCapture by remember { mutableStateOf<ImageCapture?>(null) }
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -138,7 +154,7 @@ fun CameraAppScreen(
                 e.printStackTrace()
             }
         }
-        imageCapture.flashMode = if (flashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+        currentImageCapture?.flashMode = if (flashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
     }
 
     // Turn off torch on exit
@@ -150,16 +166,29 @@ fun CameraAppScreen(
         }
     }
 
-    // Bind Camera Provider when permission or camera lens changes
-    LaunchedEffect(hasCameraPermission, isFrontCamera) {
+    // Bind Camera Provider when permission, camera lens, or aspect ratio changes
+    LaunchedEffect(hasCameraPermission, isFrontCamera, selectedAspect) {
         if (hasCameraPermission) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
             cameraProviderFuture.addListener({
                 try {
                     val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
+                    val targetAspect = selectedAspect.cameraXAspect
+
+                    val preview = Preview.Builder()
+                        .setTargetAspectRatio(targetAspect)
+                        .build()
+                        .also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+
+                    val imageCapture = ImageCapture.Builder()
+                        .setTargetAspectRatio(targetAspect)
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setFlashMode(if (flashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
+                        .build()
+
+                    currentImageCapture = imageCapture
 
                     val cameraSelector = if (isFrontCamera) {
                         CameraSelector.DEFAULT_FRONT_CAMERA
@@ -186,7 +215,11 @@ fun CameraAppScreen(
     }
 
     BackHandler {
-        onClose()
+        if (showFullPhotoPreview) {
+            showFullPhotoPreview = false
+        } else {
+            onClose()
+        }
     }
 
     Box(
@@ -269,8 +302,8 @@ fun CameraAppScreen(
                 }
             }
 
-            // Viewfinder: Edge-to-edge preview fitting screen based on aspect ratio (no borders, no boxes)
-            Box(
+            // Viewfinder: Edge-to-edge preview fitting container cleanly based on selected aspect ratio
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -278,12 +311,31 @@ fun CameraAppScreen(
                 contentAlignment = Alignment.Center
             ) {
                 if (hasCameraPermission) {
-                    AndroidView(
-                        factory = { previewView },
+                    val availableWidth = maxWidth
+                    val availableHeight = maxHeight
+                    val targetRatio = selectedAspect.ratio // width / height
+
+                    val (viewWidth, viewHeight) = if (availableWidth / availableHeight > targetRatio) {
+                        val h = availableHeight
+                        val w = h * targetRatio
+                        Pair(w, h)
+                    } else {
+                        val w = availableWidth
+                        val h = w / targetRatio
+                        Pair(w, h)
+                    }
+
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(selectedAspect.ratio)
-                    )
+                            .size(viewWidth, viewHeight)
+                            .clipToBounds(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AndroidView(
+                            factory = { previewView },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 } else {
                     // Permission request UI
                     Column(
@@ -322,7 +374,7 @@ fun CameraAppScreen(
                 }
             }
 
-            // Bottom Bar: Gallery Thumbnail, Shutter Button, and balanced spacer (filters removed, just normal)
+            // Bottom Bar: Gallery Thumbnail, Shutter Button, and balanced spacer
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -331,26 +383,32 @@ fun CameraAppScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Gallery Thumbnail of last taken photo
+                // Gallery Thumbnail of last taken photo with preview functionality
                 Box(
                     modifier = Modifier
-                        .size(50.dp)
+                        .size(52.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF26262B))
-                        .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+                        .border(1.5.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            if (lastCapturedUri != null) {
+                                showFullPhotoPreview = true
+                            }
+                        }
+                        .testTag("camera_photo_preview_box"),
                     contentAlignment = Alignment.Center
                 ) {
                     if (lastCapturedUri != null) {
-                        Text(
-                            text = "Photo",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                        AsyncImage(
+                            model = lastCapturedUri,
+                            contentDescription = "Preview captured photo",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
                         )
                     } else {
                         Icon(
                             imageVector = Icons.Filled.PhotoCamera,
-                            contentDescription = "Gallery",
+                            contentDescription = "No photo taken yet",
                             tint = Color.LightGray,
                             modifier = Modifier.size(24.dp)
                         )
@@ -362,46 +420,55 @@ fun CameraAppScreen(
                     modifier = Modifier
                         .size(76.dp)
                         .clickable(enabled = !isCapturing) {
+                            val capture = currentImageCapture
                             isCapturing = true
                             val photoId = System.currentTimeMillis()
                             val fileName = "IMG_$photoId.jpg"
                             val photoFile = File(context.cacheDir, fileName)
-                            val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-                            val mainExecutor = ContextCompat.getMainExecutor(context)
 
-                            imageCapture.takePicture(
-                                outputOptions,
-                                mainExecutor,
-                                object : ImageCapture.OnImageSavedCallback {
-                                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                        isCapturing = false
-                                        val uri = Uri.fromFile(photoFile)
-                                        lastCapturedUri = uri
-                                        val mediaItem = MediaItem(
-                                            id = photoId,
-                                            uri = uri,
-                                            displayName = fileName,
-                                            dateAdded = System.currentTimeMillis(),
-                                            isVideo = false,
-                                            durationMs = 0L,
-                                            size = photoFile.length()
-                                        )
-                                        val repo = GalleryRepository(context)
-                                        repo.addCustomMediaItem(mediaItem)
-                                        onPhotoCaptured(mediaItem)
-                                    }
+                            if (capture != null) {
+                                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+                                val mainExecutor = ContextCompat.getMainExecutor(context)
 
-                                    override fun onError(exception: ImageCaptureException) {
-                                        exception.printStackTrace()
-                                        // Fallback capture (e.g. for emulator instances without camera hardware pipeline)
-                                        saveFallbackPhoto(context, photoFile, photoId, fileName) { mediaItem ->
+                                capture.takePicture(
+                                    outputOptions,
+                                    mainExecutor,
+                                    object : ImageCapture.OnImageSavedCallback {
+                                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                             isCapturing = false
-                                            lastCapturedUri = mediaItem.uri
+                                            val uri = Uri.fromFile(photoFile)
+                                            lastCapturedUri = uri
+                                            val mediaItem = MediaItem(
+                                                id = photoId,
+                                                uri = uri,
+                                                displayName = fileName,
+                                                dateAdded = System.currentTimeMillis(),
+                                                isVideo = false,
+                                                durationMs = 0L,
+                                                size = photoFile.length()
+                                            )
+                                            val repo = GalleryRepository(context)
+                                            repo.addCustomMediaItem(mediaItem)
                                             onPhotoCaptured(mediaItem)
                                         }
+
+                                        override fun onError(exception: ImageCaptureException) {
+                                            exception.printStackTrace()
+                                            saveFallbackPhoto(context, photoFile, photoId, fileName) { mediaItem ->
+                                                isCapturing = false
+                                                lastCapturedUri = mediaItem.uri
+                                                onPhotoCaptured(mediaItem)
+                                            }
+                                        }
                                     }
+                                )
+                            } else {
+                                saveFallbackPhoto(context, photoFile, photoId, fileName) { mediaItem ->
+                                    isCapturing = false
+                                    lastCapturedUri = mediaItem.uri
+                                    onPhotoCaptured(mediaItem)
                                 }
-                            )
+                            }
                         }
                         .testTag("camera_shutter_button"),
                     shape = CircleShape,
@@ -427,7 +494,95 @@ fun CameraAppScreen(
                 }
 
                 // Symmetric right placeholder to keep shutter button centered
-                Spacer(modifier = Modifier.size(50.dp))
+                Spacer(modifier = Modifier.size(52.dp))
+            }
+        }
+
+        // Full Screen Interactive Photo Preview
+        if (showFullPhotoPreview && lastCapturedUri != null) {
+            BackHandler {
+                showFullPhotoPreview = false
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .testTag("full_photo_preview_overlay")
+            ) {
+                // Photo Image
+                AsyncImage(
+                    model = lastCapturedUri,
+                    contentDescription = "Captured Photo",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp, vertical = 68.dp),
+                    contentScale = ContentScale.Fit
+                )
+
+                // Top controls bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { showFullPhotoPreview = false }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to camera",
+                            tint = Color.White
+                        )
+                    }
+
+                    Text(
+                        text = "Photo Preview",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Share Photo
+                        IconButton(onClick = {
+                            try {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/jpeg"
+                                    putExtra(Intent.EXTRA_STREAM, lastCapturedUri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share Photo"))
+                            } catch (_: Exception) {}
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.Share,
+                                contentDescription = "Share Photo",
+                                tint = Color.White
+                            )
+                        }
+
+                        // Delete Photo
+                        IconButton(onClick = {
+                            try {
+                                lastCapturedUri?.path?.let { p ->
+                                    val f = File(p)
+                                    if (f.exists()) f.delete()
+                                }
+                            } catch (_: Exception) {}
+                            lastCapturedUri = null
+                            showFullPhotoPreview = false
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "Delete Photo",
+                                tint = Color(0xFFFF5252)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

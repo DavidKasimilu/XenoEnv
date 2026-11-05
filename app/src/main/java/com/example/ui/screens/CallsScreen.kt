@@ -809,33 +809,33 @@ private fun RecentsCallCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // WhatsApp call icon with thin green circle
+                    // WhatsApp call icon with smaller thin green circle
                     IconButton(
                         onClick = onWhatsAppClick,
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(28.dp)
                             .border(width = 1.dp, color = Color(0xFF25D366), shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Phone,
                             contentDescription = "WhatsApp Call",
                             tint = Color(0xFF25D366),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // Normal call icon with thin white circle
+                    // Normal call icon with smaller thin white circle
                     IconButton(
                         onClick = onCallClick,
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(28.dp)
                             .border(width = 1.dp, color = Color.White, shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Call,
                             contentDescription = "Call",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
