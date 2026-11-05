@@ -60,6 +60,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -244,19 +245,24 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
         }
 
-        // 1. Instant Synchronous Frame-1 Seed: load cached call history immediately on open
-        val initCalls = callLogRepo.getCachedCallLogsSnapshot()
-        val initContacts = contactsRepo.getCachedContactsSnapshot()
-        val initThreads = smsRepo.getCachedThreadsSnapshot()
-        if (initCalls.isNotEmpty() || initContacts.isNotEmpty() || initThreads.isNotEmpty()) {
-            _uiState.value = _uiState.value.copy(
+        // Move initial synchronous data load to background coroutine
+        viewModelScope.launch(Dispatchers.IO) {
+            val initCalls = callLogRepo.getCachedCallLogsSnapshot()
+            val initContacts = contactsRepo.getCachedContactsSnapshot()
+            val initThreads = smsRepo.getCachedThreadsSnapshot()
+            if (initCalls.isNotEmpty() || initContacts.isNotEmpty() || initThreads.isNotEmpty()) {
+            _uiState.update { it.copy(
                 callLogs = initCalls,
                 contacts = initContacts,
                 smsThreads = initThreads
-            )
+            ) }
+            }
+            // Only sync essential data for first tab
+            syncCallHistoryFast()
+            // Defer secondary data loading for AFTER first frame
+            // Using a small delay or post-frame callback
         }
 
-        boostAppPerformanceAndFastLoadHelper()
         registerCallLogSyncHelper()
 
         viewModelScope.launch {

@@ -114,6 +114,7 @@ fun CallsScreen(
     onWhatsAppCall: (String, String?) -> Unit = { _, _ -> },
     onSimulateIncomingCall: () -> Unit = {},
     onSpeedBoost: () -> Unit = {},
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -416,6 +417,7 @@ fun CallsScreen(
 
             // Main Call Log & Favorites List
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {

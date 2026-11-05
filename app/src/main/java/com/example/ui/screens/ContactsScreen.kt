@@ -75,6 +75,7 @@ fun ContactsScreen(
     onStartSms: (String, String?) -> Unit,
     onStartCall: (String, String?) -> Unit,
     onWhatsAppCall: (String, String?) -> Unit = { _, _ -> },
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -184,6 +185,7 @@ fun ContactsScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)

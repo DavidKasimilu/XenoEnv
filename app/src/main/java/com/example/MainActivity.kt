@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
@@ -127,6 +128,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         applyLockScreenAndWakeFlags()
         applyHighRefreshRateAndPerformanceFlags()
@@ -243,6 +245,12 @@ fun XenoApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val callListState = androidx.compose.foundation.lazy.rememberLazyListState(
+        saver = androidx.compose.foundation.lazy.LazyListState.Saver
+    )
+    val contactListState = androidx.compose.foundation.lazy.rememberLazyListState(
+        saver = androidx.compose.foundation.lazy.LazyListState.Saver
+    )
 
     val activity = context as? Activity
     LaunchedEffect(uiState.preventOverlayApps) {
@@ -312,7 +320,10 @@ fun XenoApp(
 
     var hasPromptedPerms by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        viewModel.syncCallHistoryFast()
+        // Defer secondary data loading
+        delay(1000)
+        viewModel.boostAppPerformanceAndFastLoadHelper()
+        
         if (!hasPromptedPerms) {
             hasPromptedPerms = true
             val perms = mutableListOf(
@@ -648,6 +659,7 @@ fun XenoApp(
                             when (uiState.currentTab) {
                                 XenoTab.CALLS -> {
                                     CallsScreen(
+                                        listState = callListState,
                                         callLogs = uiState.callLogs,
                                         filter = uiState.callFilter,
                                         onFilterChange = { viewModel.setCallFilter(it) },
@@ -680,6 +692,7 @@ fun XenoApp(
                                 }
                                 XenoTab.CONTACTS -> {
                                     ContactsScreen(
+                                        listState = contactListState,
                                         contacts = uiState.contacts,
                                         searchQuery = uiState.contactSearchQuery,
                                         onSearchQueryChange = { viewModel.setContactSearchQuery(it) },
