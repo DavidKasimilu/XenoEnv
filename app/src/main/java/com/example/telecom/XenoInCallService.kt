@@ -177,8 +177,13 @@ class XenoInCallService : InCallService() {
         currentCall = call
         if (call == null) return
 
-        val handle = call.details?.handle?.schemeSpecificPart ?: ""
-        Log.d("XenoInCallService", "New call added: $handle (state=${call.state})")
+        val handle = call.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+        val extrasNumber = call.details?.extras?.getString(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty()
+            .ifEmpty { call.details?.intentExtras?.getString("incoming_number")?.trim().orEmpty() }
+            .ifEmpty { call.details?.extras?.getString("incoming_number")?.trim().orEmpty() }
+            .ifEmpty { call.details?.intentExtras?.getString(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty() }
+        val effectiveNumber = handle.ifEmpty { extrasNumber }.ifEmpty { "Private Number" }
+        Log.d("XenoInCallService", "New call added: handle='$handle', extrasNumber='$extrasNumber' (state=${call.state})")
 
         call.registerCallback(callCallback)
         OngoingCallHelper.onTelecomCallAdded(call)
@@ -187,14 +192,14 @@ class XenoInCallService : InCallService() {
         callStateListener?.invoke(state)
 
         if (state == Call.STATE_RINGING) {
-            if (handle.isNotBlank() && OngoingCallHelper.shouldProcessIncomingCall(handle)) {
+            if (OngoingCallHelper.shouldProcessIncomingCall(effectiveNumber)) {
                 IncomingCallPopupHelper.handleIncomingCall(
                     context = applicationContext,
-                    phoneNumber = handle,
+                    phoneNumber = effectiveNumber,
                     call = call
                 )
 
-                onIncomingCallListener?.invoke(handle)
+                onIncomingCallListener?.invoke(effectiveNumber)
             }
         }
     }

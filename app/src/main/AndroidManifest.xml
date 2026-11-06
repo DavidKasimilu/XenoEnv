@@ -180,6 +180,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- BroadcastReceiver for SMS Sent and Delivered Status Persistence -->
+        <receiver
+            android:name="com.example.telecom.SmsDeliveryReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.SMS_SENT_STATUS" />
+                <action android:name="com.example.SMS_DELIVERED_STATUS" />
+            </intent-filter>
+        </receiver>
+
         <!-- Headless SMS Send Service -->
         <service
             android:name="com.example.telecom.HeadlessSmsSendService"

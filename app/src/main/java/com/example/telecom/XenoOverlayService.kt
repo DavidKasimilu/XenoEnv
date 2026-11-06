@@ -156,6 +156,33 @@ object XenoOverlayService {
         }
     }
 
+    fun updateCallOverlayName(
+        context: Context,
+        callerNumber: String,
+        callerName: String,
+        carrierName: String? = null
+    ) {
+        val container = activeCallOverlayView ?: return
+        try {
+            val avatarTv = container.findViewById<TextView>(R.id.notif_call_avatar_text)
+            val nameTv = container.findViewById<TextView>(R.id.notif_caller_name)
+            val numberTv = container.findViewById<TextView>(R.id.notif_caller_number)
+
+            val resolvedCarrier = carrierName?.takeIf { it.isNotBlank() } ?: "SIM 1"
+            val displayName = callerName
+            val initials = XenoNotificationHelper.extractInitials(displayName, callerNumber)
+
+            val titleWithCarrier = "$displayName ($resolvedCarrier)"
+            val subtitleWithCarrier = "$callerNumber • via $resolvedCarrier"
+
+            avatarTv?.text = initials
+            nameTv?.text = titleWithCarrier
+            numberTv?.text = subtitleWithCarrier
+        } catch (e: Exception) {
+            Log.e("XenoOverlayService", "Failed to update overlay in place: ${e.message}")
+        }
+    }
+
     fun dismissCallOverlay(context: Context) {
         activeCallOverlayView?.let { view ->
             try {

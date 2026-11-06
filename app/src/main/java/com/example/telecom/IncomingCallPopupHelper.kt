@@ -9,6 +9,10 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import com.example.MainActivity
 import com.example.data.models.IncomingCallPopup
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Dedicated helper to streamline incoming call popups across all four environments:
@@ -87,9 +91,19 @@ object IncomingCallPopupHelper {
         rawCallerName: String? = null,
         call: Call? = null
     ): IncomingCallPopup {
-        val cleanNumber = phoneNumber.trim().ifEmpty {
-            call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
-        }.ifEmpty { "Private Number" }
+        val callHandle = call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+        val callExtrasNumber = call?.details?.extras?.getString(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty()
+            .ifEmpty { call?.details?.intentExtras?.getString("incoming_number")?.trim().orEmpty() }
+            .ifEmpty { call?.details?.extras?.getString("incoming_number")?.trim().orEmpty() }
+            .ifEmpty { call?.details?.intentExtras?.getString(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty() }
+        val sessionNumber = OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
+
+        val cleanNumber = phoneNumber.trim()
+            .ifEmpty { callHandle }
+            .ifEmpty { callExtrasNumber }
+            .ifEmpty { sessionNumber }
+            .ifEmpty { "Private Number" }
+
         val telecomCallerName = call?.details?.callerDisplayName?.takeIf { 
             it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber && it != "Unknown Caller" 
         }
@@ -111,6 +125,27 @@ object IncomingCallPopupHelper {
             callerNumber = cleanNumber,
             carrierName = carrierName
         )
+
+        // Asynchronously re-resolve contact name if not found initially, and update in place
+        if (callerName == null && cleanNumber.isNotBlank() && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
+            CoroutineScope(Dispatchers.IO).launch {
+                val asyncResolved = resolveCallerName(context, cleanNumber)
+                    ?: com.example.data.ContactsRepository.getInstance(context).resolveContactName(cleanNumber)
+                if (!asyncResolved.isNullOrBlank() && asyncResolved != cleanNumber && asyncResolved != "Unknown Caller") {
+                    Log.d("CallerNameResolve", "Asynchronously re-resolved name for $cleanNumber -> $asyncResolved. Updating popup/overlay/notification in place.")
+                    withContext(Dispatchers.Main) {
+                        OngoingCallHelper.updateIncomingContactName(cleanNumber, asyncResolved)
+                        XenoOverlayService.updateCallOverlayName(context, cleanNumber, asyncResolved, carrierName)
+                        XenoNotificationHelper.updateCallNotificationName(
+                            context = context,
+                            callerName = asyncResolved,
+                            callerNumber = cleanNumber,
+                            carrierNameOverride = carrierName
+                        )
+                    }
+                }
+            }
+        }
 
         // Priority VIP bypass handling
         val isPriority = PriorityContactManager.isPriorityNumber(cleanNumber, context)

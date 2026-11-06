@@ -1,7 +1,6 @@
 package com.example.util
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import com.example.data.models.SpeedBoostResult
 import kotlinx.coroutines.Dispatchers

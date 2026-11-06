@@ -27,9 +27,88 @@ class SmsRepository(
 ) {
 
     companion object {
-        private const val ACTION_SMS_SENT = "com.example.SMS_SENT_STATUS"
-        private const val ACTION_SMS_DELIVERED = "com.example.SMS_DELIVERED_STATUS"
-        private const val EXTRA_MESSAGE_ID = "extra_message_id"
+        const val ACTION_SMS_SENT = "com.example.SMS_SENT_STATUS"
+        const val ACTION_SMS_DELIVERED = "com.example.SMS_DELIVERED_STATUS"
+        const val EXTRA_MESSAGE_ID = "extra_message_id"
+        const val EXTRA_PROVIDER_ROW_ID = "extra_provider_row_id"
+
+        private val processedDeliveryEvents = ConcurrentHashMap<String, Long>()
+        @Volatile
+        var activeInstance: SmsRepository? = null
+
+        fun handleStaticDeliveryBroadcast(
+            context: Context,
+            action: String,
+            resultCode: Int,
+            messageId: Long,
+            providerRowId: Long?
+        ) {
+            val key = "${action}_${messageId}_${providerRowId}_${resultCode}"
+            val now = System.currentTimeMillis()
+            val prev = processedDeliveryEvents[key]
+            if (prev != null && (now - prev) < 30_000L) {
+                Log.d("SmsRepository", "Deduplicating delivery event: $key")
+                return
+            }
+            processedDeliveryEvents[key] = now
+
+            val status = when (action) {
+                ACTION_SMS_SENT -> {
+                    when (resultCode) {
+                        Activity.RESULT_OK -> SmsDeliveryStatus.SENT
+                        SmsManager.RESULT_ERROR_GENERIC_FAILURE,
+                        SmsManager.RESULT_ERROR_NO_SERVICE,
+                        SmsManager.RESULT_ERROR_NULL_PDU,
+                        SmsManager.RESULT_ERROR_RADIO_OFF -> SmsDeliveryStatus.FAILED
+                        else -> if (resultCode == Activity.RESULT_OK) SmsDeliveryStatus.SENT else SmsDeliveryStatus.FAILED
+                    }
+                }
+                ACTION_SMS_DELIVERED -> {
+                    if (resultCode == Activity.RESULT_OK) {
+                        SmsDeliveryStatus.DELIVERED
+                    } else {
+                        SmsDeliveryStatus.FAILED
+                    }
+                }
+                else -> return
+            }
+
+            val repo = activeInstance
+            if (repo != null) {
+                repo.updateMessageDeliveryStatus(messageId, status, providerRowId)
+            } else {
+                // Static persistence when UI is closed
+                val prefs = context.getSharedPreferences("xeno_fast_sms_cache", Context.MODE_PRIVATE)
+                val provId = providerRowId ?: prefs.getLong("link_msg_$messageId", -1L).takeIf { it != -1L }
+                prefs.edit().apply {
+                    if (messageId != -1L) putString("status_msg_$messageId", status.name)
+                    if (provId != null) putString("status_prov_$provId", status.name)
+                }.apply()
+
+                if (provId != null) {
+                    try {
+                        val values = ContentValues()
+                        when (status) {
+                            SmsDeliveryStatus.SENT -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                            SmsDeliveryStatus.DELIVERED -> {
+                                values.put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_COMPLETE)
+                                values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                            }
+                            SmsDeliveryStatus.FAILED -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_FAILED)
+                            SmsDeliveryStatus.SENDING -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                        }
+                        context.contentResolver.update(
+                            Telephony.Sms.CONTENT_URI,
+                            values,
+                            "${Telephony.Sms._ID} = ?",
+                            arrayOf(provId.toString())
+                        )
+                    } catch (e: Exception) {
+                        Log.e("SmsRepository", "Failed updating SMS provider in static receiver: ${e.message}")
+                    }
+                }
+            }
+        }
 
         private val MULTIPART_PAREN_SUFFIX_REGEX = Regex("""\(\d+/\d+\)$""")
         private val MULTIPART_PAREN_PREFIX_REGEX = Regex("""^\(\d+/\d+\)""")
@@ -54,10 +133,47 @@ class SmsRepository(
     private var cachedThreads: List<SmsThread> = emptyList()
 
     init {
+        activeInstance = this
         if (!fastSmsPrefs.contains("last_seen_sms_baseline_ts")) {
             fastSmsPrefs.edit().putLong("last_seen_sms_baseline_ts", System.currentTimeMillis()).apply()
         }
         registerDeliveryReceivers()
+    }
+
+    fun getPersistedDeliveryStatus(rowOrMsgId: Long): SmsDeliveryStatus? {
+        val provStatus = fastSmsPrefs.getString("status_prov_$rowOrMsgId", null)
+        if (provStatus != null) {
+            return try { SmsDeliveryStatus.valueOf(provStatus) } catch (_: Exception) { null }
+        }
+        val msgStatus = fastSmsPrefs.getString("status_msg_$rowOrMsgId", null)
+        if (msgStatus != null) {
+            return try { SmsDeliveryStatus.valueOf(msgStatus) } catch (_: Exception) { null }
+        }
+        return null
+    }
+
+    fun persistDeliveryStatus(id: Long, status: SmsDeliveryStatus) {
+        fastSmsPrefs.edit()
+            .putString("status_prov_$id", status.name)
+            .putString("status_msg_$id", status.name)
+            .apply()
+    }
+
+    fun linkMessageIdWithProviderId(messageId: Long, providerId: Long) {
+        fastSmsPrefs.edit()
+            .putLong("link_msg_$messageId", providerId)
+            .putLong("link_prov_$providerId", messageId)
+            .apply()
+    }
+
+    fun getLinkedProviderId(messageId: Long): Long? {
+        val id = fastSmsPrefs.getLong("link_msg_$messageId", -1L)
+        return if (id != -1L) id else null
+    }
+
+    fun getLinkedMessageId(providerId: Long): Long? {
+        val id = fastSmsPrefs.getLong("link_prov_$providerId", -1L)
+        return if (id != -1L) id else null
     }
 
     private fun normalizeAddressKey(address: String): String {
@@ -163,29 +279,11 @@ class SmsRepository(
     private fun registerDeliveryReceivers() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                val msgId = intent?.getLongExtra(EXTRA_MESSAGE_ID, -1L) ?: -1L
-                if (msgId == -1L) return
-                when (intent?.action) {
-                    ACTION_SMS_SENT -> {
-                        val newStatus = when (resultCode) {
-                            Activity.RESULT_OK -> SmsDeliveryStatus.SENT
-                            SmsManager.RESULT_ERROR_GENERIC_FAILURE,
-                            SmsManager.RESULT_ERROR_NO_SERVICE,
-                            SmsManager.RESULT_ERROR_NULL_PDU,
-                            SmsManager.RESULT_ERROR_RADIO_OFF -> SmsDeliveryStatus.FAILED
-                            else -> if (resultCode == Activity.RESULT_OK) SmsDeliveryStatus.SENT else SmsDeliveryStatus.FAILED
-                        }
-                        updateMessageDeliveryStatus(msgId, newStatus)
-                    }
-                    ACTION_SMS_DELIVERED -> {
-                        val newStatus = if (resultCode == Activity.RESULT_OK) {
-                            SmsDeliveryStatus.DELIVERED
-                        } else {
-                            SmsDeliveryStatus.FAILED
-                        }
-                        updateMessageDeliveryStatus(msgId, newStatus)
-                    }
-                }
+                val action = intent?.action ?: return
+                val msgId = intent.getLongExtra(EXTRA_MESSAGE_ID, -1L)
+                val provId = intent.getLongExtra(EXTRA_PROVIDER_ROW_ID, -1L).takeIf { it != -1L }
+                val rCode = resultCode
+                handleStaticDeliveryBroadcast(context, action, rCode, msgId, provId)
             }
         }
         val filter = IntentFilter().apply {
@@ -203,24 +301,70 @@ class SmsRepository(
         }
     }
 
-    fun updateMessageDeliveryStatus(messageId: Long, status: SmsDeliveryStatus) {
+    fun updateMessageDeliveryStatus(
+        messageId: Long,
+        status: SmsDeliveryStatus,
+        explicitProviderRowId: Long? = null
+    ) {
+        val provId = explicitProviderRowId ?: getLinkedProviderId(messageId)
         deliveryStatusMap[messageId] = status
+        if (provId != null) {
+            deliveryStatusMap[provId] = status
+        }
+
+        persistDeliveryStatus(messageId, status)
+        if (provId != null) {
+            persistDeliveryStatus(provId, status)
+        }
+
+        // On SENT result, update provider row type to MESSAGE_TYPE_SENT
+        // On FAILED, set MESSAGE_TYPE_FAILED
+        // On DELIVERED, set STATUS to STATUS_COMPLETE
+        if (provId != null) {
+            try {
+                val values = ContentValues()
+                when (status) {
+                    SmsDeliveryStatus.SENT -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                    SmsDeliveryStatus.DELIVERED -> {
+                        values.put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_COMPLETE)
+                        values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                    }
+                    SmsDeliveryStatus.FAILED -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_FAILED)
+                    SmsDeliveryStatus.SENDING -> values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                }
+                contentResolver.update(
+                    Telephony.Sms.CONTENT_URI,
+                    values,
+                    "${Telephony.Sms._ID} = ?",
+                    arrayOf(provId.toString())
+                )
+            } catch (e: Exception) {
+                Log.e("SmsRepository", "Failed updating provider row: ${e.message}")
+            }
+        }
+
         synchronized(inMemoryMessages) {
-            val idx = inMemoryMessages.indexOfFirst { it.id == messageId }
+            val idx = inMemoryMessages.indexOfFirst { it.id == messageId || (provId != null && it.id == provId) }
             if (idx != -1) {
                 val updated = inMemoryMessages[idx].copy(deliveryStatus = status)
                 inMemoryMessages[idx] = updated
                 val cachedList = threadMessagesCache[updated.threadId]
                 if (cachedList != null) {
                     threadMessagesCache[updated.threadId] = cachedList.map {
-                        if (it.id == messageId) it.copy(deliveryStatus = status) else it
+                        if (it.id == messageId || (provId != null && it.id == provId)) it.copy(deliveryStatus = status) else it
                     }
                 }
             }
         }
         deliveryStatusListeners[messageId]?.invoke(status)
+        if (provId != null) {
+            deliveryStatusListeners[provId]?.invoke(status)
+        }
         if (status == SmsDeliveryStatus.DELIVERED || status == SmsDeliveryStatus.FAILED) {
             deliveryStatusListeners.remove(messageId)
+            if (provId != null) {
+                deliveryStatusListeners.remove(provId)
+            }
         }
     }
 
@@ -238,7 +382,8 @@ class SmsRepository(
             Telephony.Sms.BODY,
             Telephony.Sms.DATE,
             Telephony.Sms.READ,
-            Telephony.Sms.TYPE
+            Telephony.Sms.TYPE,
+            Telephony.Sms.STATUS
         )
 
         if (hasPermission) {
@@ -257,6 +402,7 @@ class SmsRepository(
                     val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
                     val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
                     val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
+                    val statusIdx = cursor.getColumnIndex(Telephony.Sms.STATUS)
 
                     while (cursor.moveToNext()) {
                         val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
@@ -266,6 +412,7 @@ class SmsRepository(
                         val date = if (dateIdx != -1) cursor.getLong(dateIdx) else System.currentTimeMillis()
                         val providerRead = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                         val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
+                        val statusCol = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
 
                         val effectiveThreadId = when {
                             threadId != 0L -> threadId
@@ -278,11 +425,20 @@ class SmsRepository(
                             type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
                             type == Telephony.Sms.MESSAGE_TYPE_FAILED
                         val read = isSentMsg || isMessageMarkedReadLocally(effectiveThreadId, address, date, providerRead)
-                        val resolvedStatus = deliveryStatusMap[effectiveId] ?: when (type) {
-                            Telephony.Sms.MESSAGE_TYPE_OUTBOX, Telephony.Sms.MESSAGE_TYPE_QUEUED -> SmsDeliveryStatus.SENDING
-                            Telephony.Sms.MESSAGE_TYPE_FAILED -> SmsDeliveryStatus.FAILED
-                            else -> SmsDeliveryStatus.DELIVERED
-                        }
+                        val resolvedStatus = getPersistedDeliveryStatus(effectiveId)
+                            ?: deliveryStatusMap[effectiveId]
+                            ?: run {
+                                val linked = getLinkedMessageId(effectiveId)
+                                if (linked != null) deliveryStatusMap[linked] else null
+                            }
+                            ?: when {
+                                type == Telephony.Sms.MESSAGE_TYPE_FAILED || statusCol == Telephony.Sms.STATUS_FAILED -> SmsDeliveryStatus.FAILED
+                                type == Telephony.Sms.MESSAGE_TYPE_OUTBOX || type == Telephony.Sms.MESSAGE_TYPE_QUEUED -> SmsDeliveryStatus.SENDING
+                                type == Telephony.Sms.MESSAGE_TYPE_SENT -> {
+                                    if (statusCol == Telephony.Sms.STATUS_COMPLETE) SmsDeliveryStatus.DELIVERED else SmsDeliveryStatus.SENT
+                                }
+                                else -> SmsDeliveryStatus.DELIVERED
+                            }
                         val msg = SmsMessage(
                             id = effectiveId,
                             threadId = effectiveThreadId,
@@ -501,11 +657,20 @@ class SmsRepository(
                         type == Telephony.Sms.MESSAGE_TYPE_QUEUED ||
                         type == Telephony.Sms.MESSAGE_TYPE_FAILED
                     val read = isSentMsg || isMessageMarkedReadLocally(tId, addr, date, providerRead)
-                    val deliveryStatus = deliveryStatusMap[id] ?: when {
-                        type == Telephony.Sms.MESSAGE_TYPE_FAILED || statusCol == Telephony.Sms.STATUS_FAILED -> SmsDeliveryStatus.FAILED
-                        type == Telephony.Sms.MESSAGE_TYPE_OUTBOX || type == Telephony.Sms.MESSAGE_TYPE_QUEUED || statusCol == Telephony.Sms.STATUS_PENDING -> SmsDeliveryStatus.SENDING
-                        else -> SmsDeliveryStatus.DELIVERED
-                    }
+                    val deliveryStatus = getPersistedDeliveryStatus(id)
+                        ?: deliveryStatusMap[id]
+                        ?: run {
+                            val linked = getLinkedMessageId(id)
+                            if (linked != null) deliveryStatusMap[linked] else null
+                        }
+                        ?: when {
+                            type == Telephony.Sms.MESSAGE_TYPE_FAILED || statusCol == Telephony.Sms.STATUS_FAILED -> SmsDeliveryStatus.FAILED
+                            type == Telephony.Sms.MESSAGE_TYPE_OUTBOX || type == Telephony.Sms.MESSAGE_TYPE_QUEUED -> SmsDeliveryStatus.SENDING
+                            type == Telephony.Sms.MESSAGE_TYPE_SENT -> {
+                                if (statusCol == Telephony.Sms.STATUS_COMPLETE) SmsDeliveryStatus.DELIVERED else SmsDeliveryStatus.SENT
+                            }
+                            else -> SmsDeliveryStatus.DELIVERED
+                        }
 
                     messages.add(
                         SmsMessage(
@@ -528,7 +693,14 @@ class SmsRepository(
         }
 
         val memMatches = synchronized(inMemoryMessages) {
-            inMemoryMessages.filter { it.threadId == threadId || it.address.equals(address, ignoreCase = true) }
+            inMemoryMessages.filter { mem ->
+                (mem.threadId == threadId || mem.address.equals(address, ignoreCase = true)) &&
+                messages.none { prov ->
+                    prov.id == mem.id ||
+                    getLinkedProviderId(mem.id) == prov.id ||
+                    (prov.isSent && mem.isSent && prov.body == mem.body && Math.abs(prov.date - mem.date) < 10000L)
+                }
+            }
         }
         val allMessages = if (messages.isEmpty()) {
             memMatches
@@ -594,12 +766,46 @@ class SmsRepository(
                     SmsManager.getDefault()
                 }
 
+                var providerRowId: Long? = null
+                try {
+                    val values = ContentValues().apply {
+                        put(Telephony.Sms.ADDRESS, destinationAddress)
+                        put(Telephony.Sms.BODY, text)
+                        put(Telephony.Sms.DATE, now)
+                        put(Telephony.Sms.READ, 1)
+                        put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                        if (currentThreadId != null && currentThreadId > 0) {
+                            put(Telephony.Sms.THREAD_ID, currentThreadId)
+                        }
+                        if (subscriptionId != null && subscriptionId != -1) {
+                            put("sub_id", subscriptionId)
+                            put("subscription_id", subscriptionId)
+                        }
+                    }
+                    val insertedUri = contentResolver.insert(Telephony.Sms.CONTENT_URI, values)
+                        ?: contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
+                    providerRowId = insertedUri?.lastPathSegment?.toLongOrNull()
+                } catch (e: Exception) {
+                    Log.d("SmsRepository", "Sent SMS stored in provider note: ${e.message}")
+                }
+
+                if (providerRowId != null) {
+                    linkMessageIdWithProviderId(messageId, providerRowId)
+                    persistDeliveryStatus(providerRowId, SmsDeliveryStatus.SENDING)
+                    deliveryStatusMap[providerRowId] = SmsDeliveryStatus.SENDING
+                }
+                persistDeliveryStatus(messageId, SmsDeliveryStatus.SENDING)
+                deliveryStatusMap[messageId] = SmsDeliveryStatus.SENDING
+
                 val sentIntent = PendingIntent.getBroadcast(
                     context,
                     (messageId and 0x7FFFFFFF).toInt(),
                     Intent(ACTION_SMS_SENT).apply {
                         setPackage(context.packageName)
                         putExtra(EXTRA_MESSAGE_ID, messageId)
+                        if (providerRowId != null) {
+                            putExtra(EXTRA_PROVIDER_ROW_ID, providerRowId)
+                        }
                     },
                     pendingFlags
                 )
@@ -609,6 +815,9 @@ class SmsRepository(
                     Intent(ACTION_SMS_DELIVERED).apply {
                         setPackage(context.packageName)
                         putExtra(EXTRA_MESSAGE_ID, messageId)
+                        if (providerRowId != null) {
+                            putExtra(EXTRA_PROVIDER_ROW_ID, providerRowId)
+                        }
                     },
                     pendingFlags
                 )
@@ -620,27 +829,6 @@ class SmsRepository(
                     smsManager.sendMultipartTextMessage(destinationAddress, null, parts, sentIntents, deliveryIntents)
                 } else {
                     smsManager.sendTextMessage(destinationAddress, null, text, sentIntent, deliveryIntent)
-                }
-
-                // Insert into sent box in provider
-                try {
-                    val values = ContentValues().apply {
-                        put(Telephony.Sms.ADDRESS, destinationAddress)
-                        put(Telephony.Sms.BODY, text)
-                        put(Telephony.Sms.DATE, now)
-                        put(Telephony.Sms.READ, 1)
-                        put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
-                        if (currentThreadId != null && currentThreadId > 0) {
-                            put(Telephony.Sms.THREAD_ID, currentThreadId)
-                        }
-                        if (subscriptionId != null && subscriptionId != -1) {
-                            put("sub_id", subscriptionId)
-                            put("subscription_id", subscriptionId)
-                        }
-                    }
-                    contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
-                } catch (e: Exception) {
-                    Log.d("SmsRepository", "Sent SMS stored in provider note: ${e.message}")
                 }
             } catch (e: Exception) {
                 Log.e("SmsRepository", "Carrier SMS send error: ${e.message}", e)

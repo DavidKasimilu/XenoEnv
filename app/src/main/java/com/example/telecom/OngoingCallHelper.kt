@@ -276,6 +276,23 @@ object OngoingCallHelper {
         return popup
     }
 
+    fun updateIncomingContactName(phoneNumber: String, contactName: String) {
+        val currentPopup = _incomingPopupFlow.value
+        val digits = phoneNumber.filter { it.isDigit() }
+        val last7 = if (digits.length >= 7) digits.takeLast(7) else digits
+        if (currentPopup != null) {
+            val popupDigits = currentPopup.callerNumber.filter { it.isDigit() }
+            if (currentPopup.callerNumber == phoneNumber || (last7.isNotEmpty() && popupDigits.endsWith(last7))) {
+                _incomingPopupFlow.value = currentPopup.copy(callerName = contactName)
+            }
+        }
+        val currentSession = _sessionFlow.value
+        val sessionDigits = currentSession.phoneNumber.filter { it.isDigit() }
+        if (currentSession.phoneNumber == phoneNumber || (last7.isNotEmpty() && sessionDigits.endsWith(last7))) {
+            _sessionFlow.value = currentSession.copy(contactName = contactName)
+        }
+    }
+
     fun dismissIncomingCallPopup(context: Context) {
         _incomingPopupFlow.value = null
         XenoOverlayService.dismissCallOverlay(context)

@@ -62,21 +62,12 @@ object GlobalSwipeDownTracker {
                 MotionEvent.ACTION_DOWN -> {
                     val canNativeScrollUp = v.scrollY > 4 || v.canScrollVertically(-1)
                     activeWebViewCanScrollUp = canNativeScrollUp || jsDomCanScrollUp
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (v.scrollY > 4 || v.canScrollVertically(-1) || jsDomCanScrollUp) {
-                        activeWebViewCanScrollUp = true
+                    if (disallowParentIntercept) {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     jsDomCanScrollUp = false
-                }
-            }
-            if (disallowParentIntercept) {
-                if (event.action == MotionEvent.ACTION_DOWN ||
-                    event.action == MotionEvent.ACTION_MOVE
-                ) {
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
                 }
             }
             false

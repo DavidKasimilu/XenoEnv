@@ -372,7 +372,10 @@ fun XenoApp(
                 intent.getBooleanExtra("auto_answer", false) ||
                 intent.getBooleanExtra("open_full_screen_call", false)
             if (hasIncomingCallIntent) {
-                val incomingNumber = intent.getStringExtra("incoming_number")?.takeIf { it.isNotBlank() } ?: "Unknown Caller"
+                val incomingNumber = intent.getStringExtra("incoming_number")?.takeIf { it.isNotBlank() }
+                    ?: intent.getStringExtra(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.takeIf { it.isNotBlank() }
+                    ?: com.example.telecom.OngoingCallHelper.sessionFlow.value.phoneNumber.takeIf { it.isNotBlank() }
+                    ?: "Private Number"
                 val callerName = intent.getStringExtra("caller_name")
                 val autoAnswer = intent.getBooleanExtra("auto_answer", false)
                 intent.removeExtra("incoming_number")

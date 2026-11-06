@@ -137,6 +137,8 @@ object CloneWebViewPool {
     }
 }
 
+private const val IG_REELS_PERF_TWEAKS_ENABLED = true
+
 private const val MOBILE_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
@@ -2483,10 +2485,9 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                     var touchStartX = 0;
                     var touchStartTime = 0;
                     var activeScroller = null;
-                    var startScrollTop = 0;
 
                     document.addEventListener('touchstart', function(e) {
-                        if (!isOnReelsRoute() || !e.touches || e.touches.length !== 1) {
+                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isOnReelsRoute() || !e.touches || e.touches.length !== 1) {
                             activeScroller = null;
                             return;
                         }
@@ -2495,21 +2496,16 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                         touchStartX = t.clientX;
                         touchStartTime = performance.now();
                         activeScroller = findReelsScrollContainer(e.target);
-                        if (activeScroller) {
-                            startScrollTop = activeScroller.scrollTop;
-                        } else {
-                            startScrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
-                        }
                     }, { capture: true, passive: true });
 
                     document.addEventListener('touchmove', function(e) {
-                        if (isOnReelsRoute()) {
+                        if (IG_REELS_PERF_TWEAKS_ENABLED && isOnReelsRoute()) {
                             markScrolling();
                         }
                     }, { capture: true, passive: true });
 
                     document.addEventListener('touchend', function(e) {
-                        if (!isOnReelsRoute() || !e.changedTouches || e.changedTouches.length !== 1) return;
+                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isOnReelsRoute() || !e.changedTouches || e.changedTouches.length !== 1) return;
                         var t = e.changedTouches[0];
                         var dy = touchStartY - t.clientY;
                         var dx = touchStartX - t.clientX;
@@ -2522,18 +2518,45 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                         if (absDy >= 30 && absDy > absDx * 1.5 && (vy >= 0.32 || absDy >= window.innerHeight * 0.16)) {
                             var dir = dy > 0 ? 1 : -1;
                             var sc = activeScroller || findReelsScrollContainer(e.target);
-                            if (sc && sc.clientHeight > 200) {
-                                var pageH = sc.clientHeight;
-                                var baseIndex = Math.round(startScrollTop / pageH);
-                                var targetIndex = Math.max(0, baseIndex + dir);
-                                var targetTop = targetIndex * pageH;
-                                var currentTop = sc.scrollTop;
-                                // If native scroll hasn't already crossed the snap midpoint, smoothly snap to the target Reel
-                                if (Math.abs(currentTop - targetTop) > 12 &&
-                                    ((dir > 0 && currentTop < targetTop - pageH * 0.45) ||
-                                     (dir < 0 && currentTop > targetTop + pageH * 0.45))) {
-                                    sc.scrollTo({ top: targetTop, behavior: 'smooth' });
+                            if (sc) {
+                                // Skip programmatic snap entirely if container or any ancestor already has CSS scroll-snap-type other than 'none'
+                                var hasNativeSnap = false;
+                                var curr = sc;
+                                while (curr && curr !== document.body && curr !== document.documentElement) {
+                                    var cs = window.getComputedStyle(curr);
+                                    if (cs && cs.scrollSnapType && cs.scrollSnapType !== 'none' && cs.scrollSnapType !== '') {
+                                        hasNativeSnap = true;
+                                        break;
+                                    }
+                                    curr = curr.parentElement;
                                 }
+                                if (hasNativeSnap) {
+                                    markScrolling();
+                                    return;
+                                }
+
+                                // Read layout values (clientHeight, scrollTop) only inside requestAnimationFrame, never synchronously in touch handlers.
+                                // Never call scrollTo while container is still moving from native fling (compare scrollTop across two animation frames).
+                                requestAnimationFrame(function() {
+                                    var initialScrollTop = sc.scrollTop;
+                                    requestAnimationFrame(function() {
+                                        var currentScrollTop = sc.scrollTop;
+                                        if (Math.abs(currentScrollTop - initialScrollTop) > 1.0) {
+                                            return; // still moving from native fling
+                                        }
+                                        var pageH = sc.clientHeight;
+                                        if (pageH > 200) {
+                                            var baseIndex = Math.round(currentScrollTop / pageH);
+                                            var targetIndex = Math.max(0, baseIndex + dir);
+                                            var targetTop = targetIndex * pageH;
+                                            if (Math.abs(currentScrollTop - targetTop) > 12 &&
+                                                ((dir > 0 && currentScrollTop < targetTop - pageH * 0.45) ||
+                                                 (dir < 0 && currentScrollTop > targetTop + pageH * 0.45))) {
+                                                sc.scrollTo({ top: targetTop, behavior: 'smooth' });
+                                            }
+                                        }
+                                    });
+                                });
                             }
                         }
                         markScrolling();
@@ -2644,11 +2667,16 @@ private fun injectInstagramReelsAndScrollHelper(view: WebView?) {
                 if (!window.__xenoIgMutationObserver && window.MutationObserver && document.body) {
                     var throttleTimer = null;
                     window.__xenoIgMutationObserver = new MutationObserver(function() {
+                        if (window.__xenoIgIsScrolling) return;
                         if (throttleTimer) return;
                         throttleTimer = setTimeout(function() {
                             throttleTimer = null;
-                            optimizeInstagramVideos();
-                        }, 220);
+                            if (!window.__xenoIgIsScrolling) {
+                                requestAnimationFrame(function() {
+                                    optimizeInstagramVideos();
+                                });
+                            }
+                        }, 350);
                     });
                     window.__xenoIgMutationObserver.observe(document.body, {
                         childList: true,
@@ -4167,446 +4195,171 @@ fun CloneWorkspaceScreen(
     ) {
         // Workspace Top Bar - Sleek, Compact & Space-Efficient (Hidden during fullscreen video playback)
         if (!isWebVideoFullscreen && customVideoView == null) {
-        Surface(
-            tonalElevation = 2.dp,
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen && webViewInstance != null) {
-                            webViewInstance?.evaluateJavascript(
-                                "if (window.__xenoHandleAndroidBack) window.__xenoHandleAndroidBack();",
-                                null
-                            )
-                        } else {
-                            keepAliveInMinimizedPool = false
-                            CloneWebViewPool.destroy(instance.instanceId)
-                            onCloseWorkspace()
-                        }
-                    },
-                    modifier = Modifier
-                        .size(32.dp)
-                        .testTag("workspace_back_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = if (isWhatsapp && isWhatsAppChatOpen) "Back to Chats" else "Back",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                CloneAppVisualIcon(
-                    instance = instance,
-                    iconSize = 24.dp,
-                    cornerRadius = 7.dp,
-                    showBadgeDot = false
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    val cleanTitle = remember(instance.displayName, instance.originalName) {
-                        val raw = instance.displayName.ifBlank { instance.originalName }
-                        raw.replace(" Clone", "", ignoreCase = true)
-                           .replace("Clone", "", ignoreCase = true)
-                           .replace("(Clone)", "", ignoreCase = true)
-                           .trim()
-                           .ifBlank { instance.originalName }
-                    }
-
-                    Text(
-                        text = cleanTitle,
-                        style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5.sp),
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = badgeColor.copy(alpha = 0.15f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.5f))
-                    ) {
-                        Text(
-                            text = instance.badgeTag,
-                            color = badgeColor,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+            CloneWorkspaceTopBar(
+                instance = instance,
+                badgeColor = badgeColor,
+                currentTitle = currentTitle,
+                currentUrl = currentUrl,
+                isWhatsapp = isWhatsapp,
+                isWhatsAppPhoneUi = isWhatsAppPhoneUi,
+                isWhatsAppChatOpen = isWhatsAppChatOpen,
+                isYoutube = isYoutube,
+                isYoutubeShortsPage = isYoutubeShortsPage,
+                showYoutubeOfflineLibrary = showYoutubeOfflineLibrary,
+                offlineVideosCount = youtubeOfflineVideos.size,
+                isDownloadingAny = youtubeActiveDownloads.isNotEmpty(),
+                isCallActive = isCallActive,
+                isVideoCallActive = isVideoCallActive,
+                isSpeakerphoneOn = isSpeakerphoneOn,
+                hasMicPermission = hasMicPermission,
+                hasCameraPermission = hasCameraPermission,
+                onBackClick = {
+                    if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen && webViewInstance != null) {
+                        webViewInstance?.evaluateJavascript(
+                            "if (window.__xenoHandleAndroidBack) window.__xenoHandleAndroidBack();",
+                            null
                         )
+                    } else {
+                        keepAliveInMinimizedPool = false
+                        CloneWebViewPool.destroy(instance.instanceId)
+                        onCloseWorkspace()
                     }
-
-                    if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF25D366).copy(alpha = 0.18f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    webViewInstance?.evaluateJavascript(
-                                        "if (window.__xenoCloseMobileChat) window.__xenoCloseMobileChat();",
-                                        null
-                                    )
-                                }
-                                .testTag("whatsapp_back_to_chats_pill")
-                        ) {
-                            Text(
-                                text = "Chats",
-                                color = Color(0xFF25D366),
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    if (isYoutube) {
-                        // YouTube Download Current Video Button (hidden when watching YouTube Shorts)
-                        val isWatchingShortsNow = isYoutubeShortsPage || currentUrl.contains("/shorts", ignoreCase = true)
-                        if (!isWatchingShortsNow) {
-                            val isDownloadingAny = youtubeActiveDownloads.isNotEmpty()
-                            IconButton(
-                                onClick = {
-                                    val wv = webViewInstance
-                                    if (wv != null && !showYoutubeOfflineLibrary) {
-                                        wv.evaluateJavascript(
-                                            "(function(){ return (window.__xenoTriggerYtDownload && window.__xenoTriggerYtDownload()) ? 'started' : ''; })()"
-                                        ) { result ->
-                                            val cleaned = result?.trim('"') ?: ""
-                                            if (cleaned != "started") {
-                                                // Fallback: parse video ID from current URL if on /watch (never on /shorts)
-                                                val urlStr = wv.url ?: currentUrl
-                                                val fallbackId = if (urlStr.contains("v=") && !urlStr.contains("/shorts", ignoreCase = true)) {
-                                                    urlStr.substringAfter("v=").substringBefore("&")
-                                                } else {
-                                                    ""
-                                                }
-                                                if (fallbackId.isNotBlank()) {
-                                                    YouTubeOfflineRepository.startVideoDownload(
-                                                        context = context,
-                                                        mainHandler = mainHandler,
-                                                        videoId = fallbackId,
-                                                        rawTitle = currentTitle.removeSuffix("- YouTube").trim(),
-                                                        rawChannel = "YouTube",
-                                                        durationSecondsStr = "0",
-                                                        directStreamUrl = "",
-                                                        userAgent = wv.settings.userAgentString ?: MOBILE_USER_AGENT
-                                                    )
-                                                } else {
-                                                    Toast.makeText(
-                                                        context,
-                                                        "Open any YouTube video first to download it with sound for offline viewing",
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Toast.makeText(
-                                            context,
-                                            "Switch to Live YouTube and open a video to download",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .testTag("youtube_download_video_btn")
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isDownloadingAny) Color(0xFFFF0000).copy(alpha = 0.2f) else Color.Transparent,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        if (isDownloadingAny) {
-                                            CircularProgressIndicator(
-                                                color = Color(0xFFFF0000),
-                                                strokeWidth = 2.dp,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Filled.Download,
-                                                contentDescription = "Download YouTube Video for Offline",
-                                                tint = Color(0xFFFF0000),
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // YouTube Offline Downloads Library Toggle Button (Desktop Downloads style)
-                        IconButton(
-                            onClick = {
-                                val nextShow = !showYoutubeOfflineLibrary
-                                showYoutubeOfflineLibrary = nextShow
-                                if (nextShow) {
-                                    webViewInstance?.evaluateJavascript(
-                                        "try { document.querySelectorAll('video').forEach(function(v){ v.pause(); }); } catch(e){}",
-                                        null
-                                    )
-                                    val saved = YouTubeOfflineRepository.loadSavedVideos(context)
-                                    if (selectedOfflineYtVideo == null) {
-                                        selectedOfflineYtVideo = saved.firstOrNull()
-                                    }
-                                }
-                            },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .testTag("youtube_offline_library_btn")
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (showYoutubeOfflineLibrary) Color(0xFFFF0000).copy(alpha = 0.22f) else Color.Transparent,
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (youtubeOfflineVideos.isNotEmpty()) Icons.Filled.DownloadDone else Icons.Filled.VideoLibrary,
-                                        contentDescription = "Offline Downloaded Videos (${youtubeOfflineVideos.size})",
-                                        tint = if (showYoutubeOfflineLibrary || youtubeOfflineVideos.isNotEmpty()) Color(0xFFFF0000) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    if (youtubeOfflineVideos.isNotEmpty()) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(12.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFFFF0000))
-                                        ) {
-                                            Text(
-                                                text = youtubeOfflineVideos.size.coerceAtMost(99).toString(),
-                                                color = Color.White,
-                                                fontSize = 7.5.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (isWhatsapp) {
-                        // Voice & Video Call Permission / Audio Routing Controls for WhatsApp Web
-                        if (isCallActive) {
-                            IconButton(
-                                onClick = {
-                                    isSpeakerphoneOn = !isSpeakerphoneOn
-                                    setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
-                                    Toast.makeText(
-                                        context,
-                                        if (isSpeakerphoneOn) "Speakerphone On" else "Earpiece / Headset Mode",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .testTag("whatsapp_call_speaker_btn")
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isSpeakerphoneOn) Color(0xFF25D366).copy(alpha = 0.2f) else Color.Transparent,
-                                    modifier = Modifier.size(26.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = if (isSpeakerphoneOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.Filled.PhoneInTalk,
-                                            contentDescription = "Toggle Call Speakerphone",
-                                            tint = if (isSpeakerphoneOn) Color(0xFF25D366) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (isVideoCallActive) {
-                                IconButton(
-                                    onClick = {
-                                        isFrontCamera = !isFrontCamera
-                                        val targetFacing = if (isFrontCamera) "user" else "environment"
-                                        webViewInstance?.evaluateJavascript(
-                                            "if (window.__xenoFlipCallCamera) window.__xenoFlipCallCamera('$targetFacing');",
-                                            null
-                                        )
-                                        Toast.makeText(
-                                            context,
-                                            if (isFrontCamera) "Switched to Front Camera" else "Switched to Back Camera",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    },
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .testTag("whatsapp_switch_camera_btn")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Cameraswitch,
-                                        contentDescription = "Switch Front/Back Camera",
-                                        tint = Color(0xFF25D366),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        IconButton(
-                            onClick = {
-                                hasMicPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                                if (!hasMicPermission || !hasCameraPermission) {
-                                    callPermissionsLauncher.launch(buildRequiredCallPermissions(true, true))
+                },
+                onChatsClick = {
+                    webViewInstance?.evaluateJavascript(
+                        "if (window.__xenoCloseMobileChat) window.__xenoCloseMobileChat();",
+                        null
+                    )
+                },
+                onYoutubeDownloadClick = {
+                    val wv = webViewInstance
+                    if (wv != null && !showYoutubeOfflineLibrary) {
+                        wv.evaluateJavascript(
+                            "(function(){ return (window.__xenoTriggerYtDownload && window.__xenoTriggerYtDownload()) ? 'started' : ''; })()"
+                        ) { result ->
+                            val cleaned = result?.trim('"') ?: ""
+                            if (cleaned != "started") {
+                                // Fallback: parse video ID from current URL if on /watch (never on /shorts)
+                                val urlStr = wv.url ?: currentUrl
+                                val fallbackId = if (urlStr.contains("v=") && !urlStr.contains("/shorts", ignoreCase = true)) {
+                                    urlStr.substringAfter("v=").substringBefore("&")
                                 } else {
-                                    setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
-                                    injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
+                                    ""
+                                }
+                                if (fallbackId.isNotBlank()) {
+                                    YouTubeOfflineRepository.startVideoDownload(
+                                        context = context,
+                                        mainHandler = mainHandler,
+                                        videoId = fallbackId,
+                                        rawTitle = currentTitle.removeSuffix("- YouTube").trim(),
+                                        rawChannel = "YouTube",
+                                        durationSecondsStr = "0",
+                                        directStreamUrl = "",
+                                        userAgent = wv.settings.userAgentString ?: MOBILE_USER_AGENT
+                                    )
+                                } else {
                                     Toast.makeText(
                                         context,
-                                        "Voice & Video Calls Ready (Mic & Camera Enabled)",
+                                        "Open any YouTube video first to download it with sound for offline viewing",
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
-                            },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .testTag("whatsapp_call_permissions_btn")
-                        ) {
-                            val callsReady = hasMicPermission && hasCameraPermission
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (callsReady) Color(0xFF25D366).copy(alpha = 0.16f) else MaterialTheme.colorScheme.errorContainer,
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (callsReady) Icons.Filled.Videocam else Icons.Filled.Mic,
-                                        contentDescription = if (callsReady) "Voice & Video Calls Ready" else "Grant Mic & Camera Permissions",
-                                        tint = if (callsReady) Color(0xFF25D366) else MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
                             }
                         }
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Switch to Live YouTube and open a video to download",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-
-                    IconButton(
-                        onClick = {
-                            if (isWhatsapp) {
-                                isWhatsAppPhoneUi = !isWhatsAppPhoneUi
-                                injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
-                                Toast.makeText(
-                                    context,
-                                    if (isWhatsAppPhoneUi) "WhatsApp Phone Screen UI Active" else "WhatsApp Split Desktop UI Active",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            } else {
-                                onToggleDesktopMode()
-                                webViewInstance?.let { wv ->
-                                    wv.settings.userAgentString = if (!instance.isDesktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
-                                    wv.reload()
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("toggle_desktop_mode_btn")
-                    ) {
-                        val isPhoneUiHighlighted = isWhatsapp && isWhatsAppPhoneUi
-                        val isDesktopHighlighted = (!isWhatsapp && instance.isDesktopMode) || (isWhatsapp && !isWhatsAppPhoneUi)
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = when {
-                                isPhoneUiHighlighted -> Color(0xFF25D366).copy(alpha = 0.16f)
-                                isDesktopHighlighted -> MaterialTheme.colorScheme.primaryContainer
-                                else -> Color.Transparent
-                            },
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (isDesktopHighlighted) Icons.Filled.DesktopMac else Icons.Filled.PhoneAndroid,
-                                    contentDescription = if (isDesktopHighlighted) "Desktop View Active" else "Phone Screen UI Active",
-                                    tint = when {
-                                        isPhoneUiHighlighted -> Color(0xFF25D366)
-                                        isDesktopHighlighted -> MaterialTheme.colorScheme.primary
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                },
+                onToggleYoutubeOfflineLibrary = {
+                    val nextShow = !showYoutubeOfflineLibrary
+                    showYoutubeOfflineLibrary = nextShow
+                    if (nextShow) {
+                        webViewInstance?.evaluateJavascript(
+                            "try { document.querySelectorAll('video').forEach(function(v){ v.pause(); }); } catch(e){}",
+                            null
+                        )
+                        val saved = YouTubeOfflineRepository.loadSavedVideos(context)
+                        if (selectedOfflineYtVideo == null) {
+                            selectedOfflineYtVideo = saved.firstOrNull()
                         }
                     }
-
-                    IconButton(
-                        onClick = {
-                            hasRenderCrash = false
-                            if (isWhatsapp) {
-                                webViewInstance?.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
-                            } else {
-                                webViewInstance?.reload()
-                            }
-                        },
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("workspace_reload_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Reload",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
+                },
+                onToggleCallSpeakerphone = {
+                    isSpeakerphoneOn = !isSpeakerphoneOn
+                    setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
+                    Toast.makeText(
+                        context,
+                        if (isSpeakerphoneOn) "Speakerphone On" else "Earpiece / Headset Mode",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onSwitchCamera = {
+                    isFrontCamera = !isFrontCamera
+                    val targetFacing = if (isFrontCamera) "user" else "environment"
+                    webViewInstance?.evaluateJavascript(
+                        "if (window.__xenoFlipCallCamera) window.__xenoFlipCallCamera('$targetFacing');",
+                        null
+                    )
+                    Toast.makeText(
+                        context,
+                        if (isFrontCamera) "Switched to Front Camera" else "Switched to Back Camera",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onCallPermissionsClick = {
+                    hasMicPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                    if (!hasMicPermission || !hasCameraPermission) {
+                        callPermissionsLauncher.launch(buildRequiredCallPermissions(true, true))
+                    } else {
+                        setWhatsAppCallAudioMode(context, active = true, speakerphoneOn = isSpeakerphoneOn)
+                        injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
+                        Toast.makeText(
+                            context,
+                            "Voice & Video Calls Ready (Mic & Camera Enabled)",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-
-                    IconButton(
-                        onClick = {
-                            keepAliveInMinimizedPool = false
-                            CloneWebViewPool.destroy(instance.instanceId)
-                            onCloseWorkspace()
-                        },
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("workspace_close_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Close to Space",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        )
+                },
+                onToggleDesktopMode = {
+                    if (isWhatsapp) {
+                        isWhatsAppPhoneUi = !isWhatsAppPhoneUi
+                        injectWhatsAppWebSupportEngine(webViewInstance, isWhatsAppPhoneUi)
+                        Toast.makeText(
+                            context,
+                            if (isWhatsAppPhoneUi) "WhatsApp Phone Screen UI Active" else "WhatsApp Split Desktop UI Active",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        onToggleDesktopMode()
+                        webViewInstance?.let { wv ->
+                            wv.settings.userAgentString = if (!instance.isDesktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
+                            wv.reload()
+                        }
                     }
+                },
+                onReloadClick = {
+                    hasRenderCrash = false
+                    if (isWhatsapp) {
+                        webViewInstance?.loadUrl("https://web.whatsapp.com/", WHATSAPP_WEB_HEADERS)
+                    } else {
+                        webViewInstance?.reload()
+                    }
+                },
+                onCloseClick = {
+                    keepAliveInMinimizedPool = false
+                    CloneWebViewPool.destroy(instance.instanceId)
+                    onCloseWorkspace()
                 }
-            }
-        }
+            )
         }
 
         // Loading Progress Indicator
-        if (isLoading && loadProgress < 100 && !isWebVideoFullscreen && customVideoView == null) {
+        if (!isInstagram && isLoading && loadProgress < 100 && !isWebVideoFullscreen && customVideoView == null) {
             LinearProgressIndicator(
                 progress = { loadProgress / 100f },
                 modifier = Modifier
@@ -4631,71 +4384,32 @@ fun CloneWorkspaceScreen(
                 )
         ) {
             if (hasRenderCrash) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp)
-                        .align(Alignment.Center)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Security,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Text(
-                            text = if (isWhatsapp) "WhatsApp Web Session Restored" else "Session Graphics Reset",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Tap below to continue in safe rendering mode.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    CloneWebViewPool.destroy(instance.instanceId)
-                                    useSoftwareLayer = true
-                                    hasRenderCrash = false
-                                    reloadKey++
-                                }
-                            ) {
-                                Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Reload")
-                            }
-
-                            FilledTonalButton(
-                                onClick = {
-                                    CloneWebViewPool.destroy(instance.instanceId)
-                                    try {
-                                        val cookieManager = CookieManager.getInstance()
-                                        cookieManager.removeAllCookies(null)
-                                        cookieManager.flush()
-                                        WebStorage.getInstance().deleteAllData()
-                                    } catch (_: Exception) {}
-                                    useSoftwareLayer = true
-                                    hasRenderCrash = false
-                                    reloadKey++
-                                }
-                            ) {
-                                Text("Reset Cache")
-                            }
+                CloneRenderRecoveryCard(
+                    isWhatsapp = isWhatsapp,
+                    onReload = {
+                        CloneWebViewPool.destroy(instance.instanceId)
+                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                            useSoftwareLayer = true
                         }
-                    }
-                }
+                        hasRenderCrash = false
+                        reloadKey++
+                    },
+                    onResetCache = {
+                        CloneWebViewPool.destroy(instance.instanceId)
+                        try {
+                            val cookieManager = CookieManager.getInstance()
+                            cookieManager.removeAllCookies(null)
+                            cookieManager.flush()
+                            WebStorage.getInstance().deleteAllData()
+                        } catch (_: Exception) {}
+                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                            useSoftwareLayer = true
+                        }
+                        hasRenderCrash = false
+                        reloadKey++
+                    },
+                    modifier = Modifier.align(Alignment.Center)
+                )
             } else {
                 key(instance.instanceId, reloadKey) {
                     AndroidView(
@@ -4731,7 +4445,7 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    if (useSoftwareLayer) {
+                                    if (useSoftwareLayer && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                                         setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     } else {
                                         setLayerType(View.LAYER_TYPE_NONE, null)
@@ -5121,7 +4835,9 @@ fun CloneWorkspaceScreen(
                                             }
                                         } catch (_: Exception) {}
                                         webViewInstance = null
-                                        useSoftwareLayer = true
+                                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                                            useSoftwareLayer = true
+                                        }
                                         reloadKey++
                                         return true
                                     }
@@ -5409,49 +5125,17 @@ fun CloneWorkspaceScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             } else if (isLoading && loadProgress < 25 && !hasRenderCrash && customVideoView == null && !isWebVideoFullscreen) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp),
-                    tonalElevation = 4.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            color = badgeColor,
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.5.dp
-                        )
-                        Text(
-                            text = if (isWhatsapp) "Loading WhatsApp Web..." else "Loading ${instance.displayName}...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
+                CloneWorkspaceLoadingOverlay(
+                    isWhatsapp = isWhatsapp,
+                    displayName = instance.displayName,
+                    badgeColor = badgeColor,
+                    modifier = Modifier.align(Alignment.Center)
+                )
             }
 
             // Native HTML5 Fullscreen Video CustomView Overlay (keeps WebView mounted underneath)
             customVideoView?.let { activeCustomView ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black)
-                        .testTag("clone_fullscreen_video_overlay")
-                ) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = {
-                            (activeCustomView.parent as? ViewGroup)?.removeView(activeCustomView)
-                            activeCustomView
-                        }
-                    )
-                }
+                CloneFullscreenVideoOverlay(activeCustomView = activeCustomView)
             }
         }
     }

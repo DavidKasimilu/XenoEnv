@@ -10,18 +10,23 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# Preserve all classes in these packages as they may use reflection or be used by system
+# Preserve all classes in telecom, plugins, and dpc packages
 -keep class com.example.telecom.** { *; }
 -keep class com.example.plugins.** { *; }
 -keep class com.example.dpc.** { *; }
 
-# Preserve services and receivers from being stripped or renamed
+# Preserve services, receivers, and InCallService
 -keep class * extends android.app.Service
 -keep class * extends android.content.BroadcastReceiver
 -keep class * extends android.telecom.InCallService
 
-# Data models (POJOs) used for JSON serialization/deserialization
+# Data models & POJOs used for serialization, reflection, and caching
 -keep class com.example.data.models.** { *; }
+-keep class com.example.data.** { *; }
+-keep class com.example.util.** { *; }
+
+# Keep ViewModels and their public methods
+-keep class * extends androidx.lifecycle.ViewModel { *; }
 
 # OkHttp
 -keepattributes Signature
@@ -30,7 +35,7 @@
 -keep interface okhttp3.** { *; }
 -dontwarn okhttp3.**
 
-# Coil
+# Coil image loading
 -keep class coil.** { *; }
 
 # org.json

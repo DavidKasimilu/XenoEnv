@@ -16,12 +16,16 @@ class CallReceiver : BroadcastReceiver() {
 
             val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
             @Suppress("DEPRECATION")
-            val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER) ?: ""
+            val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                ?: intent.getStringExtra("incoming_number")
+                ?: ""
             Log.d("CallReceiver", "Phone state changed: $state, incoming: $incomingNumber")
 
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
                     val phone = incomingNumber.trim().ifEmpty {
+                        intent.getStringExtra("incoming_number")?.trim().orEmpty()
+                    }.ifEmpty {
                         OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
                     }.ifEmpty { "Private Number" }
                     if (OngoingCallHelper.shouldProcessIncomingCall(phone)) {

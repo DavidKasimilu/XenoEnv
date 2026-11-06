@@ -32,6 +32,15 @@ class ContactsRepository(private val context: Context) {
     companion object {
         private val globalPhoneToNameCache = ConcurrentHashMap<String, String>()
 
+        @Volatile
+        private var instance: ContactsRepository? = null
+
+        fun getInstance(context: Context): ContactsRepository {
+            return instance ?: synchronized(this) {
+                instance ?: ContactsRepository(context.applicationContext).also { instance = it }
+            }
+        }
+
         fun indexFast(rawNumber: String, displayName: String) {
             if (rawNumber.isBlank() || displayName.isBlank()) return
             if (PriorityContactManager.isSyntheticPriorityName(displayName)) return
@@ -285,7 +294,7 @@ class ContactsRepository(private val context: Context) {
         val trimmed = phoneNumber.trim()
         val now = System.currentTimeMillis()
         val lastMiss = unresolvedPhonesCache[trimmed]
-        if (lastMiss != null && (now - lastMiss) < 60_000L) {
+        if (lastMiss != null && (now - lastMiss) < 4_000L) {
             return null
         }
 
@@ -296,7 +305,10 @@ class ContactsRepository(private val context: Context) {
                 context,
                 android.Manifest.permission.READ_CONTACTS
             ) == PackageManager.PERMISSION_GRANTED
-            if (!hasPermission) return@withContext null
+            if (!hasPermission) {
+                Log.w("CallerNameResolve", "READ_CONTACTS not granted in resolveContactName, skipping lookup and miss-cache")
+                return@withContext null
+            }
 
             try {
                 val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
@@ -318,6 +330,14 @@ class ContactsRepository(private val context: Context) {
             } catch (e: Exception) {
                 Log.d("ContactsRepository", "Could not lookup name for $phoneNumber", e)
             }
+
+            // Fallback to robust number lookup
+            val fallback = com.example.telecom.XenoNotificationHelper.resolveContactNameQuick(context, trimmed)
+            if (fallback != null) {
+                indexContactNumber(trimmed, fallback)
+                return@withContext fallback
+            }
+
             unresolvedPhonesCache[trimmed] = System.currentTimeMillis()
             null
         }

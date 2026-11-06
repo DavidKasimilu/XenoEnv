@@ -11,7 +11,10 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
+import android.telephony.PhoneNumberUtils
+import android.telephony.TelephonyManager
 import android.telecom.TelecomManager
+import android.util.Log
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -99,87 +102,177 @@ object XenoNotificationHelper {
     }
 
     fun resolveContactNameQuick(context: Context, phoneNumber: String): String? {
-        if (phoneNumber.isBlank()) return null
+        if (phoneNumber.isBlank() || phoneNumber == "Private Number" || phoneNumber == "Unknown Caller") return null
         val trimmed = phoneNumber.trim()
         if (PriorityContactManager.isSyntheticPriorityName(trimmed)) return null
 
-        // 1. Instant 0ms memory cache lookup
-        ContactsRepository.resolveFromCache(trimmed)?.let { return it }
-
-        // 2. Query system contacts if permission is available
         val hasContactsPerm = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.READ_CONTACTS
         ) == PackageManager.PERMISSION_GRANTED
-        if (!hasContactsPerm) return null
 
-        // 3. PhoneLookup with original and sanitized digits
-        try {
-            val lookupUri = Uri.withAppendedPath(
-                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-                Uri.encode(trimmed)
-            )
-            context.contentResolver.query(
-                lookupUri,
-                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (idx != -1) {
-                        val name = cursor.getString(idx)?.takeIf {
-                            it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
-                        }
-                        if (name != null) {
-                            ContactsRepository.indexFast(trimmed, name)
-                            return name
-                        }
-                    }
-                }
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val countryIso = telephonyManager?.networkCountryIso?.takeIf { it.isNotBlank() }
+            ?: telephonyManager?.simCountryIso?.takeIf { it.isNotBlank() }
+            ?: Locale.getDefault().country
+            ?: "US"
+        val normalizedE164 = try {
+            PhoneNumberUtils.formatNumberToE164(trimmed, countryIso.uppercase(Locale.US))
+        } catch (_: Exception) {
+            null
+        }
+
+        Log.d(
+            "CallerNameResolve",
+            "raw number: '$trimmed', normalized number: '$normalizedE164', READ_CONTACTS granted: $hasContactsPerm"
+        )
+
+        if (!hasContactsPerm) {
+            Log.w("CallerNameResolve", "READ_CONTACTS permission is NOT granted. Caller name cannot be resolved for number: $trimmed")
+            return null
+        }
+
+        // 1. Instant 0ms memory cache lookup
+        ContactsRepository.resolveFromCache(trimmed)?.let { name ->
+            Log.d("CallerNameResolve", "Matched via memory cache (trimmed): '$name'")
+            return name
+        }
+        if (normalizedE164 != null && normalizedE164 != trimmed) {
+            ContactsRepository.resolveFromCache(normalizedE164)?.let { name ->
+                Log.d("CallerNameResolve", "Matched via memory cache (normalized): '$name'")
+                return name
             }
-        } catch (_: Exception) {}
+        }
 
-        // 4. Secondary lookup in CommonDataKinds.Phone with digits matching
-        val digits = trimmed.filter { it.isDigit() }
-        if (digits.isNotEmpty()) {
+        // 2. PhoneLookup with original and normalized digits
+        val phoneLookupNumbers = listOfNotNull(trimmed, normalizedE164).distinct()
+        for (lookupNum in phoneLookupNumbers) {
             try {
-                val selection = if (digits.length >= 7) {
-                    "${ContactsContract.CommonDataKinds.Phone.NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?"
-                } else {
-                    "${ContactsContract.CommonDataKinds.Phone.NUMBER} = ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} = ?"
-                }
-                val selectionArgs = if (digits.length >= 7) {
-                    arrayOf(trimmed, digits, "%${digits.takeLast(9)}")
-                } else {
-                    arrayOf(trimmed, digits)
-                }
-
+                val lookupUri = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                    Uri.encode(lookupNum)
+                )
                 context.contentResolver.query(
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                    arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME),
-                    selection,
-                    selectionArgs,
+                    lookupUri,
+                    arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                    null,
+                    null,
                     null
                 )?.use { cursor ->
                     if (cursor.moveToFirst()) {
-                        val idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                        val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
                         if (idx != -1) {
                             val name = cursor.getString(idx)?.takeIf {
                                 it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
                             }
                             if (name != null) {
                                 ContactsRepository.indexFast(trimmed, name)
+                                if (normalizedE164 != null) ContactsRepository.indexFast(normalizedE164, name)
+                                Log.d("CallerNameResolve", "Matched via PhoneLookup step (query='$lookupNum'): '$name'")
                                 return name
                             }
                         }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.d("CallerNameResolve", "PhoneLookup query failed for '$lookupNum': ${e.message}")
+            }
         }
 
+        // 3. Robust fallback: Query ContactsContract.CommonDataKinds.Phone (NUMBER, NORMALIZED_NUMBER, DISPLAY_NAME)
+        // Strips non-digits and matches the last 9 digits and checks PhoneNumberUtils.compare
+        val rawDigits = trimmed.filter { it.isDigit() }
+        val rawLast9 = if (rawDigits.length >= 9) rawDigits.takeLast(9) else rawDigits
+        val rawLast7 = if (rawDigits.length >= 7) rawDigits.takeLast(7) else rawDigits
+
+        try {
+            val projection = arrayOf(
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+            )
+
+            val (selection, selectionArgs) = if (rawLast9.isNotEmpty()) {
+                val sel = "${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ? OR " +
+                        "${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} LIKE ? OR " +
+                        "${ContactsContract.CommonDataKinds.Phone.NUMBER} = ?"
+                val args = arrayOf("%$rawLast9", "%$rawLast9", trimmed)
+                Pair(sel, args)
+            } else {
+                Pair(null, null)
+            }
+
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val normIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+
+                while (cursor.moveToNext()) {
+                    val rowNumber = if (numIdx != -1) cursor.getString(numIdx) ?: "" else ""
+                    val rowNormNumber = if (normIdx != -1) cursor.getString(normIdx) ?: "" else ""
+                    val displayName = if (nameIdx != -1) cursor.getString(nameIdx) ?: "" else ""
+
+                    if (displayName.isBlank() || PriorityContactManager.isSyntheticPriorityName(displayName)) {
+                        continue
+                    }
+
+                    val rowDigits = rowNumber.filter { it.isDigit() }
+                    val rowNormDigits = rowNormNumber.filter { it.isDigit() }
+
+                    val matchesLast9 = rawDigits.length >= 9 && (
+                        (rowDigits.length >= 9 && rowDigits.takeLast(9) == rawLast9) ||
+                        (rowNormDigits.length >= 9 && rowNormDigits.takeLast(9) == rawLast9)
+                    )
+                    val matchesLast7 = rawDigits.length in 7..8 && (
+                        (rowDigits.length >= 7 && rowDigits.takeLast(7) == rawLast7) ||
+                        (rowNormDigits.length >= 7 && rowNormDigits.takeLast(7) == rawLast7)
+                    )
+                    val matchesExactDigits = rawDigits.isNotEmpty() && (rawDigits == rowDigits || rawDigits == rowNormDigits)
+
+                    val matchesCompare = PhoneNumberUtils.compare(context, trimmed, rowNumber) ||
+                        (rowNormNumber.isNotEmpty() && PhoneNumberUtils.compare(context, trimmed, rowNormNumber)) ||
+                        (normalizedE164 != null && PhoneNumberUtils.compare(context, normalizedE164, rowNumber))
+
+                    if (matchesLast9 || matchesLast7 || matchesExactDigits || matchesCompare) {
+                        ContactsRepository.indexFast(trimmed, displayName)
+                        if (normalizedE164 != null) ContactsRepository.indexFast(normalizedE164, displayName)
+                        if (rowNumber.isNotBlank()) ContactsRepository.indexFast(rowNumber, displayName)
+                        Log.d(
+                            "CallerNameResolve",
+                            "Matched via CommonDataKinds.Phone fallback step: '$displayName' (rowNumber='$rowNumber', rowNorm='$rowNormNumber', matchesLast9=$matchesLast9, matchesCompare=$matchesCompare)"
+                        )
+                        return displayName
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("CallerNameResolve", "CommonDataKinds.Phone query failed: ${e.message}")
+        }
+
+        Log.d("CallerNameResolve", "Lookup finished: No saved contact matched for raw: '$trimmed', normalized: '$normalizedE164'")
         return null
+    }
+
+    fun updateCallNotificationName(
+        context: Context,
+        callerName: String,
+        callerNumber: String,
+        carrierNameOverride: String? = null
+    ) {
+        showCallNotification(
+            context = context,
+            callerName = callerName,
+            callerNumber = callerNumber,
+            useFullScreenIntent = false,
+            suppressHeadsUp = true,
+            carrierNameOverride = carrierNameOverride
+        )
     }
 
     private fun createNotificationChannels(context: Context) {
