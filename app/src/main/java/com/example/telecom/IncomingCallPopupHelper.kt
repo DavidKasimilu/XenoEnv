@@ -97,18 +97,24 @@ object IncomingCallPopupHelper {
         call: Call? = null
     ): IncomingCallPopup {
         val startTimeMs = System.currentTimeMillis()
-        val callHandle = call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
-        val callExtrasNumber = call?.details?.extras?.getString(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty()
-            .ifEmpty { call?.details?.intentExtras?.getString("incoming_number")?.trim().orEmpty() }
-            .ifEmpty { call?.details?.extras?.getString("incoming_number")?.trim().orEmpty() }
-            .ifEmpty { call?.details?.intentExtras?.getString(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty() }
-        val sessionNumber = OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
+        val handleNum = call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+        val gatewayNum = call?.details?.gatewayInfo?.originalAddress?.schemeSpecificPart?.trim().orEmpty()
+        val paramNum = phoneNumber.trim()
+        val sessionNum = OngoingCallHelper.sessionFlow.value.phoneNumber.trim().takeIf { it != "Private Number" }.orEmpty()
 
-        val cleanNumber = phoneNumber.trim()
-            .ifEmpty { callHandle }
-            .ifEmpty { callExtrasNumber }
-            .ifEmpty { sessionNumber }
-            .ifEmpty { "Private Number" }
+        val presentation = call?.details?.handlePresentation
+        val isRestricted = presentation == TelecomManager.PRESENTATION_RESTRICTED
+
+        val (cleanNumber, sourceTag) = when {
+            isRestricted -> Pair("Private Number", "restricted")
+            handleNum.isNotBlank() -> Pair(handleNum, "handle")
+            gatewayNum.isNotBlank() -> Pair(gatewayNum, "gateway")
+            paramNum.isNotBlank() && paramNum != "Private Number" -> Pair(paramNum, "broadcast")
+            sessionNum.isNotBlank() -> Pair(sessionNum, "session")
+            else -> Pair("Private Number", "none")
+        }
+
+        Log.d("IncomingCallFlow", "Resolved number '$cleanNumber' via source=$sourceTag (presentation=$presentation, handle='$handleNum', gateway='$gatewayNum', param='$paramNum', session='$sessionNum')")
 
         val telecomCallerName = call?.details?.callerDisplayName?.takeIf { 
             it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber && it != "Unknown Caller" 
@@ -131,7 +137,7 @@ object IncomingCallPopupHelper {
         }
 
         val elapsedBeforePopup = System.currentTimeMillis() - startTimeMs
-        Log.d("IncomingCallFlow", "Popup shown: env=$envDesc, elapsed=${elapsedBeforePopup}ms, number=$cleanNumber, name=$callerName")
+        Log.d("IncomingCallFlow", "Popup shown: env=$envDesc, elapsed=${elapsedBeforePopup}ms, number=$cleanNumber, name=$callerName, source=$sourceTag")
 
         val popup = IncomingCallPopup(
             callerName = callerName,
@@ -295,6 +301,110 @@ object IncomingCallPopupHelper {
         }
 
         return popup
+    }
+
+    /**
+     * UPDATES the existing popup in place when a real number (and optional name) arrives
+     * after the popup was already shown (e.g. from onDetailsChanged or delayed onCallAdded).
+     * Replaces a "Private Number" placeholder with the real number.
+     * A real number is NEVER overwritten by "Private Number" later.
+     */
+    fun updateIncomingCallNumber(
+        context: Context,
+        phoneNumber: String,
+        contactName: String? = null
+    ) {
+        val cleanNumber = phoneNumber.trim()
+        if (cleanNumber.isBlank()) return
+
+        val currentSession = OngoingCallHelper.sessionFlow.value
+        val currentPopup = OngoingCallHelper.incomingPopupFlow.value
+        val existingNumber = currentSession.phoneNumber.ifBlank { currentPopup?.callerNumber.orEmpty() }
+
+        if (existingNumber.isNotBlank() && existingNumber != "Private Number" && cleanNumber == "Private Number") {
+            Log.d("IncomingCallFlow", "updateIncomingCallNumber ignored: refusing to overwrite existing real number '$existingNumber' with 'Private Number'")
+            return
+        }
+
+        val resolvedName = contactName?.takeIf { it.isNotBlank() && it != cleanNumber }
+            ?: resolveCallerName(context, cleanNumber)
+            ?: currentSession.contactName
+
+        OngoingCallHelper.updateSessionAndPopupNumber(cleanNumber, resolvedName)
+
+        val carrierName = resolveCarrierName(context, XenoInCallService.currentCall)
+
+        XenoOverlayService.updateCallOverlayName(
+            context = context,
+            callerNumber = cleanNumber,
+            callerName = resolvedName ?: cleanNumber,
+            carrierName = carrierName
+        )
+
+        val isScreenOffOrLocked = OngoingCallHelper.isScreenOffOrLocked(context)
+        val isInApp = MainActivity.isAppInForeground && !isScreenOffOrLocked
+        val canOverlay = XenoOverlayService.canDrawOverlays(context)
+        val suppressHeadsUp = isInApp || canOverlay
+
+        XenoNotificationHelper.showCallNotification(
+            context = context,
+            callerName = resolvedName,
+            callerNumber = cleanNumber,
+            useFullScreenIntent = isScreenOffOrLocked && !canOverlay,
+            suppressHeadsUp = suppressHeadsUp,
+            carrierNameOverride = carrierName
+        )
+
+        Log.d("IncomingCallFlow", "Popup updated in place: number='$cleanNumber', name='$resolvedName', previousNumber='$existingNumber'")
+
+        if (resolvedName == null && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    Log.d("IncomingCallFlow", "Name lookup started for updated number $cleanNumber")
+                    val deepResolved = withTimeoutOrNull(2000) {
+                        try {
+                            val quick = try {
+                                XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
+                            } catch (t: Throwable) {
+                                Log.e("IncomingCallFlow", "Caught exception in resolveContactNameQuick for $cleanNumber", t)
+                                null
+                            }
+                            if (!quick.isNullOrBlank()) return@withTimeoutOrNull quick
+                            val repo = ContactsRepository.getInstance(context)
+                            repo.resolveContactName(cleanNumber)
+                        } catch (t: Throwable) {
+                            Log.e("IncomingCallFlow", "Caught exception in deep name lookup for $cleanNumber", t)
+                            null
+                        }
+                    }
+                    Log.d("IncomingCallFlow", "Name lookup result for updated number $cleanNumber: '$deepResolved'")
+
+                    if (!deepResolved.isNullOrBlank() && deepResolved != cleanNumber && deepResolved != "Unknown Caller" && !PriorityContactManager.isSyntheticPriorityName(deepResolved)) {
+                        val session = OngoingCallHelper.sessionFlow.value
+                        val popupState = OngoingCallHelper.incomingPopupFlow.value
+                        if (session.phase == CallPhase.INCOMING_RINGING || popupState != null) {
+                            Log.d("IncomingCallFlow", "Popup updated in place with name '$deepResolved' for $cleanNumber")
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    OngoingCallHelper.updateIncomingContactName(cleanNumber, deepResolved)
+                                    XenoOverlayService.updateCallOverlayName(context, cleanNumber, deepResolved, carrierName)
+                                    XenoNotificationHelper.updateCallNotificationName(
+                                        context = context,
+                                        callerName = deepResolved,
+                                        callerNumber = cleanNumber,
+                                        carrierNameOverride = carrierName
+                                    )
+                                } catch (t: Throwable) {
+                                    Log.e("IncomingCallFlow", "Caught exception updating popup in place for $cleanNumber", t)
+                                }
+                            }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e("IncomingCallFlow", "Caught exception in background coroutine for $cleanNumber", t)
+                }
+            }
+        }
     }
 
     /**

@@ -218,22 +218,60 @@ object OngoingCallHelper {
      * incoming call notifications or reset the incoming call screen for the same call.
      */
     @Synchronized
-    fun shouldProcessIncomingCall(phoneNumber: String): Boolean {
+    fun shouldProcessIncomingCall(phoneNumber: String, context: Context? = null): Boolean {
         val norm = phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { phoneNumber.trim() }
         val now = System.currentTimeMillis()
         val current = _sessionFlow.value
-        if (current.phase == CallPhase.INCOMING_RINGING || current.phase == CallPhase.ACTIVE) {
+        val popup = _incomingPopupFlow.value
+
+        val isRingingOrActive = current.phase == CallPhase.INCOMING_RINGING || current.phase == CallPhase.ACTIVE || popup != null
+
+        if (isRingingOrActive) {
             val currentNorm = current.phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { current.phoneNumber.trim() }
-            if (currentNorm == norm && norm.isNotEmpty()) {
+            val popupNorm = popup?.callerNumber?.filter { it.isDigit() }?.takeLast(9)?.ifEmpty { popup.callerNumber.trim() }.orEmpty()
+
+            if ((currentNorm.isNotEmpty() && currentNorm == norm) || (popupNorm.isNotEmpty() && popupNorm == norm)) {
+                return false
+            }
+
+            val currentIsPrivate = currentNorm.isBlank() || currentNorm == "Private Number"
+            val popupIsPrivate = popupNorm.isBlank() || popupNorm == "Private Number"
+            val newIsReal = norm.isNotBlank() && norm != "Private Number"
+
+            if ((currentIsPrivate || popupIsPrivate) && newIsReal) {
+                if (context != null) {
+                    IncomingCallPopupHelper.updateIncomingCallNumber(context, phoneNumber)
+                }
+                lastIncomingNumber = norm
+                lastIncomingTriggerTimestamp = now
                 return false
             }
         }
+
         if (norm == lastIncomingNumber && (now - lastIncomingTriggerTimestamp) < 8_000L) {
             return false
         }
         lastIncomingNumber = norm
         lastIncomingTriggerTimestamp = now
         return true
+    }
+
+    fun updateSessionAndPopupNumber(phoneNumber: String, contactName: String?) {
+        val currentSession = _sessionFlow.value
+        val newName = contactName?.takeIf { it.isNotBlank() && it != phoneNumber } ?: currentSession.contactName
+        _sessionFlow.value = currentSession.copy(
+            phoneNumber = phoneNumber,
+            contactName = newName
+        )
+
+        val currentPopup = _incomingPopupFlow.value
+        if (currentPopup != null) {
+            val popupName = contactName?.takeIf { it.isNotBlank() && it != phoneNumber } ?: currentPopup.callerName
+            _incomingPopupFlow.value = currentPopup.copy(
+                callerNumber = phoneNumber,
+                callerName = popupName
+            )
+        }
     }
 
     /**

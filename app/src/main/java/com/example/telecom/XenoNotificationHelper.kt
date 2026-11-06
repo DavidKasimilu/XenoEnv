@@ -44,6 +44,9 @@ object XenoNotificationHelper {
     private var lastCallNotificationNumber: String = ""
 
     @Volatile
+    private var lastCallNotificationName: String? = null
+
+    @Volatile
     private var lastCallNotificationTimeMs: Long = 0L
 
     fun normalizePhoneKey(address: String): String {
@@ -507,10 +510,12 @@ object XenoNotificationHelper {
     ) {
         val normCaller = normalizePhoneKey(callerNumber)
         val now = System.currentTimeMillis()
-        if (normCaller == lastCallNotificationNumber && (now - lastCallNotificationTimeMs) < 2_000L) {
+        val isSameCallAndName = normCaller == lastCallNotificationNumber && callerName == lastCallNotificationName
+        if (isSameCallAndName && (now - lastCallNotificationTimeMs) < 2_000L) {
             return
         }
         lastCallNotificationNumber = normCaller
+        lastCallNotificationName = callerName
         lastCallNotificationTimeMs = now
 
         createNotificationChannels(context)

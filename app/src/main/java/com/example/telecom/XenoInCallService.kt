@@ -164,6 +164,40 @@ class XenoInCallService : InCallService() {
                 }
             }
         }
+
+        override fun onDetailsChanged(call: Call?, details: Call.Details?) {
+            super.onDetailsChanged(call, details)
+            if (call == null || details == null) return
+            val state = call.state
+            if (state == Call.STATE_RINGING) {
+                val handle = details.handle?.schemeSpecificPart?.trim().orEmpty()
+                val gateway = details.gatewayInfo?.originalAddress?.schemeSpecificPart?.trim().orEmpty()
+                val presentation = details.handlePresentation
+                val isRestricted = presentation == TelecomManager.PRESENTATION_RESTRICTED
+
+                val newNumber = when {
+                    isRestricted -> "Private Number"
+                    handle.isNotBlank() -> handle
+                    gateway.isNotBlank() -> gateway
+                    else -> ""
+                }
+
+                if (newNumber.isNotBlank()) {
+                    val currentSession = OngoingCallHelper.sessionFlow.value
+                    val currentPopup = OngoingCallHelper.incomingPopupFlow.value
+                    val oldNumber = currentSession.phoneNumber.ifBlank { currentPopup?.callerNumber.orEmpty() }
+
+                    if (oldNumber.isBlank() || oldNumber == "Private Number" || (oldNumber != newNumber && newNumber != "Private Number")) {
+                        Log.d("IncomingCallFlow", "onDetailsChanged: Real number '$newNumber' appeared for ringing call (oldNumber='$oldNumber', presentation=$presentation)")
+                        IncomingCallPopupHelper.updateIncomingCallNumber(
+                            context = applicationContext,
+                            phoneNumber = newNumber,
+                            contactName = null
+                        )
+                    }
+                }
+            }
+        }
     }
 
     override fun onCallAudioStateChanged(audioState: CallAudioState?) {
@@ -178,13 +212,24 @@ class XenoInCallService : InCallService() {
         if (call == null) return
 
         val handle = call.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+        val gateway = call.details?.gatewayInfo?.originalAddress?.schemeSpecificPart?.trim().orEmpty()
         val extrasNumber = call.details?.extras?.getString(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty()
             .ifEmpty { call.details?.intentExtras?.getString("incoming_number")?.trim().orEmpty() }
             .ifEmpty { call.details?.extras?.getString("incoming_number")?.trim().orEmpty() }
             .ifEmpty { call.details?.intentExtras?.getString(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty() }
-        val effectiveNumber = handle.ifEmpty { extrasNumber }.ifEmpty { "Private Number" }
-        Log.d("XenoInCallService", "New call added: handle='$handle', extrasNumber='$extrasNumber' (state=${call.state})")
-        Log.d("IncomingCallFlow", "onCallAdded entry: handle='$handle', extrasNumber='$extrasNumber', effectiveNumber='$effectiveNumber', state=${call.state}")
+        
+        val presentation = call.details?.handlePresentation
+        val isRestricted = presentation == TelecomManager.PRESENTATION_RESTRICTED
+
+        val effectiveNumber = when {
+            isRestricted -> "Private Number"
+            handle.isNotBlank() -> handle
+            gateway.isNotBlank() -> gateway
+            extrasNumber.isNotBlank() -> extrasNumber
+            else -> ""
+        }
+
+        Log.d("IncomingCallFlow", "onCallAdded entry: handle='$handle', gateway='$gateway', extrasNumber='$extrasNumber', presentation=$presentation, effectiveNumber='$effectiveNumber', state=${call.state}")
 
         call.registerCallback(callCallback)
         OngoingCallHelper.onTelecomCallAdded(call)
@@ -193,7 +238,7 @@ class XenoInCallService : InCallService() {
         callStateListener?.invoke(state)
 
         if (state == Call.STATE_RINGING) {
-            if (OngoingCallHelper.shouldProcessIncomingCall(effectiveNumber)) {
+            if (OngoingCallHelper.shouldProcessIncomingCall(effectiveNumber, applicationContext)) {
                 IncomingCallPopupHelper.handleIncomingCall(
                     context = applicationContext,
                     phoneNumber = effectiveNumber,

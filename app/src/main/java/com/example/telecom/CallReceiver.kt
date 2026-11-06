@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.telephony.TelephonyManager
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class CallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,17 +27,58 @@ class CallReceiver : BroadcastReceiver() {
 
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> {
-                    val phone = incomingNumber.trim().ifEmpty {
-                        intent.getStringExtra("incoming_number")?.trim().orEmpty()
-                    }.ifEmpty {
-                        OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
-                    }.ifEmpty { "Private Number" }
-                    if (OngoingCallHelper.shouldProcessIncomingCall(phone)) {
-                        IncomingCallPopupHelper.handleIncomingCall(
-                            context = context.applicationContext,
-                            phoneNumber = phone
-                        )
-                        XenoInCallService.onIncomingCallListener?.invoke(phone)
+                    val rawNum = incomingNumber.trim()
+                    Log.d("IncomingCallFlow", "CallReceiver RINGING: broadcast number='$rawNum'")
+                    if (rawNum.isBlank()) {
+                        if (XenoInCallService.currentCall != null) {
+                            Log.d("IncomingCallFlow", "CallReceiver: currentCall already present, ignoring blank broadcast number")
+                            return
+                        }
+                        Log.d("IncomingCallFlow", "CallReceiver: blank broadcast number and currentCall is null. Waiting 800ms for onCallAdded...")
+                        val pendingResult = goAsync()
+                        CoroutineScope(Dispatchers.Main).launch {
+                            try {
+                                delay(800)
+                                val currentCall = XenoInCallService.currentCall
+                                val activePopup = OngoingCallHelper.incomingPopupFlow.value
+                                val currentSession = OngoingCallHelper.sessionFlow.value
+                                val isRinging = currentSession.phase == CallPhase.INCOMING_RINGING || currentCall?.state == android.telecom.Call.STATE_RINGING
+
+                                if (currentCall != null || activePopup != null) {
+                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait finished: currentCall or activePopup already present, skipping duplicate creation")
+                                    return@launch
+                                }
+
+                                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                                val currentState = telephonyManager?.callState
+                                val stillRinging = currentState == TelephonyManager.CALL_STATE_RINGING || isRinging
+
+                                if (stillRinging) {
+                                    val sessionNum = OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
+                                    val phone = if (sessionNum.isNotBlank()) sessionNum else "Private Number"
+                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait expired, still ringing. Fallback number='$phone'")
+                                    if (OngoingCallHelper.shouldProcessIncomingCall(phone, context.applicationContext)) {
+                                        IncomingCallPopupHelper.handleIncomingCall(
+                                            context = context.applicationContext,
+                                            phoneNumber = phone
+                                        )
+                                        XenoInCallService.onIncomingCallListener?.invoke(phone)
+                                    }
+                                } else {
+                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait finished: phone is no longer ringing")
+                                }
+                            } finally {
+                                pendingResult.finish()
+                            }
+                        }
+                    } else {
+                        if (OngoingCallHelper.shouldProcessIncomingCall(rawNum, context.applicationContext)) {
+                            IncomingCallPopupHelper.handleIncomingCall(
+                                context = context.applicationContext,
+                                phoneNumber = rawNum
+                            )
+                            XenoInCallService.onIncomingCallListener?.invoke(rawNum)
+                        }
                     }
                 }
                 TelephonyManager.EXTRA_STATE_OFFHOOK -> {
