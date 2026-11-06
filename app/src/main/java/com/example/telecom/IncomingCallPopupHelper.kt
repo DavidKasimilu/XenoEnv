@@ -8,11 +8,13 @@ import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import com.example.MainActivity
+import com.example.data.ContactsRepository
 import com.example.data.models.IncomingCallPopup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Dedicated helper to streamline incoming call popups across all four environments:
@@ -75,10 +77,13 @@ object IncomingCallPopupHelper {
      * Resolves the contact name for the caller number.
      * Returns the saved contact name if found in the user's contacts, or null if the number is not saved.
      */
+    /**
+     * Resolves the contact name instantly from in-memory cache only (0ms delay, no ContentResolver).
+     */
     fun resolveCallerName(context: Context, phoneNumber: String): String? {
         val cleanNumber = phoneNumber.trim()
-        if (cleanNumber.isBlank() || cleanNumber == "Unknown Caller") return null
-        val resolved = XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
+        if (cleanNumber.isBlank() || cleanNumber == "Unknown Caller" || cleanNumber == "Private Number") return null
+        val resolved = ContactsRepository.resolveFromCache(cleanNumber)
         return resolved?.takeIf { it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber }
     }
 
@@ -91,6 +96,7 @@ object IncomingCallPopupHelper {
         rawCallerName: String? = null,
         call: Call? = null
     ): IncomingCallPopup {
+        val startTimeMs = System.currentTimeMillis()
         val callHandle = call?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
         val callExtrasNumber = call?.details?.extras?.getString(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty()
             .ifEmpty { call?.details?.intentExtras?.getString("incoming_number")?.trim().orEmpty() }
@@ -118,34 +124,20 @@ object IncomingCallPopupHelper {
         val isInApp = MainActivity.isAppInForeground && !isScreenOffOrLocked
         val canOverlay = XenoOverlayService.canDrawOverlays(context)
 
-        Log.d(TAG, "handleIncomingCall: isInApp=$isInApp, isScreenOffOrLocked=$isScreenOffOrLocked, canOverlay=$canOverlay, carrier=$carrierName, callerName=$callerName")
+        val envDesc = when {
+            isInApp -> "InApp"
+            isScreenOffOrLocked -> "ScreenOffOrLocked"
+            else -> "OtherAppOrHome"
+        }
+
+        val elapsedBeforePopup = System.currentTimeMillis() - startTimeMs
+        Log.d("IncomingCallFlow", "Popup shown: env=$envDesc, elapsed=${elapsedBeforePopup}ms, number=$cleanNumber, name=$callerName")
 
         val popup = IncomingCallPopup(
             callerName = callerName,
             callerNumber = cleanNumber,
             carrierName = carrierName
         )
-
-        // Asynchronously re-resolve contact name if not found initially, and update in place
-        if (callerName == null && cleanNumber.isNotBlank() && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
-            CoroutineScope(Dispatchers.IO).launch {
-                val asyncResolved = resolveCallerName(context, cleanNumber)
-                    ?: com.example.data.ContactsRepository.getInstance(context).resolveContactName(cleanNumber)
-                if (!asyncResolved.isNullOrBlank() && asyncResolved != cleanNumber && asyncResolved != "Unknown Caller") {
-                    Log.d("CallerNameResolve", "Asynchronously re-resolved name for $cleanNumber -> $asyncResolved. Updating popup/overlay/notification in place.")
-                    withContext(Dispatchers.Main) {
-                        OngoingCallHelper.updateIncomingContactName(cleanNumber, asyncResolved)
-                        XenoOverlayService.updateCallOverlayName(context, cleanNumber, asyncResolved, carrierName)
-                        XenoNotificationHelper.updateCallNotificationName(
-                            context = context,
-                            callerName = asyncResolved,
-                            callerNumber = cleanNumber,
-                            carrierNameOverride = carrierName
-                        )
-                    }
-                }
-            }
-        }
 
         // Priority VIP bypass handling
         val isPriority = PriorityContactManager.isPriorityNumber(cleanNumber, context)
@@ -168,11 +160,8 @@ object IncomingCallPopupHelper {
         when {
             // Environment 1: User is inside the app
             isInApp -> {
-                // Show ONLY the in-app Compose popup card
                 OngoingCallHelper.showIncomingCallPopup(context, cleanNumber, callerName, carrierName)
                 XenoOverlayService.dismissCallOverlay(context)
-
-                // Single Popup Guarantee: Suppress heads-up system banner so duplicate doesn't show
                 XenoNotificationHelper.showCallNotification(
                     context = context,
                     callerName = callerName,
@@ -189,14 +178,12 @@ object IncomingCallPopupHelper {
                 OngoingCallHelper.wakeDeviceScreenForIncomingCall(context)
 
                 if (canOverlay) {
-                    // Show floating dark greyish card over lock screen
                     XenoOverlayService.showCallOverlay(
                         context = context,
                         callerName = callerName,
                         callerNumber = cleanNumber,
                         carrierName = carrierName
                     )
-                    // Single Popup Guarantee: Post notification silently to prevent duplicate heads-up
                     XenoNotificationHelper.showCallNotification(
                         context = context,
                         callerName = callerName,
@@ -207,7 +194,6 @@ object IncomingCallPopupHelper {
                     )
                 } else {
                     XenoOverlayService.dismissCallOverlay(context)
-                    // Fall back to single heads-up notification with fullScreenIntent on lock screen
                     XenoNotificationHelper.showCallNotification(
                         context = context,
                         callerName = callerName,
@@ -224,14 +210,12 @@ object IncomingCallPopupHelper {
                 OngoingCallHelper.dismissInAppPopupOnly()
 
                 if (canOverlay) {
-                    // Show floating WindowManager dark greyish card
                     XenoOverlayService.showCallOverlay(
                         context = context,
                         callerName = callerName,
                         callerNumber = cleanNumber,
                         carrierName = carrierName
                     )
-                    // Single Popup Guarantee: Suppress heads-up system banner so duplicate doesn't drop down
                     XenoNotificationHelper.showCallNotification(
                         context = context,
                         callerName = callerName,
@@ -242,7 +226,6 @@ object IncomingCallPopupHelper {
                     )
                 } else {
                     XenoOverlayService.dismissCallOverlay(context)
-                    // Show single heads-up notification
                     XenoNotificationHelper.showCallNotification(
                         context = context,
                         callerName = callerName,
@@ -251,6 +234,62 @@ object IncomingCallPopupHelper {
                         suppressHeadsUp = false,
                         carrierNameOverride = carrierName
                     )
+                }
+            }
+        }
+
+        // Background lookup if callerName was not resolved instantly from cache/telecom
+        if (callerName == null && cleanNumber.isNotBlank() && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    Log.d("IncomingCallFlow", "Name lookup started for $cleanNumber")
+                    val deepResolved = withTimeoutOrNull(2000) {
+                        try {
+                            val quick = try {
+                                XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
+                            } catch (t: Throwable) {
+                                Log.e("IncomingCallFlow", "Caught exception in resolveContactNameQuick for $cleanNumber", t)
+                                null
+                            }
+                            if (!quick.isNullOrBlank()) {
+                                return@withTimeoutOrNull quick
+                            }
+                            val repo = ContactsRepository.getInstance(context)
+                            repo.resolveContactName(cleanNumber)
+                        } catch (t: Throwable) {
+                            Log.e("IncomingCallFlow", "Caught exception in deep name lookup for $cleanNumber", t)
+                            null
+                        }
+                    }
+                    Log.d("IncomingCallFlow", "Name lookup result for $cleanNumber: '$deepResolved'")
+
+                    if (!deepResolved.isNullOrBlank() && deepResolved != cleanNumber && deepResolved != "Unknown Caller" && !PriorityContactManager.isSyntheticPriorityName(deepResolved)) {
+                        val session = OngoingCallHelper.sessionFlow.value
+                        val popupState = OngoingCallHelper.incomingPopupFlow.value
+                        val isSessionRinging = session.phase == CallPhase.INCOMING_RINGING
+
+                        if (isSessionRinging || popupState != null) {
+                            Log.d("IncomingCallFlow", "Popup updated in place with name '$deepResolved' for $cleanNumber")
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    OngoingCallHelper.updateIncomingContactName(cleanNumber, deepResolved)
+                                    XenoOverlayService.updateCallOverlayName(context, cleanNumber, deepResolved, carrierName)
+                                    XenoNotificationHelper.updateCallNotificationName(
+                                        context = context,
+                                        callerName = deepResolved,
+                                        callerNumber = cleanNumber,
+                                        carrierNameOverride = carrierName
+                                    )
+                                } catch (t: Throwable) {
+                                    Log.e("IncomingCallFlow", "Caught exception updating popup in place for $cleanNumber", t)
+                                }
+                            }
+                        } else {
+                            Log.d("IncomingCallFlow", "Skipping in-place update for $cleanNumber because call ended or answered")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e("IncomingCallFlow", "Caught exception in background coroutine for $cleanNumber", t)
                 }
             }
         }

@@ -184,6 +184,7 @@ class XenoInCallService : InCallService() {
             .ifEmpty { call.details?.intentExtras?.getString(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim().orEmpty() }
         val effectiveNumber = handle.ifEmpty { extrasNumber }.ifEmpty { "Private Number" }
         Log.d("XenoInCallService", "New call added: handle='$handle', extrasNumber='$extrasNumber' (state=${call.state})")
+        Log.d("IncomingCallFlow", "onCallAdded entry: handle='$handle', extrasNumber='$extrasNumber', effectiveNumber='$effectiveNumber', state=${call.state}")
 
         call.registerCallback(callCallback)
         OngoingCallHelper.onTelecomCallAdded(call)
