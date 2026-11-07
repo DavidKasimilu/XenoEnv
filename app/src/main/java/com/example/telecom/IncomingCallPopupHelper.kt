@@ -326,6 +326,12 @@ object IncomingCallPopupHelper {
             return
         }
 
+        if (currentPopup == null) {
+            Log.d("IncomingCallFlow", "updateIncomingCallNumber: No popup showing yet. Showing new popup with number '$cleanNumber'")
+            handleIncomingCall(context, cleanNumber, contactName, XenoInCallService.currentCall)
+            return
+        }
+
         val resolvedName = contactName?.takeIf { it.isNotBlank() && it != cleanNumber }
             ?: resolveCallerName(context, cleanNumber)
             ?: currentSession.contactName

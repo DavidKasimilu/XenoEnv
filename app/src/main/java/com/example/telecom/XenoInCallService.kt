@@ -226,7 +226,7 @@ class XenoInCallService : InCallService() {
             handle.isNotBlank() -> handle
             gateway.isNotBlank() -> gateway
             extrasNumber.isNotBlank() -> extrasNumber
-            else -> ""
+            else -> "Private Number"
         }
 
         Log.d("IncomingCallFlow", "onCallAdded entry: handle='$handle', gateway='$gateway', extrasNumber='$extrasNumber', presentation=$presentation, effectiveNumber='$effectiveNumber', state=${call.state}")
@@ -238,7 +238,9 @@ class XenoInCallService : InCallService() {
         callStateListener?.invoke(state)
 
         if (state == Call.STATE_RINGING) {
-            if (OngoingCallHelper.shouldProcessIncomingCall(effectiveNumber, applicationContext)) {
+            val shouldProcess = OngoingCallHelper.shouldProcessIncomingCall(effectiveNumber, applicationContext)
+            Log.d("IncomingCallFlow", "onCallAdded STATE_RINGING: shouldProcess=$shouldProcess, effectiveNumber='$effectiveNumber'")
+            if (shouldProcess) {
                 IncomingCallPopupHelper.handleIncomingCall(
                     context = applicationContext,
                     phoneNumber = effectiveNumber,

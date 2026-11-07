@@ -30,42 +30,52 @@ class CallReceiver : BroadcastReceiver() {
                     val rawNum = incomingNumber.trim()
                     Log.d("IncomingCallFlow", "CallReceiver RINGING: broadcast number='$rawNum'")
                     if (rawNum.isBlank()) {
-                        if (XenoInCallService.currentCall != null) {
-                            Log.d("IncomingCallFlow", "CallReceiver: currentCall already present, ignoring blank broadcast number")
+                        if (XenoInCallService.currentCall != null && OngoingCallHelper.incomingPopupFlow.value != null) {
+                            Log.d("IncomingCallFlow", "CallReceiver: currentCall and activePopup already present, ignoring blank broadcast number")
                             return
                         }
-                        Log.d("IncomingCallFlow", "CallReceiver: blank broadcast number and currentCall is null. Waiting 800ms for onCallAdded...")
+                        Log.d("IncomingCallFlow", "CallReceiver: blank broadcast number. Waiting up to 600ms for onCallAdded or active popup...")
                         val pendingResult = goAsync()
                         CoroutineScope(Dispatchers.Main).launch {
                             try {
-                                delay(800)
-                                val currentCall = XenoInCallService.currentCall
-                                val activePopup = OngoingCallHelper.incomingPopupFlow.value
-                                val currentSession = OngoingCallHelper.sessionFlow.value
-                                val isRinging = currentSession.phase == CallPhase.INCOMING_RINGING || currentCall?.state == android.telecom.Call.STATE_RINGING
+                                var waited = 0L
+                                while (waited < 600L) {
+                                    delay(100L)
+                                    waited += 100L
+                                    if (OngoingCallHelper.incomingPopupFlow.value != null) {
+                                        Log.d("IncomingCallFlow", "CallReceiver: activePopup appeared during wait after ${waited}ms")
+                                        return@launch
+                                    }
+                                }
 
-                                if (currentCall != null || activePopup != null) {
-                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait finished: currentCall or activePopup already present, skipping duplicate creation")
+                                val activePopup = OngoingCallHelper.incomingPopupFlow.value
+                                if (activePopup != null) {
+                                    Log.d("IncomingCallFlow", "CallReceiver: activePopup already present after wait, skipping duplicate creation")
                                     return@launch
                                 }
 
+                                val currentCall = XenoInCallService.currentCall
+                                val currentSession = OngoingCallHelper.sessionFlow.value
                                 val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-                                val currentState = telephonyManager?.callState
-                                val stillRinging = currentState == TelephonyManager.CALL_STATE_RINGING || isRinging
+                                val isRinging = currentCall?.state == android.telecom.Call.STATE_RINGING ||
+                                    currentSession.phase == CallPhase.INCOMING_RINGING ||
+                                    telephonyManager?.callState == TelephonyManager.CALL_STATE_RINGING
 
-                                if (stillRinging) {
-                                    val sessionNum = OngoingCallHelper.sessionFlow.value.phoneNumber.trim()
-                                    val phone = if (sessionNum.isNotBlank()) sessionNum else "Private Number"
-                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait expired, still ringing. Fallback number='$phone'")
+                                if (isRinging) {
+                                    val sessionNum = currentSession.phoneNumber.trim().takeIf { it != "Private Number" }.orEmpty()
+                                    val callNum = currentCall?.details?.handle?.schemeSpecificPart?.trim().orEmpty()
+                                    val phone = callNum.ifEmpty { sessionNum }.ifEmpty { "Private Number" }
+                                    Log.d("IncomingCallFlow", "CallReceiver wait expired, still ringing. Showing popup with number='$phone'")
                                     if (OngoingCallHelper.shouldProcessIncomingCall(phone, context.applicationContext)) {
                                         IncomingCallPopupHelper.handleIncomingCall(
                                             context = context.applicationContext,
-                                            phoneNumber = phone
+                                            phoneNumber = phone,
+                                            call = currentCall
                                         )
                                         XenoInCallService.onIncomingCallListener?.invoke(phone)
                                     }
                                 } else {
-                                    Log.d("IncomingCallFlow", "CallReceiver 800ms wait finished: phone is no longer ringing")
+                                    Log.d("IncomingCallFlow", "CallReceiver wait finished: phone is no longer ringing")
                                 }
                             } finally {
                                 pendingResult.finish()
@@ -75,7 +85,8 @@ class CallReceiver : BroadcastReceiver() {
                         if (OngoingCallHelper.shouldProcessIncomingCall(rawNum, context.applicationContext)) {
                             IncomingCallPopupHelper.handleIncomingCall(
                                 context = context.applicationContext,
-                                phoneNumber = rawNum
+                                phoneNumber = rawNum,
+                                call = XenoInCallService.currentCall
                             )
                             XenoInCallService.onIncomingCallListener?.invoke(rawNum)
                         }

@@ -224,21 +224,25 @@ object OngoingCallHelper {
         val current = _sessionFlow.value
         val popup = _incomingPopupFlow.value
 
-        val isRingingOrActive = current.phase == CallPhase.INCOMING_RINGING || current.phase == CallPhase.ACTIVE || popup != null
+        // If the call is already connected, holding, or disconnected, do not pop up incoming call
+        if (current.phase == CallPhase.ACTIVE || current.phase == CallPhase.HOLDING || current.phase == CallPhase.DISCONNECTED) {
+            return false
+        }
 
-        if (isRingingOrActive) {
-            val currentNorm = current.phoneNumber.filter { it.isDigit() }.takeLast(9).ifEmpty { current.phoneNumber.trim() }
-            val popupNorm = popup?.callerNumber?.filter { it.isDigit() }?.takeLast(9)?.ifEmpty { popup.callerNumber.trim() }.orEmpty()
+        // If an incoming call popup is already actively displayed on screen:
+        if (popup != null) {
+            val popupNum = popup.callerNumber.trim()
+            val popupNorm = popupNum.filter { it.isDigit() }.takeLast(9).ifEmpty { popupNum }
 
-            if ((currentNorm.isNotEmpty() && currentNorm == norm) || (popupNorm.isNotEmpty() && popupNorm == norm)) {
+            // If the active popup already shows this exact number, don't create a second popup
+            if (popupNorm.isNotEmpty() && popupNorm == norm) {
                 return false
             }
 
-            val currentIsPrivate = currentNorm.isBlank() || currentNorm == "Private Number"
+            // If the active popup is showing "Private Number", and now we have a real phone number:
             val popupIsPrivate = popupNorm.isBlank() || popupNorm == "Private Number"
             val newIsReal = norm.isNotBlank() && norm != "Private Number"
-
-            if ((currentIsPrivate || popupIsPrivate) && newIsReal) {
+            if (popupIsPrivate && newIsReal) {
                 if (context != null) {
                     IncomingCallPopupHelper.updateIncomingCallNumber(context, phoneNumber)
                 }
@@ -246,11 +250,16 @@ object OngoingCallHelper {
                 lastIncomingTriggerTimestamp = now
                 return false
             }
-        }
 
-        if (norm == lastIncomingNumber && (now - lastIncomingTriggerTimestamp) < 8_000L) {
+            // A popup is already active for another call
             return false
         }
+
+        // Debounce: if the exact same real number triggered in the last 1500ms, ignore duplicate broadcast
+        if (norm.isNotEmpty() && norm != "Private Number" && norm == lastIncomingNumber && (now - lastIncomingTriggerTimestamp) < 1_500L) {
+            return false
+        }
+
         lastIncomingNumber = norm
         lastIncomingTriggerTimestamp = now
         return true
