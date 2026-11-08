@@ -3887,7 +3887,7 @@ fun CloneWorkspaceScreen(
     var currentUrl by remember(instance.instanceId) { mutableStateOf(cachedWebView?.url ?: instance.lastUrl) }
     var canGoBack by remember(instance.instanceId) { mutableStateOf(cachedWebView?.canGoBack() == true) }
     var hasRenderCrash by remember(instance.instanceId) { mutableStateOf(false) }
-    var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(false) }
+    var useSoftwareLayer by remember(instance.instanceId) { mutableStateOf(true) }
     var reloadKey by remember(instance.instanceId) { mutableIntStateOf(0) }
     var keepAliveInMinimizedPool by remember(instance.instanceId) { mutableStateOf(true) }
 
@@ -4349,6 +4349,10 @@ fun CloneWorkspaceScreen(
                     } else {
                         webViewInstance?.reload()
                     }
+                },
+                onHomeClick = {
+                    keepAliveInMinimizedPool = true
+                    onMinimizeWorkspace()
                 },
                 onCloseClick = {
                     keepAliveInMinimizedPool = false

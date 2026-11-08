@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopMac
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PhoneInTalk
@@ -65,7 +66,8 @@ fun CloneWorkspaceTopBar(
     isSpeakerphoneOn: Boolean,
     hasMicPermission: Boolean,
     hasCameraPermission: Boolean,
-    onBackClick: () -> Unit,
+    onBackClick: () -> Unit = {},
+    onHomeClick: () -> Unit = {},
     onChatsClick: () -> Unit,
     onYoutubeDownloadClick: () -> Unit,
     onToggleYoutubeOfflineLibrary: () -> Unit,
@@ -89,21 +91,6 @@ fun CloneWorkspaceTopBar(
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .size(32.dp)
-                    .testTag("workspace_back_btn")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = if (isWhatsapp && isWhatsAppChatOpen) "Back to Chats" else "Back",
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(6.dp))
-
             CloneAppVisualIcon(
                 instance = instance,
                 iconSize = 24.dp,
@@ -135,20 +122,6 @@ fun CloneWorkspaceTopBar(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = badgeColor.copy(alpha = 0.15f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.5f))
-                ) {
-                    Text(
-                        text = instance.badgeTag,
-                        color = badgeColor,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                    )
-                }
 
                 if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen) {
                     Surface(
@@ -358,6 +331,20 @@ fun CloneWorkspaceTopBar(
                         contentDescription = "Reload",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onHomeClick,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .testTag("workspace_home_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Home,
+                        contentDescription = "Exit to Space (Keep in Background)",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
                     )
                 }
 

@@ -867,21 +867,16 @@ private fun CloneAppIconItem(
                     showBadgeDot = false
                 )
                 if (isMinimized) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.primary,
+                    Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .offset(x = 4.dp, y = (-2).dp)
-                    ) {
-                        Text(
-                            text = "MIN",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
+                            .offset(x = 2.dp, y = (-2).dp)
+                            .size(14.dp)
+                            .background(MaterialTheme.colorScheme.surface, CircleShape)
+                            .padding(2.5.dp)
+                            .background(Color(0xFF22C55E), CircleShape)
+                            .testTag("clone_minimized_dot_${instance.instanceId}")
+                    )
                 }
             }
 

@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -82,6 +83,7 @@ fun ActiveCallScreen(
 ) {
     val context = LocalContext.current
     val callSession by OngoingCallHelper.sessionFlow.collectAsStateWithLifecycle()
+    val isNearEar by OngoingCallHelper.isNearEarFlow.collectAsStateWithLifecycle()
     var showMoreSheet by remember { mutableStateOf(false) }
     var showDialpadSheet by remember { mutableStateOf(false) }
 
@@ -116,8 +118,10 @@ fun ActiveCallScreen(
         try {
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } catch (_: Exception) {}
+        OngoingCallHelper.acquireProximitySensor(context)
 
         onDispose {
+            OngoingCallHelper.releaseProximitySensor(context)
             try {
                 window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             } catch (_: Exception) {}
@@ -525,6 +529,23 @@ fun ActiveCallScreen(
                     )
                 },
                 onClose = { showDialpadSheet = false }
+            )
+        }
+
+        // Proximity sensor ear blackout overlay to prevent accidental touch
+        if (isNearEar) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent()
+                            }
+                        }
+                    }
+                    .testTag("ear_proximity_blackout_screen")
             )
         }
     }

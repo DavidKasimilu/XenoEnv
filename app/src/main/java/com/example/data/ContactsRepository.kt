@@ -29,6 +29,12 @@ class ContactsRepository(private val context: Context) {
     private val phoneToNameCache = ConcurrentHashMap<String, String>()
     private val unresolvedPhonesCache = ConcurrentHashMap<String, Long>()
 
+    init {
+        try {
+            getCachedContactsSnapshot()
+        } catch (_: Exception) {}
+    }
+
     companion object {
         private val globalPhoneToNameCache = ConcurrentHashMap<String, String>()
 
@@ -288,10 +294,13 @@ class ContactsRepository(private val context: Context) {
 
     suspend fun resolveContactName(phoneNumber: String): String? {
         if (phoneNumber.isBlank()) return null
-        // 1. Check O(1) in-memory index first
-        resolveContactNameFast(phoneNumber)?.let { return it }
-
         val trimmed = phoneNumber.trim()
+        if (trimmed.any { it.isLetter() }) {
+            return trimmed
+        }
+        // 1. Check O(1) in-memory index first
+        resolveContactNameFast(trimmed)?.let { return it }
+
         val now = System.currentTimeMillis()
         val lastMiss = unresolvedPhonesCache[trimmed]
         if (lastMiss != null && (now - lastMiss) < 4_000L) {

@@ -137,7 +137,69 @@ class SmsRepository(
         if (!fastSmsPrefs.contains("last_seen_sms_baseline_ts")) {
             fastSmsPrefs.edit().putLong("last_seen_sms_baseline_ts", System.currentTimeMillis()).apply()
         }
+        val persisted = loadPersistedLocalMessages()
+        synchronized(inMemoryMessages) {
+            inMemoryMessages.clear()
+            inMemoryMessages.addAll(persisted)
+        }
         registerDeliveryReceivers()
+    }
+
+    fun loadPersistedLocalMessages(): List<SmsMessage> {
+        return try {
+            val raw = fastSmsPrefs.getString("persisted_local_sms_messages", null) ?: return emptyList()
+            val arr = org.json.JSONArray(raw)
+            val list = ArrayList<SmsMessage>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val statusStr = obj.optString("deliveryStatus", SmsDeliveryStatus.SENT.name)
+                val status = try { SmsDeliveryStatus.valueOf(statusStr) } catch (_: Exception) { SmsDeliveryStatus.SENT }
+                list.add(
+                    SmsMessage(
+                        id = obj.optLong("id", 0L),
+                        threadId = obj.optLong("threadId", 0L),
+                        address = obj.optString("address", ""),
+                        body = obj.optString("body", ""),
+                        date = obj.optLong("date", 0L),
+                        isSent = obj.optBoolean("isSent", true),
+                        read = obj.optBoolean("read", true),
+                        deliveryStatus = status,
+                        simName = obj.optString("simName", "").takeIf { it.isNotBlank() },
+                        subId = obj.optInt("subId", -1)
+                    )
+                )
+            }
+            list
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Failed loading persisted local SMS", e)
+            emptyList()
+        }
+    }
+
+    private fun savePersistedLocalMessages(messages: List<SmsMessage>) {
+        try {
+            val arr = org.json.JSONArray()
+            val limit = messages.size.coerceAtMost(300)
+            for (i in 0 until limit) {
+                val m = messages[i]
+                val obj = org.json.JSONObject().apply {
+                    put("id", m.id)
+                    put("threadId", m.threadId)
+                    put("address", m.address)
+                    put("body", m.body)
+                    put("date", m.date)
+                    put("isSent", m.isSent)
+                    put("read", m.read)
+                    put("deliveryStatus", m.deliveryStatus.name)
+                    put("simName", m.simName ?: "")
+                    put("subId", m.subId)
+                }
+                arr.put(obj)
+            }
+            fastSmsPrefs.edit().putString("persisted_local_sms_messages", arr.toString()).apply()
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Failed saving persisted local SMS", e)
+        }
     }
 
     fun getPersistedDeliveryStatus(rowOrMsgId: Long): SmsDeliveryStatus? {
@@ -348,6 +410,7 @@ class SmsRepository(
             if (idx != -1) {
                 val updated = inMemoryMessages[idx].copy(deliveryStatus = status)
                 inMemoryMessages[idx] = updated
+                savePersistedLocalMessages(inMemoryMessages)
                 val cachedList = threadMessagesCache[updated.threadId]
                 if (cachedList != null) {
                     threadMessagesCache[updated.threadId] = cachedList.map {
@@ -457,11 +520,15 @@ class SmsRepository(
             }
         }
 
-        // Merge inMemoryMessages so all simulated/received SMS are visible
+        // Merge inMemoryMessages so all persisted and sent SMS are visible
         synchronized(inMemoryMessages) {
             for (memMsg in inMemoryMessages) {
-                val list = threadsMap.getOrPut(memMsg.threadId) { ArrayList() }
-                if (list.none { it.id == memMsg.id || (it.address == memMsg.address && Math.abs(it.date - memMsg.date) < 2000) }) {
+                val matchingThread = threadsMap.entries.find { entry ->
+                    entry.key == memMsg.threadId ||
+                    entry.value.any { it.address.equals(memMsg.address, ignoreCase = true) || (normalizeAddressKey(it.address).isNotEmpty() && normalizeAddressKey(it.address) == normalizeAddressKey(memMsg.address)) }
+                }
+                val list = matchingThread?.value ?: threadsMap.getOrPut(memMsg.threadId) { ArrayList() }
+                if (list.none { it.id == memMsg.id || (it.isSent == memMsg.isSent && it.body == memMsg.body && Math.abs(it.date - memMsg.date) < 3000L) }) {
                     list.add(memMsg)
                 }
             }
@@ -478,16 +545,23 @@ class SmsRepository(
             val stitched = stitchMultipartMessages(msgs)
             threadMessagesCache[threadId] = stitched
             val latest = stitched.lastOrNull() ?: stitched.maxByOrNull { it.date } ?: continue
-            val address = latest.address
-            // O(1) in-memory contact resolution first, falling back to cached lookup
-            val contactName = contactsRepository.resolveContactNameFast(address)
-                ?: contactsRepository.resolveContactName(address)
+            val rawAddress = latest.address.ifBlank {
+                msgs.firstOrNull { it.address.isNotBlank() }?.address ?: ""
+            }
+            // Robust contact and sender name resolution (saved contact, alphanumeric sender, or formatted number)
+            val contactName = when {
+                rawAddress.isBlank() -> null
+                rawAddress.any { it.isLetter() } -> rawAddress // Alphanumeric business sender e.g. "MPESA", "GOOGLE", "BANK"
+                else -> contactsRepository.resolveContactNameFast(rawAddress)
+                    ?: contactsRepository.resolveContactName(rawAddress)
+                    ?: com.example.telecom.XenoNotificationHelper.resolveContactNameQuick(context, rawAddress)
+            }
             val unreadCount = stitched.count { !it.read && !it.isSent }
 
             result.add(
                 SmsThread(
                     threadId = threadId,
-                    address = address,
+                    address = rawAddress,
                     contactName = contactName,
                     snippet = latest.body,
                     date = latest.date,
@@ -694,7 +768,8 @@ class SmsRepository(
 
         val memMatches = synchronized(inMemoryMessages) {
             inMemoryMessages.filter { mem ->
-                (mem.threadId == threadId || mem.address.equals(address, ignoreCase = true)) &&
+                (mem.threadId == threadId || mem.address.equals(address, ignoreCase = true) ||
+                 (normalizeAddressKey(mem.address).isNotEmpty() && normalizeAddressKey(mem.address) == normalizeAddressKey(address))) &&
                 messages.none { prov ->
                     prov.id == mem.id ||
                     getLinkedProviderId(mem.id) == prov.id ||
@@ -873,6 +948,7 @@ class SmsRepository(
 
         synchronized(inMemoryMessages) {
             inMemoryMessages.add(newMessage)
+            savePersistedLocalMessages(inMemoryMessages)
         }
         val currentCached = threadMessagesCache[effectiveThreadId] ?: emptyList()
         threadMessagesCache[effectiveThreadId] = currentCached + newMessage
@@ -882,6 +958,7 @@ class SmsRepository(
     suspend fun deleteMessage(messageId: Long): Boolean = withContext(Dispatchers.IO) {
         synchronized(inMemoryMessages) {
             inMemoryMessages.removeAll { it.id == messageId }
+            savePersistedLocalMessages(inMemoryMessages)
         }
         for ((tId, list) in threadMessagesCache) {
             if (list.any { it.id == messageId }) {
@@ -905,6 +982,7 @@ class SmsRepository(
     suspend fun deleteThread(threadId: Long, address: String): Boolean = withContext(Dispatchers.IO) {
         synchronized(inMemoryMessages) {
             inMemoryMessages.removeAll { it.threadId == threadId || it.address == address }
+            savePersistedLocalMessages(inMemoryMessages)
         }
         threadMessagesCache.remove(threadId)
         cachedThreads = cachedThreads.filter { it.threadId != threadId && it.address != address }

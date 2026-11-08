@@ -3,6 +3,10 @@ package com.example.telecom
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -79,6 +83,12 @@ object OngoingCallHelper {
 
     @Volatile
     private var incomingCallWakeLock: PowerManager.WakeLock? = null
+
+    @Volatile
+    private var proximityWakeLock: PowerManager.WakeLock? = null
+    private var proximitySensorListener: SensorEventListener? = null
+    private val _isNearEarFlow = MutableStateFlow(false)
+    val isNearEarFlow: StateFlow<Boolean> = _isNearEarFlow.asStateFlow()
 
     private val _sessionFlow = MutableStateFlow(OngoingCallSession())
     val sessionFlow: StateFlow<OngoingCallSession> = _sessionFlow.asStateFlow()
@@ -160,6 +170,81 @@ object OngoingCallHelper {
             }
         } catch (_: Exception) {}
         incomingCallWakeLock = null
+    }
+
+    /**
+     * Activates proximity hardware sensor and in-call screen-off wake lock
+     * so putting the device next to the ear turns off the display and disables touches.
+     */
+    @Suppress("DEPRECATION")
+    fun acquireProximitySensor(context: Context) {
+        try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && powerManager.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                if (proximityWakeLock == null) {
+                    proximityWakeLock = powerManager.newWakeLock(
+                        PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                        "Xeno:InCallProximityWakeLock"
+                    )
+                }
+                if (proximityWakeLock?.isHeld == false) {
+                    proximityWakeLock?.acquire()
+                    Log.d(TAG, "Proximity screen-off wake lock acquired")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error acquiring proximity wake lock", e)
+        }
+
+        try {
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            val proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+            if (sensorManager != null && proximitySensor != null && proximitySensorListener == null) {
+                val listener = object : SensorEventListener {
+                    override fun onSensorChanged(event: SensorEvent?) {
+                        val distance = event?.values?.firstOrNull() ?: return
+                        val maxRange = proximitySensor.maximumRange
+                        val isNear = distance < 5.0f && distance < maxRange
+                        _isNearEarFlow.value = isNear
+                        Log.d(TAG, "Proximity distance: $distance (maxRange: $maxRange) -> isNear: $isNear")
+                    }
+                    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+                }
+                proximitySensorListener = listener
+                sensorManager.registerListener(listener, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL)
+                Log.d(TAG, "Proximity sensor listener registered")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registering proximity sensor listener", e)
+        }
+    }
+
+    /**
+     * Releases the proximity hardware sensor and wake lock when calls end or disconnect.
+     */
+    fun releaseProximitySensor(context: Context? = null) {
+        try {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+                Log.d(TAG, "Proximity wake lock released")
+            }
+            proximityWakeLock = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing proximity wake lock", e)
+        }
+
+        try {
+            if (proximitySensorListener != null) {
+                val ctx = context ?: XenoInCallService.instance?.applicationContext
+                val sensorManager = ctx?.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+                sensorManager?.unregisterListener(proximitySensorListener)
+                proximitySensorListener = null
+                Log.d(TAG, "Proximity sensor listener unregistered")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering proximity sensor listener", e)
+        }
+        _isNearEarFlow.value = false
     }
 
     /**
@@ -492,6 +577,11 @@ object OngoingCallHelper {
         val current = _sessionFlow.value
         val number = call?.details?.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: current.phoneNumber
 
+        val serviceContext = XenoInCallService.instance?.applicationContext
+        if (serviceContext != null && state != Call.STATE_DISCONNECTED && state != Call.STATE_DISCONNECTING) {
+            acquireProximitySensor(serviceContext)
+        }
+
         when (state) {
             Call.STATE_RINGING -> {
                 stopDurationTimer()
@@ -553,6 +643,7 @@ object OngoingCallHelper {
             }
 
             Call.STATE_DISCONNECTED, Call.STATE_DISCONNECTING -> {
+                releaseProximitySensor()
                 PriorityContactManager.stopPriorityAlertSound()
                 releaseIncomingWakeLock()
                 _incomingPopupFlow.value = null
@@ -621,6 +712,7 @@ object OngoingCallHelper {
         dismissIncomingCallPopup(context)
         XenoNotificationHelper.cancelCallNotification(context)
         configureCallAudioMode(context, active = true)
+        acquireProximitySensor(context)
         XenoInCallService.answerCall(context)
 
         val now = System.currentTimeMillis()
@@ -807,6 +899,7 @@ object OngoingCallHelper {
     }
 
     fun resetAudioRouting(context: Context) {
+        releaseProximitySensor(context)
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
             audioManager.isMicrophoneMute = false

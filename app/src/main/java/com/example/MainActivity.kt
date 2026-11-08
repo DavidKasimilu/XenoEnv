@@ -130,6 +130,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val processName = android.app.Application.getProcessName()
+                if (packageName != processName) {
+                    android.webkit.WebView.setDataDirectorySuffix(processName)
+                }
+            }
+        } catch (_: Exception) {}
         applyLockScreenAndWakeFlags()
         applyHighRefreshRateAndPerformanceFlags()
         enableEdgeToEdge()

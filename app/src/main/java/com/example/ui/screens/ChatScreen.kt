@@ -241,12 +241,16 @@ fun ChatScreen(
         }
     }
 
-    // Calculate landing index directly to recent message
-    val recentStartIndex = remember(messages.size, thread.threadId) {
+    // Calculate landing index directly to first unread / recent message
+    val recentStartIndex = remember(messages.size, thread.threadId, thread.unreadCount) {
         if (messages.isEmpty()) 0
         else {
-            val unreadIdx = messages.indexOfFirst { !it.read && !it.isSent }
-            if (unreadIdx != -1) unreadIdx else (messages.size - 1).coerceAtLeast(0)
+            val firstUnread = messages.indexOfFirst { !it.read && !it.isSent }
+            when {
+                firstUnread != -1 -> firstUnread
+                thread.unreadCount > 0 && thread.unreadCount <= messages.size -> messages.size - thread.unreadCount
+                else -> (messages.size - 1).coerceAtLeast(0)
+            }
         }
     }
 
@@ -424,9 +428,13 @@ fun ChatScreen(
                 }
             }
 
-            val recentDividerIndex = remember(messages.size, thread.threadId) {
-                val unreadIdx = messages.indexOfFirst { !it.read && !it.isSent }
-                if (unreadIdx != -1) unreadIdx else if (messages.size > 1) messages.size - 1 else -1
+            val recentDividerIndex = remember(messages.size, thread.threadId, thread.unreadCount) {
+                val firstUnread = messages.indexOfFirst { !it.read && !it.isSent }
+                when {
+                    firstUnread != -1 -> firstUnread
+                    thread.unreadCount > 0 && thread.unreadCount <= messages.size -> messages.size - thread.unreadCount
+                    else -> -1
+                }
             }
 
             // Message bubbles list
@@ -457,26 +465,19 @@ fun ChatScreen(
                             ) {
                                 HorizontalDivider(
                                     modifier = Modifier.weight(1f),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                                     thickness = 1.dp
                                 )
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                ) {
-                                    Text(
-                                        text = "Recent",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                    )
-                                }
+                                Text(
+                                    text = "Recent",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 12.dp)
+                                )
                                 HorizontalDivider(
                                     modifier = Modifier.weight(1f),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                                     thickness = 1.dp
                                 )
                             }

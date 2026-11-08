@@ -776,8 +776,20 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         // 2. Background verification & read-state persistence without blocking UI
         viewModelScope.launch(Dispatchers.IO) {
             val freshMessages = smsRepo.getMessagesForThread(thread.threadId, thread.address)
-            if (_uiState.value.activeChatThread?.threadId == thread.threadId && freshMessages != instantMessages) {
-                _uiState.update { it.copy(activeChatMessages = freshMessages) }
+            val resolvedName = if (thread.contactName.isNullOrBlank() && !thread.address.any { it.isLetter() }) {
+                contactsRepo.resolveContactNameFast(thread.address)
+                    ?: contactsRepo.resolveContactName(thread.address)
+                    ?: com.example.telecom.XenoNotificationHelper.resolveContactNameQuick(getApplication(), thread.address)
+            } else thread.contactName
+
+            if (_uiState.value.activeChatThread?.threadId == thread.threadId) {
+                val updatedActive = if (resolvedName != null && resolvedName != _uiState.value.activeChatThread?.contactName) {
+                    _uiState.value.activeChatThread?.copy(contactName = resolvedName)
+                } else _uiState.value.activeChatThread
+                _uiState.update { it.copy(
+                    activeChatMessages = freshMessages,
+                    activeChatThread = updatedActive
+                ) }
             }
             smsRepo.markThreadAsRead(thread.threadId, thread.address)
         }
@@ -788,7 +800,12 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         val existingThread = _uiState.value.smsThreads.find {
             it.address.filter { c -> c.isDigit() } == cleanTarget
         }
-        val resolvedName = name?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(number)
+        val resolvedName = name?.takeIf { it.isNotBlank() }
+            ?: when {
+                number.any { it.isLetter() } -> number
+                else -> contactsRepo.resolveContactNameFast(number)
+                    ?: com.example.telecom.XenoNotificationHelper.resolveContactNameQuick(getApplication(), number)
+            }
         val targetThread = existingThread ?: SmsThread(
             threadId = number.hashCode().toLong(),
             address = number,
