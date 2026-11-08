@@ -4481,9 +4481,8 @@ fun CloneWorkspaceScreen(
                                     javaScriptEnabled = true
                                     domStorageEnabled = true
                                     databaseEnabled = true
-                                    val isMobileYoutube = isYoutube && !instance.isDesktopMode
-                                    loadWithOverviewMode = !isMobileYoutube && !(isWhatsapp && isWhatsAppPhoneUi)
-                                    useWideViewPort = !isMobileYoutube
+                                    loadWithOverviewMode = !(isWhatsapp && isWhatsAppPhoneUi)
+                                    useWideViewPort = true
                                     // Disable pinch-zoom on Instagram, Facebook, TikTok & YouTube so double-tap-to-like and fast vertical video swipes stay crisp
                                     builtInZoomControls = !isShortVideoSocialApp
                                     displayZoomControls = false
