@@ -20,6 +20,52 @@ class XenoNotificationListenerService : NotificationListenerService() {
     companion object {
         private var instance: XenoNotificationListenerService? = null
 
+        private val WHATSAPP_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
+
+        /** Matches the "hang up" action title of WhatsApp's ongoing-call notification (a few languages). */
+        private val HANG_UP_TITLE = Regex(
+            "(?i)hang\\s?up|end\\s?call|\\bend\\b|decline|leave|colgar|terminar|finalizar|raccrocher|auflegen|beenden|desligar|encerrar|завершить|إنهاء"
+        )
+
+        /** Live state of WhatsApp's ongoing/outgoing call notification, or null if there is none. */
+        data class WhatsAppCallInfo(
+            val key: String,
+            val isConnected: Boolean,
+            val connectedSinceMs: Long?
+        )
+
+        private val _whatsAppCall = MutableStateFlow<WhatsAppCallInfo?>(null)
+        val whatsAppCall: StateFlow<WhatsAppCallInfo?> = _whatsAppCall.asStateFlow()
+
+        private fun findWhatsAppCallNotification(active: Array<StatusBarNotification>?): StatusBarNotification? {
+            if (active == null) return null
+            return active.firstOrNull { sbn ->
+                sbn.packageName in WHATSAPP_PACKAGES &&
+                    (sbn.notification.category == Notification.CATEGORY_CALL ||
+                        (sbn.notification.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
+                            sbn.notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER)))
+            }
+        }
+
+        /**
+         * Presses the "hang up" action on WhatsApp's own call notification.
+         * Returns false if the notification or a recognisable hang-up action can't be found.
+         */
+        fun hangUpWhatsAppCall(): Boolean {
+            return try {
+                val sbn = findWhatsAppCallNotification(instance?.activeNotifications) ?: return false
+                val actions = sbn.notification.actions ?: return false
+                val action = actions.firstOrNull { HANG_UP_TITLE.containsMatchIn(it.title ?: "") }
+                    ?: actions.singleOrNull()
+                    ?: return false
+                action.actionIntent?.send() ?: return false
+                true
+            } catch (e: Exception) {
+                Log.w("NotificationListener", "Couldn't press WhatsApp hang-up action", e)
+                false
+            }
+        }
+
         private val _notificationsFlow = MutableStateFlow<List<DeviceNotification>>(emptyList())
         val notificationsFlow: StateFlow<List<DeviceNotification>> = _notificationsFlow.asStateFlow()
 
@@ -255,6 +301,18 @@ class XenoNotificationListenerService : NotificationListenerService() {
     private fun syncActiveNotifications() {
         try {
             val active = activeNotifications ?: return
+
+            // Track WhatsApp's call notification (used by the in-app call controller)
+            val callSbn = findWhatsAppCallNotification(active)
+            _whatsAppCall.value = callSbn?.let {
+                val chrono = it.notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER)
+                WhatsAppCallInfo(
+                    key = it.key,
+                    isConnected = chrono,
+                    connectedSinceMs = if (chrono) it.notification.`when` else null
+                )
+            }
+
             val pm = applicationContext.packageManager
             val myPackage = applicationContext.packageName
 
