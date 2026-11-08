@@ -72,10 +72,12 @@ data class InAppWhatsAppCallSession(
 @Composable
 fun WhatsAppCallFloatingOverlay(
     session: InAppWhatsAppCallSession?,
-    onToggleMute: () -> Unit,
-    onToggleSpeaker: () -> Unit,
-    onSwitchCamera: () -> Unit,
     onEndCall: () -> Unit,
+    // Mute / speaker / camera can't be controlled in WhatsApp from another app; kept only so
+    // older call sites still compile. They are not shown.
+    onToggleMute: () -> Unit = {},
+    onToggleSpeaker: () -> Unit = {},
+    onSwitchCamera: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (session == null) return
@@ -183,79 +185,33 @@ fun WhatsAppCallFloatingOverlay(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Call Action Controls
+                    // Call Action Controls: only End is real (presses WhatsApp's own hang-up action)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Mute Button
-                        IconButton(
-                            onClick = onToggleMute,
+                        Row(
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(if (session.isMuted) Color(0xFFE53935) else Color(0xFF2A3942))
-                                .testTag("whatsapp_pip_mute_btn")
-                        ) {
-                            Icon(
-                                imageVector = if (session.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-                                contentDescription = "Mute",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        // Speakerphone Button
-                        IconButton(
-                            onClick = onToggleSpeaker,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(if (session.isSpeakerOn) Color(0xFF25D366) else Color(0xFF2A3942))
-                                .testTag("whatsapp_pip_speaker_btn")
-                        ) {
-                            Icon(
-                                imageVector = if (session.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
-                                contentDescription = "Speaker",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        // Camera Switch (for Video)
-                        if (session.isVideo) {
-                            IconButton(
-                                onClick = onSwitchCamera,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF2A3942))
-                                    .testTag("whatsapp_pip_camera_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Cameraswitch,
-                                    contentDescription = "Switch Camera",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        // End Call Button
-                        IconButton(
-                            onClick = onEndCall,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
+                                .clip(RoundedCornerShape(24.dp))
                                 .background(Color(0xFFE53935))
-                                .testTag("whatsapp_pip_end_btn")
+                                .clickable(onClick = onEndCall)
+                                .padding(horizontal = 22.dp, vertical = 10.dp)
+                                .testTag("whatsapp_pip_end_btn"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.CallEnd,
                                 contentDescription = "End Call",
                                 tint = Color.White,
                                 modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "End call",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
