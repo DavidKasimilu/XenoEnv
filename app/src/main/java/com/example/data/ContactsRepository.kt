@@ -351,5 +351,29 @@ class ContactsRepository(private val context: Context) {
             null
         }
     }
+
+    fun isWhatsAppAccountPresent(context: Context, phoneNumber: String): Boolean {
+        val cleanNumber = phoneNumber.filter { it.isDigit() }
+        if (cleanNumber.length < 5) return false
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) return true
+
+        return try {
+            val cursor = context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data._ID),
+                "${ContactsContract.Data.MIMETYPE} IN ('vnd.android.cursor.item/vnd.com.whatsapp.voip.call', 'vnd.android.cursor.item/vnd.com.whatsapp.video.call') AND (${ContactsContract.Data.DATA1} LIKE ? OR ${ContactsContract.Data.DATA1} LIKE ?)",
+                arrayOf("%$cleanNumber%", "%${cleanNumber.takeLast(7)}%"),
+                null
+            )
+            val found = (cursor?.use { it.count } ?: 0) > 0
+            found || cleanNumber.length >= 7
+        } catch (_: Exception) {
+            cleanNumber.length >= 7
+        }
+    }
 }
 

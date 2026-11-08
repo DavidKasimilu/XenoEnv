@@ -2353,7 +2353,13 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         ) }
     }
 
-    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
-        startInAppWhatsAppCall(phoneNumber, contactName, isVideo = false)
+    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null, isVideo: Boolean = false) {
+        val displayName = contactName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(phoneNumber) ?: phoneNumber
+        val hasAccount = contactsRepo.isWhatsAppAccountPresent(context, phoneNumber)
+        if (!hasAccount) {
+            _uiState.update { it.copy(userNotice = "No registered WhatsApp account found for $displayName") }
+            return
+        }
+        startInAppWhatsAppCall(phoneNumber, displayName, isVideo = isVideo)
     }
 }
