@@ -4392,7 +4392,7 @@ fun CloneWorkspaceScreen(
                     isWhatsapp = isWhatsapp,
                     onReload = {
                         CloneWebViewPool.destroy(instance.instanceId)
-                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                             useSoftwareLayer = true
                         }
                         hasRenderCrash = false
@@ -4406,7 +4406,7 @@ fun CloneWorkspaceScreen(
                             cookieManager.flush()
                             WebStorage.getInstance().deleteAllData()
                         } catch (_: Exception) {}
-                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                             useSoftwareLayer = true
                         }
                         hasRenderCrash = false
@@ -4449,7 +4449,8 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
-                                    if (useSoftwareLayer && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
+                                    // YouTube needs the hardware layer: software layers make video slow, black or unplayable
+                                    if (useSoftwareLayer && !isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                                         setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     } else {
                                         setLayerType(View.LAYER_TYPE_NONE, null)
@@ -4839,7 +4840,7 @@ fun CloneWorkspaceScreen(
                                             }
                                         } catch (_: Exception) {}
                                         webViewInstance = null
-                                        if (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram) {
+                                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                                             useSoftwareLayer = true
                                         }
                                         reloadKey++
