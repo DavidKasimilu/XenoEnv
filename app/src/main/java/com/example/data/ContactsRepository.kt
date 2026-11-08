@@ -352,28 +352,75 @@ class ContactsRepository(private val context: Context) {
         }
     }
 
-    fun isWhatsAppAccountPresent(context: Context, phoneNumber: String): Boolean {
-        val cleanNumber = phoneNumber.filter { it.isDigit() }
-        if (cleanNumber.length < 5) return false
+    /** A WhatsApp "call this contact" row in the Contacts provider. */
+    data class WhatsAppCallTarget(
+        val dataId: Long,
+        val mimeType: String,
+        val packageName: String
+    )
+
+    /**
+     * Finds the contact-data row WhatsApp publishes for calling a number. Launching
+     * ACTION_VIEW on content://com.android.contacts/data/<dataId> with that row's MIME type
+     * is what makes WhatsApp actually dial. Returns null when the number has no WhatsApp
+     * row (not on WhatsApp, not a saved contact, or no READ_CONTACTS permission).
+     * Blocking query: call from a background dispatcher.
+     */
+    fun findWhatsAppCallTarget(context: Context, phoneNumber: String, isVideo: Boolean): WhatsAppCallTarget? {
+        val digits = phoneNumber.filter { it.isDigit() }
+        if (digits.length < 5) return null
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.READ_CONTACTS
         ) == PackageManager.PERMISSION_GRANTED
-        if (!hasPermission) return true
+        if (!hasPermission) return null
 
-        return try {
-            val cursor = context.contentResolver.query(
-                ContactsContract.Data.CONTENT_URI,
-                arrayOf(ContactsContract.Data._ID),
-                "${ContactsContract.Data.MIMETYPE} IN ('vnd.android.cursor.item/vnd.com.whatsapp.voip.call', 'vnd.android.cursor.item/vnd.com.whatsapp.video.call') AND (${ContactsContract.Data.DATA1} LIKE ? OR ${ContactsContract.Data.DATA1} LIKE ?)",
-                arrayOf("%$cleanNumber%", "%${cleanNumber.takeLast(7)}%"),
-                null
+        val mimes = if (isVideo) {
+            arrayOf(
+                "vnd.android.cursor.item/vnd.com.whatsapp.video.call",
+                "vnd.android.cursor.item/vnd.com.whatsapp.w4b.video.call"
             )
-            val found = (cursor?.use { it.count } ?: 0) > 0
-            found || cleanNumber.length >= 7
-        } catch (_: Exception) {
-            cleanNumber.length >= 7
+        } else {
+            arrayOf(
+                "vnd.android.cursor.item/vnd.com.whatsapp.voip.call",
+                "vnd.android.cursor.item/vnd.com.whatsapp.w4b.voip.call"
+            )
+        }
+        // WhatsApp stores DATA1 as "<countrycode><number>@s.whatsapp.net", so match on the
+        // trailing digits (works for 0712..., +254712... and 254712... alike).
+        val suffix = digits.takeLast(9)
+        return try {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.Data._ID,
+                    ContactsContract.Data.DATA1,
+                    ContactsContract.Data.MIMETYPE
+                ),
+                "${ContactsContract.Data.MIMETYPE} IN (?, ?) AND ${ContactsContract.Data.DATA1} LIKE ?",
+                arrayOf(mimes[0], mimes[1], "%$suffix%"),
+                null
+            )?.use { c ->
+                var result: WhatsAppCallTarget? = null
+                while (c.moveToNext()) {
+                    val jidDigits = (c.getString(1) ?: "").substringBefore('@').filter { it.isDigit() }
+                    if (!jidDigits.endsWith(suffix)) continue
+                    val mime = c.getString(2) ?: continue
+                    val pkg = if (mime.contains("w4b")) "com.whatsapp.w4b" else "com.whatsapp"
+                    val target = WhatsAppCallTarget(c.getLong(0), mime, pkg)
+                    // Prefer the regular WhatsApp row if both exist.
+                    if (pkg == "com.whatsapp") return@use target
+                    if (result == null) result = target
+                }
+                result
+            }
+        } catch (e: Exception) {
+            Log.w("ContactsRepository", "WhatsApp call lookup failed for $phoneNumber", e)
+            null
         }
     }
-}
 
+    /** Strict check (no more "assume yes" fallbacks). Blocking: call off the main thread. */
+    fun isWhatsAppAccountPresent(context: Context, phoneNumber: String): Boolean =
+        findWhatsAppCallTarget(context, phoneNumber, isVideo = false) != null
+}
