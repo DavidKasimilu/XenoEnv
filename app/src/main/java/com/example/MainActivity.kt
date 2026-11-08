@@ -904,9 +904,6 @@ fun XenoApp(
         // In-App Floating PiP WhatsApp Call Overlay
         WhatsAppCallFloatingOverlay(
             session = uiState.activeInAppWhatsAppCall,
-            onToggleMute = { viewModel.toggleWhatsAppCallMute() },
-            onToggleSpeaker = { viewModel.toggleWhatsAppCallSpeaker() },
-            onSwitchCamera = { viewModel.switchWhatsAppCallCamera() },
             onEndCall = { viewModel.endInAppWhatsAppCall() },
             modifier = Modifier.zIndex(35f)
         )
