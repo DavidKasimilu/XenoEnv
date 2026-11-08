@@ -64,6 +64,7 @@ import com.example.ui.components.GlobalSwipeDownTracker
 import com.example.ui.components.InAppNotificationOverlay
 import com.example.ui.components.NewChatDialog
 import com.example.ui.components.VideoPlayerModal
+import com.example.ui.components.WhatsAppCallFloatingOverlay
 import com.example.ui.components.XenoBottomBar
 import com.example.ui.screens.ActiveCallScreen
 import com.example.ui.screens.AppAlertsDrawerOverlay
@@ -899,6 +900,16 @@ fun XenoApp(
                 }
             )
         }
+
+        // In-App Floating PiP WhatsApp Call Overlay
+        WhatsAppCallFloatingOverlay(
+            session = uiState.activeInAppWhatsAppCall,
+            onToggleMute = { viewModel.toggleWhatsAppCallMute() },
+            onToggleSpeaker = { viewModel.toggleWhatsAppCallSpeaker() },
+            onSwitchCamera = { viewModel.switchWhatsAppCallCamera() },
+            onEndCall = { viewModel.endInAppWhatsAppCall() },
+            modifier = Modifier.zIndex(35f)
+        )
 
         // Super Speed Boost Overlay
         if (uiState.showSpeedBoostOverlay) {

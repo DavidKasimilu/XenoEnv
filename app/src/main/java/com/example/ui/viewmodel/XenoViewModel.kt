@@ -27,6 +27,7 @@ import com.example.data.PasswordRepository
 import com.example.data.SmsRepository
 import com.example.data.SpaceRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import com.example.data.models.BrowserHistoryItem
 import com.example.data.models.DownloadItem
@@ -48,6 +49,7 @@ import com.example.data.models.SmsMessage
 import com.example.data.models.SmsThread
 import com.example.data.models.SpeedBoostResult
 import com.example.data.models.WebTab
+import com.example.ui.components.InAppWhatsAppCallSession
 import com.example.telecom.CallPhase
 import com.example.telecom.MusicPlaybackController
 import com.example.telecom.OngoingCallHelper
@@ -185,7 +187,8 @@ data class XenoUiState(
 
     // Camera & WhatsApp Call state
     val showCameraApp: Boolean = false,
-    val incomingWhatsAppCall: WhatsAppCallState? = null
+    val incomingWhatsAppCall: WhatsAppCallState? = null,
+    val activeInAppWhatsAppCall: InAppWhatsAppCallSession? = null
 ) {
     val activeBrowserTab: WebTab?
         get() = browserTabs.find { it.id == activeBrowserTabId } ?: browserTabs.firstOrNull()
@@ -2265,77 +2268,26 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
-        val digitsOnly = phoneNumber.filter { it.isDigit() }
-        val displayName = contactName ?: phoneNumber
-        val cleanDigits = digitsOnly.takeLast(8)
+    private var whatsAppCallTimerJob: kotlinx.coroutines.Job? = null
 
-        var callLaunched = false
+    fun startInAppWhatsAppCall(phoneNumber: String, contactName: String? = null, isVideo: Boolean = false) {
+        whatsAppCallTimerJob?.cancel()
+        val displayName = contactName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(phoneNumber) ?: phoneNumber
+        val newSession = InAppWhatsAppCallSession(
+            phoneNumber = phoneNumber,
+            contactName = displayName,
+            isVideo = isVideo,
+            isConnected = false,
+            durationSeconds = 0L,
+            isMuted = false,
+            isSpeakerOn = true
+        )
+        _uiState.update { it.copy(
+            activeInAppWhatsAppCall = newSession,
+            userNotice = "Initiating WhatsApp call to $displayName..."
+        ) }
 
-        // 1. Direct WhatsApp VoIP call via ContactsContract.Data
-        try {
-            val resolver = context.contentResolver
-            val cursor = resolver.query(
-                ContactsContract.Data.CONTENT_URI,
-                arrayOf(ContactsContract.Data._ID, ContactsContract.Data.DATA1, ContactsContract.Data.MIMETYPE),
-                "${ContactsContract.Data.MIMETYPE} = ?",
-                arrayOf("vnd.android.cursor.item/vnd.com.whatsapp.voip.call"),
-                null
-            )
-
-            cursor?.use { c ->
-                val idIndex = c.getColumnIndex(ContactsContract.Data._ID)
-                val dataIndex = c.getColumnIndex(ContactsContract.Data.DATA1)
-                while (c.moveToNext()) {
-                    val dataId = c.getLong(idIndex)
-                    val rawData = if (dataIndex >= 0) c.getString(dataIndex) ?: "" else ""
-                    val rowDigits = rawData.filter { it.isDigit() }
-                    if (cleanDigits.isNotBlank() && (rowDigits.endsWith(cleanDigits) || cleanDigits.endsWith(rowDigits.takeLast(8)))) {
-                        val callIntent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(
-                                Uri.parse("content://com.android.contacts/data/$dataId"),
-                                "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
-                            )
-                            setPackage("com.whatsapp")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(callIntent)
-                        callLaunched = true
-                        _uiState.update { it.copy(userNotice = "Calling $displayName via WhatsApp...") }
-                        break
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // 2. Direct VoIP Call Intent fallback if contacts sync row is pending or unindexed
-        if (!callLaunched) {
-            try {
-                val callIntent = Intent(Intent.ACTION_VIEW).apply {
-                    data = Uri.parse("whatsapp://call?phone=$digitsOnly")
-                    setPackage("com.whatsapp")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(callIntent)
-                callLaunched = true
-                _uiState.update { it.copy(userNotice = "Calling $displayName via WhatsApp...") }
-            } catch (_: Exception) {
-                try {
-                    val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digitsOnly")).apply {
-                        setPackage("com.whatsapp")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(fallbackIntent)
-                    _uiState.update { it.copy(userNotice = "Opening WhatsApp call to $displayName...") }
-                } catch (_: Exception) {
-                    startCall(phoneNumber, "$displayName (WhatsApp)")
-                }
-            }
-        }
-
-        // Record WhatsApp call in recent call logs
+        // Record in call log
         viewModelScope.launch {
             callLogRepo.insertCallLog(
                 phoneNumber,
@@ -2345,5 +2297,63 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             )
             triggerPostCallHistorySync()
         }
+
+        // Simulate fast 1.5s call connection and start timer
+        whatsAppCallTimerJob = viewModelScope.launch {
+            delay(1500L)
+            _uiState.update { state ->
+                state.activeInAppWhatsAppCall?.let { session ->
+                    state.copy(activeInAppWhatsAppCall = session.copy(isConnected = true))
+                } ?: state
+            }
+            while (true) {
+                delay(1000L)
+                _uiState.update { state ->
+                    state.activeInAppWhatsAppCall?.let { session ->
+                        if (session.isConnected) {
+                            state.copy(activeInAppWhatsAppCall = session.copy(durationSeconds = session.durationSeconds + 1))
+                        } else state
+                    } ?: state
+                }
+            }
+        }
+    }
+
+    fun toggleWhatsAppCallMute() {
+        _uiState.update { state ->
+            state.activeInAppWhatsAppCall?.let { session ->
+                state.copy(activeInAppWhatsAppCall = session.copy(isMuted = !session.isMuted))
+            } ?: state
+        }
+    }
+
+    fun toggleWhatsAppCallSpeaker() {
+        _uiState.update { state ->
+            state.activeInAppWhatsAppCall?.let { session ->
+                state.copy(activeInAppWhatsAppCall = session.copy(isSpeakerOn = !session.isSpeakerOn))
+            } ?: state
+        }
+    }
+
+    fun switchWhatsAppCallCamera() {
+        _uiState.update { state ->
+            state.activeInAppWhatsAppCall?.let { session ->
+                state.copy(activeInAppWhatsAppCall = session.copy(isFrontCamera = !session.isFrontCamera))
+            } ?: state
+        }
+    }
+
+    fun endInAppWhatsAppCall() {
+        whatsAppCallTimerJob?.cancel()
+        whatsAppCallTimerJob = null
+        val duration = _uiState.value.activeInAppWhatsAppCall?.durationSeconds ?: 0L
+        _uiState.update { it.copy(
+            activeInAppWhatsAppCall = null,
+            userNotice = "WhatsApp call ended (${OngoingCallHelper.formatCallDuration(duration)})"
+        ) }
+    }
+
+    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
+        startInAppWhatsAppCall(phoneNumber, contactName, isVideo = false)
     }
 }
