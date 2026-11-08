@@ -2343,23 +2343,174 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * End button of the in-app controller: presses the "hang up" action of WhatsApp's own call
+     * notification. The session is cleared by the watcher once WhatsApp removes that notification.
+     */
     fun endInAppWhatsAppCall() {
-        whatsAppCallTimerJob?.cancel()
-        whatsAppCallTimerJob = null
-        val duration = _uiState.value.activeInAppWhatsAppCall?.durationSeconds ?: 0L
-        _uiState.update { it.copy(
-            activeInAppWhatsAppCall = null,
-            userNotice = "WhatsApp call ended (${OngoingCallHelper.formatCallDuration(duration)})"
-        ) }
-    }
-
-    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null, isVideo: Boolean = false) {
-        val displayName = contactName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(phoneNumber) ?: phoneNumber
-        val hasAccount = contactsRepo.isWhatsAppAccountPresent(context, phoneNumber)
-        if (!hasAccount) {
-            _uiState.update { it.copy(userNotice = "No registered WhatsApp account found for $displayName") }
+        val app = getApplication<Application>()
+        val hungUp = com.example.telecom.XenoNotificationListenerService.hangUpWhatsAppCall()
+        if (hungUp) {
+            _uiState.update { it.copy(userNotice = "Ending WhatsApp call...") }
             return
         }
-        startInAppWhatsAppCall(phoneNumber, displayName, isVideo = isVideo)
+        val callStillActive = com.example.telecom.XenoNotificationListenerService.whatsAppCall.value != null
+        if (!callStillActive) {
+            // Nothing left to end (call never started or already over)
+            whatsAppCallTimerJob?.cancel()
+            whatsAppCallTimerJob = null
+            _uiState.update { it.copy(activeInAppWhatsAppCall = null) }
+            return
+        }
+        // Couldn't find WhatsApp's hang-up button: bring WhatsApp forward so the call can be ended there
+        _uiState.update { it.copy(userNotice = "Couldn't hang up from here. End the call in WhatsApp.") }
+        try {
+            app.packageManager.getLaunchIntentForPackage(lastWhatsAppPackage)?.let {
+                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                app.startActivity(it)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private var lastWhatsAppLaunchAt = 0L
+    private var lastWhatsAppPackage = "com.whatsapp"
+
+    /**
+     * Places a REAL WhatsApp call by launching WhatsApp's own call action for the contact, then
+     * (when notification access is on) returns to XenoEnv and tracks the call through WhatsApp's
+     * ongoing-call notification so the in-app controller shows real state and a real End button.
+     */
+    fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null, isVideo: Boolean = false) {
+        // Ignore double taps
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastWhatsAppLaunchAt < 1500L) return
+        lastWhatsAppLaunchAt = now
+
+        val displayName = contactName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(phoneNumber) ?: phoneNumber
+
+        val hasContactsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.READ_CONTACTS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!hasContactsPermission) {
+            _uiState.update { it.copy(userNotice = "Allow Contacts permission to place WhatsApp calls") }
+            return
+        }
+
+        viewModelScope.launch {
+            val target = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                contactsRepo.findWhatsAppCallTarget(context, phoneNumber, isVideo)
+            }
+            if (target == null) {
+                _uiState.update { it.copy(userNotice = "No WhatsApp account found for $displayName") }
+                return@launch
+            }
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(
+                    Uri.parse("content://com.android.contacts/data/${target.dataId}"),
+                    target.mimeType
+                )
+                setPackage(target.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            try {
+                context.startActivity(intent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                _uiState.update { it.copy(userNotice = "WhatsApp is not installed or can't place this call") }
+                return@launch
+            } catch (e: SecurityException) {
+                _uiState.update { it.copy(userNotice = "WhatsApp blocked this call request") }
+                return@launch
+            } catch (e: Exception) {
+                _uiState.update { it.copy(userNotice = "Couldn't start the WhatsApp call") }
+                return@launch
+            }
+
+            lastWhatsAppPackage = target.packageName
+            callLogRepo.insertCallLog(phoneNumber, "$displayName (WhatsApp)", 0L, CallType.OUTGOING)
+            triggerPostCallHistorySync()
+
+            val app = getApplication<Application>()
+            if (com.example.telecom.XenoNotificationListenerService.isNotificationAccessGranted(app)) {
+                watchWhatsAppCall(phoneNumber, displayName, isVideo)
+            } else {
+                _uiState.update {
+                    it.copy(userNotice = "Turn on Notification access for XenoEnv to control WhatsApp calls from the app")
+                }
+            }
+        }
+    }
+
+    /**
+     * Follows WhatsApp's own call notification: shows the controller once the call is really up,
+     * returns to XenoEnv, keeps the timer real, and closes the controller when the call ends.
+     */
+    private fun watchWhatsAppCall(phoneNumber: String, displayName: String, isVideo: Boolean) {
+        whatsAppCallTimerJob?.cancel()
+        whatsAppCallTimerJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            val waitStart = android.os.SystemClock.elapsedRealtime()
+            var seen = false
+            while (true) {
+                val info = com.example.telecom.XenoNotificationListenerService.whatsAppCall.value
+                if (info != null) {
+                    if (!seen) {
+                        seen = true
+                        // Call is really placed: show the controller, then come back to XenoEnv
+                        delay(600L)
+                        returnToXenoEnv(app)
+                    }
+                    val seconds = info.connectedSinceMs?.let {
+                        ((System.currentTimeMillis() - it) / 1000L).coerceAtLeast(0L)
+                    } ?: 0L
+                    _uiState.update {
+                        it.copy(
+                            activeInAppWhatsAppCall = InAppWhatsAppCallSession(
+                                phoneNumber = phoneNumber,
+                                contactName = displayName,
+                                isVideo = isVideo,
+                                isConnected = info.isConnected,
+                                durationSeconds = seconds
+                            )
+                        )
+                    }
+                } else if (seen) {
+                    val duration = _uiState.value.activeInAppWhatsAppCall?.durationSeconds ?: 0L
+                    _uiState.update {
+                        it.copy(
+                            activeInAppWhatsAppCall = null,
+                            userNotice = "WhatsApp call ended (${OngoingCallHelper.formatCallDuration(duration)})"
+                        )
+                    }
+                    break
+                } else if (android.os.SystemClock.elapsedRealtime() - waitStart > 20_000L) {
+                    _uiState.update { it.copy(userNotice = "Couldn't detect the WhatsApp call to control it from here") }
+                    break
+                }
+                delay(500L)
+            }
+        }
+    }
+
+    private fun returnToXenoEnv(app: Application) {
+        if (!android.provider.Settings.canDrawOverlays(app)) {
+            _uiState.update {
+                it.copy(userNotice = "Allow \"Display over other apps\" for XenoEnv to return here automatically after calling")
+            }
+            return
+        }
+        try {
+            app.startActivity(
+                Intent(app, com.example.MainActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("XenoViewModel", "Couldn't return to XenoEnv after WhatsApp call", e)
+        }
     }
 }
