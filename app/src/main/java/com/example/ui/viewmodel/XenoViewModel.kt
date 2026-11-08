@@ -2355,27 +2355,5 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
         startInAppWhatsAppCall(phoneNumber, contactName, isVideo = false)
-        val cleanNumber = phoneNumber.filter { it.isDigit() || it == '+' }
-        try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanNumber")).apply {
-                setPackage("com.whatsapp")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            if (intent.resolveActivity(context.packageManager) != null) {
-                context.startActivity(intent)
-            } else {
-                val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanNumber")).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(fallbackIntent)
-            }
-        } catch (_: Exception) {
-            try {
-                val altIntent = Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send?phone=$cleanNumber")).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(altIntent)
-            } catch (_: Exception) {}
-        }
     }
 }
