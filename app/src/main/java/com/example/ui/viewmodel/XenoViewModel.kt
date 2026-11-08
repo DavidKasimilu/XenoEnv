@@ -2355,31 +2355,27 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun initiateWhatsAppCall(context: Context, phoneNumber: String, contactName: String? = null) {
         startInAppWhatsAppCall(phoneNumber, contactName, isVideo = false)
-        val state = _uiState.value
-        val whatsappClone = state.spaceClones.find {
-            it.packageName.contains("whatsapp", ignoreCase = true) ||
-            it.originalName.contains("whatsapp", ignoreCase = true) ||
-            it.displayName.contains("whatsapp", ignoreCase = true) ||
-            it.targetUrl.contains("whatsapp.com", ignoreCase = true)
-        }
-        if (whatsappClone != null) {
-            launchCloneWorkspace(whatsappClone.instanceId)
-        } else {
-            val newCloneId = "clone_whatsapp_" + System.currentTimeMillis()
-            val newWhatsapp = ClonedAppInstance(
-                instanceId = newCloneId,
-                packageName = "com.whatsapp",
-                templateId = "whatsapp",
-                displayName = "WhatsApp",
-                originalName = "WhatsApp",
-                targetUrl = "https://web.whatsapp.com/",
-                badgeTag = "Chat & Call",
-                badgeColorHex = "#25D366"
-            )
-            val updatedClones = state.spaceClones + newWhatsapp
-            _uiState.update { it.copy(spaceClones = updatedClones) }
-            spaceRepo.saveClonedInstances(updatedClones)
-            launchCloneWorkspace(newCloneId)
+        val cleanNumber = phoneNumber.filter { it.isDigit() || it == '+' }
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanNumber")).apply {
+                setPackage("com.whatsapp")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent)
+            } else {
+                val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanNumber")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallbackIntent)
+            }
+        } catch (_: Exception) {
+            try {
+                val altIntent = Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send?phone=$cleanNumber")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(altIntent)
+            } catch (_: Exception) {}
         }
     }
 }
