@@ -94,9 +94,6 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showOnLockScreen="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.App.Starting">
@@ -136,6 +133,18 @@
                 <data android:scheme="mmsto" />
             </intent-filter>
         </activity>
+
+        <!-- Full-screen call screen: the ONLY screen allowed to wake the display / show over the lock screen -->
+        <activity
+            android:name="com.example.telecom.IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.MyApplication" />
 
         <!-- InCallService for Default Phone App / Dialer Role -->
         <service
