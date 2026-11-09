@@ -451,7 +451,8 @@ fun XenoApp(
     }
 
     // Immersive system bars for video playback
-    val isImmersiveVideoActive = uiState.isBrowserFullscreenVideo || uiState.selectedVideoItem != null
+    // Gallery videos now play in their own aspect ratio; the player enters immersive mode itself when its full-screen icon is used
+    val isImmersiveVideoActive = uiState.isBrowserFullscreenVideo
     LaunchedEffect(isImmersiveVideoActive) {
         val window = (context as? Activity)?.window ?: return@LaunchedEffect
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
