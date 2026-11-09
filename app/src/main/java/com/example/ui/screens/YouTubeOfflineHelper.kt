@@ -2226,26 +2226,9 @@ fun YouTubeOfflineDesktopView(
                                     )
                                 }
 
-                                val progressFraction = if (durationMs > 0) {
-                                    (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                                } else 0f
-
-                                Slider(
-                                    value = progressFraction,
-                                    onValueChange = { frac ->
-                                        val target = (frac * durationMs.coerceAtLeast(1)).toInt()
-                                        videoViewRef?.seekTo(target)
-                                        currentPosMs = target
-                                    },
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Color(0xFFFF0000),
-                                        activeTrackColor = Color(0xFFFF0000),
-                                        inactiveTrackColor = Color(0xFF444444)
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(22.dp)
-                                )
+                                // The thick red seek bar was removed: seeking uses the video's own
+                                // controller bar (tap the video to show it; tapping the bar seeks).
+                                Spacer(modifier = Modifier.weight(1f))
 
                                 Text(
                                     text = "${YouTubeOfflineRepository.formatDurationSeconds(currentPosMs / 1000L).ifBlank { "0:00" }} / ${
