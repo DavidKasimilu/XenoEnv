@@ -262,19 +262,60 @@ object XenoNotificationHelper {
         return null
     }
 
+    /**
+     * Exact contact lookup using Android's own PhoneLookup (handles number formats / country codes).
+     * Unlike the in-memory cache it never does loose "last digits" matching, so it will not pick a
+     * different contact whose number only looks similar. Blocking: call off the main thread.
+     */
+    fun resolveContactNameExact(context: Context, phoneNumber: String): String? {
+        val trimmed = phoneNumber.trim()
+        if (trimmed.isBlank() || trimmed == "Private Number" || trimmed == "Unknown Caller") return null
+        val hasPerm = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPerm) return null
+        return try {
+            val uri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(trimmed)
+            )
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getString(0)?.takeIf {
+                        it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it)
+                    }
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun updateCallNotificationName(
         context: Context,
         callerName: String,
         callerNumber: String,
         carrierNameOverride: String? = null
     ) {
+        // Keep the same kind of notification that is already showing (do not downgrade it)
+        val locked = OngoingCallHelper.isScreenOffOrLocked(context)
+        val isInApp = MainActivity.isAppInForeground && !locked
+        val canOverlay = XenoOverlayService.canDrawOverlays(context)
         showCallNotification(
             context = context,
             callerName = callerName,
             callerNumber = callerNumber,
             useFullScreenIntent = false,
-            suppressHeadsUp = true,
-            carrierNameOverride = carrierNameOverride
+            suppressHeadsUp = isInApp || (canOverlay && !locked),
+            carrierNameOverride = carrierNameOverride,
+            isUpdate = true
         )
     }
 
@@ -506,7 +547,8 @@ object XenoNotificationHelper {
         callerNumber: String,
         useFullScreenIntent: Boolean = OngoingCallHelper.isScreenOffOrLocked(context),
         suppressHeadsUp: Boolean = false,
-        carrierNameOverride: String? = null
+        carrierNameOverride: String? = null,
+        isUpdate: Boolean = false
     ) {
         val normCaller = normalizePhoneKey(callerNumber)
         val now = System.currentTimeMillis()
@@ -546,10 +588,22 @@ object XenoNotificationHelper {
             putExtra("wake_full_screen_call", true)
         }
 
+        // Tapping the notification opens the app
         val fullScreenPendingIntent = PendingIntent.getActivity(
             context,
             8888,
             fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Wakes the screen / shows over the lock screen: the dedicated full-screen call screen
+        val callScreenIntent = Intent(context, IncomingCallActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val callScreenPendingIntent = PendingIntent.getActivity(
+            context,
+            8889,
+            callScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -635,7 +689,7 @@ object XenoNotificationHelper {
             .addAction(android.R.drawable.sym_action_call, "Answer", answerPendingIntent)
 
         if (!suppressHeadsUp) {
-            builder.setCustomHeadsUpContentView(callExpandedViews)
+            builder.setCustomHeadsUpContentView(callCollapsedViews)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setDefaults(NotificationCompat.DEFAULT_ALL)
                 .setVibrate(if (isPriority) longArrayOf(0, 600, 200, 600, 200, 800) else longArrayOf(0, 500, 250, 500, 250, 500))
@@ -644,7 +698,11 @@ object XenoNotificationHelper {
         }
 
         if (useFullScreenIntent && !suppressHeadsUp) {
-            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+            builder.setFullScreenIntent(callScreenPendingIntent, true)
+        }
+        if (isUpdate) {
+            // Name updates must not ring / vibrate / pop up again
+            builder.setOnlyAlertOnce(true)
         }
 
         try {

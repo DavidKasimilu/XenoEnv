@@ -121,7 +121,7 @@ object IncomingCallPopupHelper {
         }
         val resolvedName = rawCallerName?.takeIf { 
             it.isNotBlank() && !PriorityContactManager.isSyntheticPriorityName(it) && it != cleanNumber && it != "Unknown Caller" 
-        } ?: telecomCallerName ?: resolveCallerName(context, cleanNumber)
+        } ?: resolveCallerName(context, cleanNumber) ?: telecomCallerName
 
         val callerName = resolvedName?.takeIf { it.isNotBlank() && it != cleanNumber && it != "Unknown Caller" }
         val carrierName = resolveCarrierName(context, call)
@@ -178,37 +178,21 @@ object IncomingCallPopupHelper {
                 )
             }
 
-            // Environment 4: Screen is off or locked
+            // Environment 4: Screen is off or locked -> wake the display and show the full-screen
+            // call screen (Accept / Decline) over the lock screen via a full-screen intent.
             isScreenOffOrLocked -> {
                 OngoingCallHelper.dismissInAppPopupOnly()
+                XenoOverlayService.dismissCallOverlay(context)
                 OngoingCallHelper.wakeDeviceScreenForIncomingCall(context)
-
-                if (canOverlay) {
-                    XenoOverlayService.showCallOverlay(
-                        context = context,
-                        callerName = callerName,
-                        callerNumber = cleanNumber,
-                        carrierName = carrierName
-                    )
-                    XenoNotificationHelper.showCallNotification(
-                        context = context,
-                        callerName = callerName,
-                        callerNumber = cleanNumber,
-                        useFullScreenIntent = false,
-                        suppressHeadsUp = true,
-                        carrierNameOverride = carrierName
-                    )
-                } else {
-                    XenoOverlayService.dismissCallOverlay(context)
-                    XenoNotificationHelper.showCallNotification(
-                        context = context,
-                        callerName = callerName,
-                        callerNumber = cleanNumber,
-                        useFullScreenIntent = true,
-                        suppressHeadsUp = false,
-                        carrierNameOverride = carrierName
-                    )
-                }
+                XenoNotificationHelper.showCallNotification(
+                    context = context,
+                    callerName = callerName,
+                    callerNumber = cleanNumber,
+                    useFullScreenIntent = true,
+                    suppressHeadsUp = false,
+                    carrierNameOverride = carrierName
+                )
+                launchCallScreen(context)
             }
 
             // Environment 2 & 3: User is in another app or at home screen (Screen is ON)
@@ -244,13 +228,19 @@ object IncomingCallPopupHelper {
             }
         }
 
-        // Background lookup if callerName was not resolved instantly from cache/telecom
-        if (callerName == null && cleanNumber.isNotBlank() && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
+        // Background lookup: confirm the name with the exact system lookup (and find it if the cache missed)
+        if (cleanNumber.isNotBlank() && cleanNumber != "Private Number" && cleanNumber != "Unknown Caller") {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     Log.d("IncomingCallFlow", "Name lookup started for $cleanNumber")
                     val deepResolved = withTimeoutOrNull(2000) {
                         try {
+                            val exact = XenoNotificationHelper.resolveContactNameExact(context, cleanNumber)
+                            if (!exact.isNullOrBlank()) {
+                                return@withTimeoutOrNull exact
+                            }
+                            // Nothing better than the name already shown
+                            if (callerName != null) return@withTimeoutOrNull null
                             val quick = try {
                                 XenoNotificationHelper.resolveContactNameQuick(context, cleanNumber)
                             } catch (t: Throwable) {
@@ -269,7 +259,7 @@ object IncomingCallPopupHelper {
                     }
                     Log.d("IncomingCallFlow", "Name lookup result for $cleanNumber: '$deepResolved'")
 
-                    if (!deepResolved.isNullOrBlank() && deepResolved != cleanNumber && deepResolved != "Unknown Caller" && !PriorityContactManager.isSyntheticPriorityName(deepResolved)) {
+                    if (!deepResolved.isNullOrBlank() && deepResolved != callerName && deepResolved != cleanNumber && deepResolved != "Unknown Caller" && !PriorityContactManager.isSyntheticPriorityName(deepResolved)) {
                         val session = OngoingCallHelper.sessionFlow.value
                         val popupState = OngoingCallHelper.incomingPopupFlow.value
                         val isSessionRinging = session.phase == CallPhase.INCOMING_RINGING
@@ -350,13 +340,13 @@ object IncomingCallPopupHelper {
         val isScreenOffOrLocked = OngoingCallHelper.isScreenOffOrLocked(context)
         val isInApp = MainActivity.isAppInForeground && !isScreenOffOrLocked
         val canOverlay = XenoOverlayService.canDrawOverlays(context)
-        val suppressHeadsUp = isInApp || canOverlay
+        val suppressHeadsUp = isInApp || (canOverlay && !isScreenOffOrLocked)
 
         XenoNotificationHelper.showCallNotification(
             context = context,
             callerName = resolvedName,
             callerNumber = cleanNumber,
-            useFullScreenIntent = isScreenOffOrLocked && !canOverlay,
+            useFullScreenIntent = isScreenOffOrLocked,
             suppressHeadsUp = suppressHeadsUp,
             carrierNameOverride = carrierName
         )
@@ -429,6 +419,12 @@ object IncomingCallPopupHelper {
             contactName = callerName
         )
 
+        // Locked / screen off: show the in-call screen over the lock screen (the app itself stays hidden)
+        if (!MainActivity.isAppInForeground && OngoingCallHelper.isScreenOffOrLocked(context)) {
+            launchCallScreen(context)
+            return
+        }
+
         // If app is not in foreground, launch MainActivity to show ActiveCallScreen
         if (!MainActivity.isAppInForeground) {
             val intent = Intent(context, MainActivity::class.java).apply {
@@ -441,6 +437,23 @@ object IncomingCallPopupHelper {
                 putExtra("auto_answer", true)
             }
             context.startActivity(intent)
+        }
+    }
+
+    /**
+     * Opens the full-screen call screen (shows over the lock screen and wakes the display).
+     * The notification's full-screen intent is the main trigger; this direct launch is a backup
+     * and is simply ignored by Android if background launches are not allowed.
+     */
+    private fun launchCallScreen(context: Context) {
+        try {
+            context.startActivity(
+                Intent(context, IncomingCallActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct launch of call screen not allowed: ${e.message}")
         }
     }
 
