@@ -3436,33 +3436,66 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                     if (btn.getAttribute('data-xeno-dl-state') === stateKey) return;
                     btn.setAttribute('data-xeno-dl-state', stateKey);
                     if (prog >= 0) {
-                        btn.style.borderColor = '#FF0000';
-                        btn.style.background = 'rgba(20,20,20,0.94)';
-                        btn.title = 'Downloading ' + prog + '%';
-                        btn.setAttribute('aria-label', 'Downloading ' + prog + '%');
+                        var pct = Math.max(1, Math.min(100, prog));
+                        btn.style.border = '0';
+                        btn.style.background = 'conic-gradient(#FF0000 ' + (pct * 3.6) + 'deg, rgba(255,255,255,0.25) 0deg)';
+                        btn.title = 'Downloading ' + pct + '%';
+                        btn.setAttribute('aria-label', 'Downloading ' + pct + '%');
                         btn.innerHTML =
-                            '<span style="font-size:10px;font-weight:700;color:#FFFFFF;line-height:1;letter-spacing:-0.3px;">' +
-                            prog + '%</span>';
+                            '<span style="width:38px;height:38px;border-radius:50%;background:#141414;display:flex;align-items:center;justify-content:center;' +
+                            'font-size:11px;font-weight:700;color:#FFFFFF;line-height:1;letter-spacing:-0.3px;">' +
+                            pct + '%</span>';
                     } else if (isSaved) {
-                        btn.style.borderColor = '#2BA640';
-                        btn.style.background = 'rgba(20,38,24,0.94)';
+                        btn.style.border = '2px solid #2BA640';
+                        btn.style.background = 'rgba(20,38,24,0.95)';
                         btn.title = 'Downloaded (Tap to open Offline Videos)';
                         btn.setAttribute('aria-label', 'Downloaded Offline');
                         btn.innerHTML =
-                            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2BA640" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2BA640" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
                             '<polyline points="20 6 9 17 4 12"></polyline>' +
                             '</svg>';
                     } else {
-                        btn.style.borderColor = 'rgba(255,255,255,0.28)';
-                        btn.style.background = 'rgba(15,15,15,0.92)';
+                        btn.style.border = '2px solid #FF0000';
+                        btn.style.background = 'rgba(15,15,15,0.95)';
                         btn.title = 'Download Video';
                         btn.setAttribute('aria-label', 'Download Video');
                         btn.innerHTML =
-                            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
                             '<path d="M12 3v12"></path>' +
                             '<polyline points="7 10 12 15 17 10"></polyline>' +
                             '<path d="M5 20h14"></path>' +
                             '</svg>';
+                    }
+                }
+
+                // Starts the download of the video that is open right now (never on Shorts).
+                // Uses the rich metadata path first and falls back to the video id in the URL.
+                function xenoStartYtDownloadFromPill(pill) {
+                    if (getYouTubePageMode() === 'shorts') return;
+                    var started = false;
+                    try { started = !!window.__xenoTriggerYtDownload(); } catch(e) {}
+                    if (!started) {
+                        var fid = '';
+                        try { fid = new URLSearchParams(window.location.search).get('v') || ''; } catch(e) {}
+                        if (!fid) {
+                            var mm = (window.location.pathname || '').match(/\/(?:embed|live|v)\/([\w-]{6,})/);
+                            if (mm) fid = mm[1];
+                        }
+                        if (fid && window.XenoYtBridge && typeof window.XenoYtBridge.downloadVideo === 'function') {
+                            try {
+                                if (typeof window.XenoYtBridge.setSessionHints === 'function' && window.ytcfg && typeof window.ytcfg.get === 'function') {
+                                    window.XenoYtBridge.setSessionHints(String(window.ytcfg.get('VISITOR_DATA') || ''), String(window.ytcfg.get('STS') || ''));
+                                }
+                            } catch(e) {}
+                            var t = (document.title || 'YouTube Video').replace(/\s*-\s*YouTube/i, '').trim();
+                            window.XenoYtBridge.downloadVideo(fid, t || 'YouTube Video', 'YouTube', '0', '');
+                            started = true;
+                        }
+                    }
+                    if (started) {
+                        renderCircularDownloadButtonState(pill, 2, false);
+                    } else {
+                        renderCircularDownloadButtonState(pill, -1, false);
                     }
                 }
 
@@ -3504,30 +3537,46 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                             existingPill.id = pillId;
                             existingPill.type = 'button';
                             existingPill.style.cssText =
-                                'position:fixed; right:14px; bottom:64px; width:40px; height:40px; ' +
+                                'position:fixed; right:14px; bottom:64px; width:46px; height:46px; ' +
                                 'z-index:2147483640; display:flex; align-items:center; justify-content:center; ' +
-                                'background:rgba(15,15,15,0.92); color:#ffffff; border:1.5px solid rgba(255,255,255,0.28); ' +
+                                'background:rgba(15,15,15,0.95); color:#ffffff; border:2px solid #FF0000; ' +
                                 'border-radius:50%; padding:0; font-family:Roboto,sans-serif; ' +
                                 'box-shadow:0 4px 12px rgba(0,0,0,0.5); cursor:pointer; ' +
                                 '-webkit-tap-highlight-color:transparent; transition:transform 0.15s ease, border-color 0.2s ease;';
-                            existingPill.addEventListener('click', function(ev) {
+                            var xenoLastPillTap = 0;
+                            var xenoPillHandler = function(ev) {
                                 ev.stopPropagation();
                                 ev.preventDefault();
+                                var nowTap = Date.now();
+                                if (nowTap - xenoLastPillTap < 700) return;
+                                xenoLastPillTap = nowTap;
                                 if (getYouTubePageMode() === 'shorts') return;
                                 var curMeta = extractActiveYouTubeMetadata();
-                                if (curMeta.videoId && window.XenoYtBridge && typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curMeta.videoId)) {
-                                    window.XenoYtBridge.openOfflineDownloads();
-                                } else {
-                                    renderCircularDownloadButtonState(existingPill, 1, false);
-                                    window.__xenoTriggerYtDownload();
+                                var curId = curMeta.videoId;
+                                if (!curId) {
+                                    try { curId = new URLSearchParams(window.location.search).get('v') || ''; } catch(e) {}
                                 }
-                            });
+                                try {
+                                    if (curId && window.XenoYtBridge) {
+                                        if (typeof window.XenoYtBridge.isDownloaded === 'function' && window.XenoYtBridge.isDownloaded(curId)) {
+                                            window.XenoYtBridge.openOfflineDownloads();
+                                            return;
+                                        }
+                                        if (typeof window.XenoYtBridge.getProgress === 'function' && window.XenoYtBridge.getProgress(curId) >= 0) {
+                                            return;
+                                        }
+                                    }
+                                } catch(e) {}
+                                xenoStartYtDownloadFromPill(existingPill);
+                            };
+                            existingPill.addEventListener('click', xenoPillHandler);
+                            existingPill.addEventListener('touchend', xenoPillHandler, { passive: false });
                             document.body.appendChild(existingPill);
                         }
                         if (existingPill) {
                             var isFsNow = !!(window.__xenoYtIsFullscreen || document.fullscreenElement || document.webkitFullscreenElement);
-                            existingPill.style.width = '40px';
-                            existingPill.style.height = '40px';
+                            existingPill.style.width = '46px';
+                            existingPill.style.height = '46px';
                             existingPill.style.borderRadius = '50%';
                             existingPill.style.padding = '0';
                             existingPill.style.bottom = '64px';
@@ -3558,7 +3607,7 @@ private fun injectYouTubeAndShortsSmoothHelper(view: WebView?) {
                                 optimizeYouTubeAndShorts();
                             }
                         } catch(e) {}
-                    }, 1000);
+                    }, 500);
                 }
 
                 if (!window.__xenoYtMutationObserver && window.MutationObserver && document.body) {
