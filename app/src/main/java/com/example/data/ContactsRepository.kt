@@ -74,9 +74,7 @@ class ContactsRepository(private val context: Context) {
                 if (digits.length >= 9) {
                     globalPhoneToNameCache[digits.takeLast(9)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
                 }
-                if (digits.length >= 7) {
-                    globalPhoneToNameCache[digits.takeLast(7)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
-                }
+                // (no loose last-7-digit matching: it can return the wrong contact)
             }
             return null
         }
@@ -189,9 +187,6 @@ class ContactsRepository(private val context: Context) {
             }
             if (digits.length >= 9) {
                 phoneToNameCache[digits.takeLast(9)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
-            }
-            if (digits.length >= 7) {
-                phoneToNameCache[digits.takeLast(7)]?.takeIf { !PriorityContactManager.isSyntheticPriorityName(it) }?.let { return it }
             }
         }
         return null
