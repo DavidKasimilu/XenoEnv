@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -129,19 +131,8 @@ fun GalleryScreen(
 ) {
     var currentTab by remember { mutableStateOf(GalleryTab.VIDEOS) }
     var mediaToDelete by remember { mutableStateOf<MediaItem?>(null) }
-    var selectedVideoFolder by remember { mutableStateOf<String?>(null) }
-    var selectedPhotoFolder by remember { mutableStateOf<String?>(null) }
-    var isVideoFolderMode by remember { mutableStateOf(false) }
-    var isPhotoFolderMode by remember { mutableStateOf(true) }
-
-    // Intercept back navigation when browsing inside a folder or closing Media screen
-    BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedVideoFolder != null) {
-        selectedVideoFolder = null
-    }
-    BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedPhotoFolder != null) {
-        selectedPhotoFolder = null
-    }
-    BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && selectedVideoFolder == null && selectedPhotoFolder == null && onClose != null) {
+    // Back closes the Media screen (folders are now just sections in one grid)
+    BackHandler(enabled = selectedImageItem == null && selectedVideoItem == null && onClose != null) {
         onClose?.invoke()
     }
 
@@ -499,418 +490,57 @@ fun GalleryScreen(
                         }
                     }
                 } else {
-                    if (currentTab == GalleryTab.VIDEOS) {
-                        val videoFolderGroups = remember(filteredItems) {
-                            filteredItems.groupBy { it.folderName }
-                        }
-
-                        if (selectedVideoFolder != null) {
-                            val folderVideos = videoFolderGroups[selectedVideoFolder] ?: emptyList()
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                // Folder sub-header with back button
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (currentTab == GalleryTab.VIDEOS && !hasVideoPermission) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    FilledTonalIconButton(
-                                        onClick = { selectedVideoFolder = null },
-                                        modifier = Modifier.testTag("video_folder_back_btn")
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                            contentDescription = "Back to video folders"
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = selectedVideoFolder ?: "Videos",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
+                                            Icons.Filled.Lock,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
                                         )
                                         Text(
-                                            text = "${folderVideos.size} ${if (folderVideos.size == 1) "Video" else "Videos"} • Tap video to watch",
+                                            text = "Grant permission to see all device video folders",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
                                     }
-                                }
-
-                                LazyVerticalGrid(
-                                    state = gridState,
-                                    columns = GridCells.Adaptive(minSize = 152.dp),
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .testTag("videos_grid"),
-                                    contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    itemsIndexed(folderVideos, key = { index, item -> "vid_f_${item.id}_${item.uri}_$index" }) { _, item ->
-                                        VideoGridItemCard(
-                                            item = item,
-                                            onClick = { onSelectVideo(item) },
-                                            onDelete = { mediaToDelete = it }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                if (!hasVideoPermission) {
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    TextButton(
+                                        onClick = { requestVideoPermissions() },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.weight(1f),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Filled.Lock,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                                Text(
-                                                    text = "Grant permission to see all device video folders",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                                )
-                                            }
-                                            TextButton(
-                                                onClick = { requestVideoPermissions() },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                            ) {
-                                                Text("Grant", fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Folder Quick-Filter Chips Row
-                                LazyRow(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    item {
-                                        FilterChip(
-                                            selected = !isVideoFolderMode,
-                                            onClick = { isVideoFolderMode = false },
-                                            label = { Text("Group by Folder (${videoFolderGroups.size})") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Folder,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            modifier = Modifier.testTag("video_grouped_view_chip")
-                                        )
-                                    }
-                                    item {
-                                        FilterChip(
-                                            selected = isVideoFolderMode,
-                                            onClick = { isVideoFolderMode = true },
-                                            label = { Text("Album Cards") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Filled.GridView,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            modifier = Modifier.testTag("video_albums_chip")
-                                        )
-                                    }
-                                    items(videoFolderGroups.keys.toList(), key = { "chip_vf_$it" }) { fName ->
-                                        val count = videoFolderGroups[fName]?.size ?: 0
-                                        FilterChip(
-                                            selected = false,
-                                            onClick = { selectedVideoFolder = fName },
-                                            label = { Text("$fName ($count)") }
-                                        )
-                                    }
-                                }
-
-                                if (isVideoFolderMode) {
-                                    LazyVerticalGrid(
-                                    state = gridState,
-                                        columns = GridCells.Adaptive(minSize = 150.dp),
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .testTag("video_folders_grid"),
-                                        contentPadding = PaddingValues(start = 14.dp, top = 8.dp, end = 14.dp, bottom = 96.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        items(videoFolderGroups.keys.toList(), key = { "vfolder_$it" }) { folderName ->
-                                            val folderVideos = videoFolderGroups[folderName] ?: emptyList()
-                                            MediaFolderCard(
-                                                name = folderName,
-                                                count = folderVideos.size,
-                                                coverItem = folderVideos.firstOrNull(),
-                                                isVideo = true,
-                                                onClick = { selectedVideoFolder = folderName }
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    // Grouped by Folder: Videos arranged in a multi-column grid under each folder header
-                                    LazyVerticalGrid(
-                                    state = gridState,
-                                        columns = GridCells.Adaptive(minSize = 152.dp),
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .testTag("videos_grouped_list"),
-                                        contentPadding = PaddingValues(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 96.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        videoFolderGroups.forEach { (folderName, folderVideos) ->
-                                            item(
-                                                key = "header_$folderName",
-                                                span = { GridItemSpan(maxLineSpan) }
-                                            ) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 4.dp)
-                                                        .clickable { selectedVideoFolder = folderName }
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                        ) {
-                                                            Icon(
-                                                                imageVector = Icons.Filled.Folder,
-                                                                contentDescription = null,
-                                                                tint = MaterialTheme.colorScheme.primary,
-                                                                modifier = Modifier.size(20.dp)
-                                                            )
-                                                            Text(
-                                                                text = folderName,
-                                                                style = MaterialTheme.typography.titleMedium,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                            Surface(
-                                                                shape = RoundedCornerShape(8.dp),
-                                                                color = MaterialTheme.colorScheme.primaryContainer
-                                                            ) {
-                                                                Text(
-                                                                    text = "${folderVideos.size}",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                                )
-                                                            }
-                                                        }
-
-                                                        TextButton(
-                                                            onClick = { selectedVideoFolder = folderName },
-                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                                        ) {
-                                                            Text("Open Folder", style = MaterialTheme.typography.labelMedium)
-                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                            Icon(
-                                                                Icons.AutoMirrored.Filled.ArrowForward,
-                                                                contentDescription = null,
-                                                                modifier = Modifier.size(14.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            itemsIndexed(
-                                                folderVideos,
-                                                key = { idx, item -> "grp_${folderName}_${item.id}_${item.uri}_$idx" }
-                                            ) { _, item ->
-                                                VideoGridItemCard(
-                                                    item = item,
-                                                    onClick = { onSelectVideo(item) },
-                                                    onDelete = { mediaToDelete = it }
-                                                )
-                                            }
-                                        }
+                                        Text("Grant", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         }
-                    } else {
-                        val photoFolderGroups = remember(filteredItems) {
-                            filteredItems.groupBy { it.folderName }
-                        }
 
-                        if (selectedPhotoFolder != null) {
-                            val folderPhotos = photoFolderGroups[selectedPhotoFolder] ?: emptyList()
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    FilledTonalIconButton(
-                                        onClick = { selectedPhotoFolder = null },
-                                        modifier = Modifier.testTag("photo_folder_back_btn")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                            contentDescription = "Back to photo folders"
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = selectedPhotoFolder ?: "Photos",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "${folderPhotos.size} ${if (folderPhotos.size == 1) "Photo" else "Photos"} in folder",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                LazyVerticalGrid(
-                                    state = gridState,
-                                    columns = GridCells.Adaptive(minSize = 108.dp),
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .testTag("photos_grid"),
-                                    contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    itemsIndexed(folderPhotos, key = { index, item -> "img_f_${item.id}_${item.uri}_$index" }) { _, item ->
-                                        GalleryPhotoGridItem(
-                                            item = item,
-                                            onClick = {
-                                                if (item.isVideo) {
-                                                    onSelectVideo(item)
-                                                } else {
-                                                    onSelectImage(item)
-                                                }
-                                            },
-                                            onDelete = { mediaToDelete = item }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    FilterChip(
-                                        selected = isPhotoFolderMode,
-                                        onClick = { isPhotoFolderMode = true },
-                                        label = { Text("Group by Folder (${photoFolderGroups.size})") },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Filled.Folder,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("photo_folders_toggle_chip")
-                                    )
-                                    FilterChip(
-                                        selected = !isPhotoFolderMode,
-                                        onClick = { isPhotoFolderMode = false },
-                                        label = { Text("All Photos (${filteredItems.size})") },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Filled.GridView,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("all_photos_toggle_chip")
-                                    )
-                                }
-
-                                if (isPhotoFolderMode) {
-                                    LazyVerticalGrid(
-                                    state = gridState,
-                                        columns = GridCells.Adaptive(minSize = 150.dp),
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .testTag("photo_folders_grid"),
-                                        contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        items(photoFolderGroups.keys.toList(), key = { "pfolder_$it" }) { folderName ->
-                                            val folderPhotos = photoFolderGroups[folderName] ?: emptyList()
-                                            MediaFolderCard(
-                                                name = folderName,
-                                                count = folderPhotos.size,
-                                                coverItem = folderPhotos.firstOrNull(),
-                                                isVideo = false,
-                                                onClick = { selectedPhotoFolder = folderName }
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    LazyVerticalGrid(
-                                    state = gridState,
-                                        columns = GridCells.Adaptive(minSize = 108.dp),
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .testTag("photos_grid"),
-                                        contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        itemsIndexed(filteredItems, key = { index, item -> "img_${item.id}_${item.uri}_$index" }) { _, item ->
-                                            GalleryPhotoGridItem(
-                                                item = item,
-                                                onClick = {
-                                                    if (item.isVideo) {
-                                                        onSelectVideo(item)
-                                                    } else {
-                                                        onSelectImage(item)
-                                                    }
-                                                },
-                                                onDelete = { mediaToDelete = item }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // One simple grid: every folder is a header followed by its thumbnails
+                        FolderGroupedGrid(
+                            items = filteredItems,
+                            gridState = gridState,
+                            onItemClick = { item ->
+                                if (item.isVideo) onSelectVideo(item) else onSelectImage(item)
+                            },
+                            onItemLongClick = { mediaToDelete = it },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -1358,3 +988,138 @@ fun MediaFolderCard(
     }
 }
 
+/**
+ * Simple gallery grid: media is grouped by folder. Each folder gets a small header
+ * (name + item count) followed by a 3-column grid of square thumbnails.
+ * Works for both photos and videos. Tap opens the item, long-press asks to delete it.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FolderGroupedGrid(
+    items: List<MediaItem>,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    onItemClick: (MediaItem) -> Unit,
+    onItemLongClick: (MediaItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val groups = remember(items) {
+        items.groupBy { it.folderName }
+            .map { (name, list) -> name to list.sortedByDescending { it.dateAdded } }
+            .sortedByDescending { (_, list) -> list.firstOrNull()?.dateAdded ?: 0L }
+    }
+
+    LazyVerticalGrid(
+        state = gridState,
+        columns = GridCells.Fixed(3),
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("gallery_folder_grid"),
+        contentPadding = PaddingValues(start = 4.dp, top = 0.dp, end = 4.dp, bottom = 96.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        groups.forEach { (folderName, folderItems) ->
+            item(
+                key = "folder_header_$folderName",
+                span = { GridItemSpan(maxLineSpan) }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = folderName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = folderItems.size.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            itemsIndexed(
+                folderItems,
+                key = { index, item -> "m_${folderName}_${item.id}_${item.uri}_$index" }
+            ) { _, item ->
+                FolderGridThumb(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongClick = { onItemLongClick(item) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FolderGridThumb(
+    item: MediaItem,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF1A1A1A))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .testTag("gallery_thumb_${item.id}")
+    ) {
+        if (item.isVideo) {
+            VideoThumbnailImage(
+                item = item,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = 5.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = item.formattedDuration,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        } else {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(item.uri)
+                    .size(300, 300)
+                    .memoryCacheKey(item.uri.toString())
+                    .diskCacheKey(item.uri.toString())
+                    .crossfade(true)
+                    .build(),
+                contentDescription = item.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
