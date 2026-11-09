@@ -78,6 +78,9 @@ import com.example.data.models.MediaItem
 import kotlinx.coroutines.delay
 import java.util.Locale
 
+private val orientationHandler = Handler(Looper.getMainLooper())
+private var pendingOrientationReset: Runnable? = null
+
 /**
  * Gallery video player.
  *
@@ -129,10 +132,15 @@ fun VideoPlayerModal(
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
+            // Cancel a pending "give rotation back to the system" from a previous exit
+            pendingOrientationReset?.let { orientationHandler.removeCallbacks(it) }
+            pendingOrientationReset = null
+            // Fixed orientations are used (not the SENSOR_ variants) so full screen works even
+            // when the phone's auto-rotate is turned off.
             activity.requestedOrientation = if (videoWidth > videoHeight) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
         }
         onDispose {
@@ -142,9 +150,12 @@ fun VideoPlayerModal(
                 // Rotate the app back to portrait first, then hand rotation control back to the
                 // system. Going straight to UNSPECIFIED can leave the app stuck in landscape.
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                Handler(Looper.getMainLooper()).postDelayed({
+                val reset = Runnable {
                     activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                }, 700L)
+                    pendingOrientationReset = null
+                }
+                pendingOrientationReset = reset
+                orientationHandler.postDelayed(reset, 700L)
             }
         }
     }
