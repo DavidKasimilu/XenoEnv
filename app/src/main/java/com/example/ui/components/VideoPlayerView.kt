@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.WindowManager
 import android.widget.VideoView
@@ -137,7 +139,12 @@ fun VideoPlayerModal(
             if (isFullscreen && activity != null && window != null) {
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                // Rotate the app back to portrait first, then hand rotation control back to the
+                // system. Going straight to UNSPECIFIED can leave the app stuck in landscape.
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                Handler(Looper.getMainLooper()).postDelayed({
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }, 700L)
             }
         }
     }
