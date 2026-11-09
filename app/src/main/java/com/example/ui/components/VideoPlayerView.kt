@@ -8,9 +8,6 @@ import android.util.Log
 import android.view.WindowManager
 import android.widget.VideoView
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -417,12 +414,7 @@ fun VideoPlayerModal(
 
             // Full-screen overlay controls
             if (isFullscreen) {
-                AnimatedVisibility(
-                    visible = !isControlsHidden,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                if (!isControlsHidden) {
                     Box(modifier = Modifier.fillMaxSize().displayCutoutPadding()) {
                         // Top: exit full screen + title, mute on the right
                         Row(
