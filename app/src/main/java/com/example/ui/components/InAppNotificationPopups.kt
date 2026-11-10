@@ -8,6 +8,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,12 +91,14 @@ fun InAppNotificationOverlay(
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
             incomingCall?.let { call ->
-                InAppCallNotificationCard(
-                    popup = call,
-                    onAnswer = { onAcceptCall(call) },
-                    onHangUp = { onDeclineCall(call) },
-                    onExpand = { onExpandCall(call) }
-                )
+                SwipeAwayContainer(onDismiss = onDismissCall) {
+                    InAppCallNotificationCard(
+                        popup = call,
+                        onAnswer = { onAcceptCall(call) },
+                        onHangUp = { onDeclineCall(call) },
+                        onExpand = { onExpandCall(call) }
+                    )
+                }
             }
         }
 
@@ -103,14 +109,67 @@ fun InAppNotificationOverlay(
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
             incomingSms?.let { sms ->
-                InAppSmsNotificationCard(
-                    popup = sms,
-                    onOpenLink = { onReplySms(sms) },
-                    onMarkRead = { onMarkSmsRead(sms) },
-                    onDismiss = onDismissSms
-                )
+                SwipeAwayContainer(onDismiss = onDismissSms) {
+                    InAppSmsNotificationCard(
+                        popup = sms,
+                        onOpenLink = { onReplySms(sms) },
+                        onMarkRead = { onMarkSmsRead(sms) },
+                        onDismiss = onDismissSms
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * Lets a popup be swiped away: drag it sideways (left or right) or up and let go to dismiss it.
+ * A short or aborted swipe snaps back. Taps on the card still work.
+ */
+@Composable
+private fun SwipeAwayContainer(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    var offsetX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var offsetY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var widthPx by remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
+    val upThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 70.dp.toPx() }
+
+    Box(
+        modifier = modifier
+            .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
+            .graphicsLayer {
+                translationX = offsetX
+                translationY = offsetY
+                val fade = (kotlin.math.abs(offsetX) / widthPx) * 0.8f + ((-offsetY) / (upThresholdPx * 3f)).coerceAtLeast(0f)
+                alpha = (1f - fade).coerceIn(0.2f, 1f)
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = {
+                        val dismiss = kotlin.math.abs(offsetX) > widthPx * 0.3f || offsetY < -upThresholdPx
+                        if (dismiss) {
+                            onDismiss()
+                        } else {
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
+                    },
+                    onDragCancel = {
+                        offsetX = 0f
+                        offsetY = 0f
+                    },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        offsetX += drag.x
+                        offsetY = (offsetY + drag.y).coerceAtMost(0f)
+                    }
+                )
+            }
+    ) {
+        content()
     }
 }
 
@@ -320,7 +379,7 @@ fun InAppSmsNotificationCard(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isExpanded by remember { mutableStateOf(true) }
+    var isExpanded by remember { mutableStateOf(false) }
 
     // Auto dismiss after 14 seconds if user does not interact
     LaunchedEffect(popup.id) {
