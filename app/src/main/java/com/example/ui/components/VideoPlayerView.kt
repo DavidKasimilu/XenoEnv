@@ -82,6 +82,35 @@ private val orientationHandler = Handler(Looper.getMainLooper())
 private var pendingOrientationReset: Runnable? = null
 
 /**
+ * Puts the app back to portrait after a full-screen video forced landscape.
+ * Always goes to portrait first. If the phone's auto-rotate is ON the app then follows the sensor
+ * again (after a short delay); if auto-rotate is OFF it simply stays in portrait, so it can never be
+ * left stuck in landscape.
+ */
+fun restoreAppOrientationAfterFullscreen(activity: Activity) {
+    pendingOrientationReset?.let { orientationHandler.removeCallbacks(it) }
+    pendingOrientationReset = null
+    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    val autoRotateOn = try {
+        android.provider.Settings.System.getInt(
+            activity.contentResolver,
+            android.provider.Settings.System.ACCELEROMETER_ROTATION,
+            0
+        ) == 1
+    } catch (_: Exception) {
+        false
+    }
+    if (autoRotateOn) {
+        val reset = Runnable {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            pendingOrientationReset = null
+        }
+        pendingOrientationReset = reset
+        orientationHandler.postDelayed(reset, 700L)
+    }
+}
+
+/**
  * Gallery video player.
  *
  * - Normal mode: the video plays in its own aspect ratio (never cropped or stretched) under a
@@ -149,13 +178,7 @@ fun VideoPlayerModal(
                 controller.show(WindowInsetsCompat.Type.systemBars())
                 // Rotate the app back to portrait first, then hand rotation control back to the
                 // system. Going straight to UNSPECIFIED can leave the app stuck in landscape.
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                val reset = Runnable {
-                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    pendingOrientationReset = null
-                }
-                pendingOrientationReset = reset
-                orientationHandler.postDelayed(reset, 700L)
+                restoreAppOrientationAfterFullscreen(activity)
             }
         }
     }
