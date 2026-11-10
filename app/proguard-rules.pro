@@ -10,6 +10,13 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
+# Preserve WebView JS Bridge implementations across screens and components
+-keep class com.example.ui.screens.WhatsAppCallJsBridge { *; }
+-keep class com.example.ui.screens.YouTubeOfflineJsBridge { *; }
+-keep class com.example.ui.screens.** { *; }
+-keep class com.example.ui.components.XenoSwipeBridge { *; }
+-keep class com.example.ui.components.GlobalSwipeDownTracker** { *; }
+
 # Preserve all classes in telecom, plugins, and dpc packages
 -keep class com.example.telecom.** { *; }
 -keep class com.example.plugins.** { *; }

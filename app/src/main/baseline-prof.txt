@@ -1,0 +1,26 @@
+# Baseline Profile Starter for Xeno app
+# Critical launch and tab switching paths
+
+# MainActivity & InCallActivity
+HSPLcom/example/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/example/MainActivity;->onResume()V
+HSPLcom/example/MainActivity;->onPause()V
+HSPLcom/example/telecom/IncomingCallActivity;-><init>()V
+HSPLcom/example/telecom/IncomingCallActivity;->onCreate(Landroid/os/Bundle;)V
+
+# ViewModel & State
+HSPLcom/example/ui/viewmodel/XenoViewModel;-><init>(Landroid/app/Application;)V
+HSPLcom/example/ui/viewmodel/XenoViewModel;->selectTab(Lcom/example/ui/viewmodel/XenoTab;)V
+
+# Repositories & telecom helpers
+HSPLcom/example/data/ContactsRepository;-><init>(Landroid/content/Context;)V
+HSPLcom/example/data/ContactsRepository;->resolveContactNameFast(Ljava/lang/String;)Ljava/lang/String;
+HSPLcom/example/data/CallLogRepository;-><init>(Landroid/content/Context;)V
+HSPLcom/example/telecom/OngoingCallHelper;-><clinit>()V
+HSPLcom/example/telecom/XenoNotificationHelper;-><clinit>()V
+
+# Screens & Components
+HSPLcom/example/ui/screens/CallsScreenKt;->CallsScreen(Landroidx/compose/foundation/lazy/LazyListState;Ljava/util/List;Lcom/example/ui/viewmodel/CallFilter;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function3;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;III)V
+HSPLcom/example/ui/screens/KeypadScreenKt;->KeypadScreen(Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Ljava/util/List;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function3;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
+HSPLcom/example/ui/screens/ContactsScreenKt;->ContactsScreen(Landroidx/compose/foundation/lazy/LazyListState;Ljava/util/List;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
+HSPLcom/example/ui/screens/MessagesScreenKt;->MessagesScreen(Landroidx/compose/foundation/lazy/LazyListState;Ljava/util/List;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lcom/example/ui/viewmodel/MessagesSubTab;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V

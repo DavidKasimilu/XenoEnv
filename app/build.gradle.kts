@@ -56,6 +56,14 @@ android {
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
     }
+    create("benchmark") {
+      initWith(getByName("release"))
+      signingConfig = signingConfigs.getByName("debugConfig")
+      isDebuggable = false
+      isMinifyEnabled = false
+      isShrinkResources = false
+      matchingFallbacks += listOf("release")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -105,6 +113,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.core.splashscreen)
+  implementation(libs.androidx.profileinstaller)
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)

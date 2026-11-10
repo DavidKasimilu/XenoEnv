@@ -1,4 +1,4 @@
-name: Build Debug APK & Release
+name: Build APKs (Debug & Benchmark) & Release
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build & Release Debug APK
+    name: Build & Release APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -59,21 +59,25 @@ jobs:
             echo "debug.keystore already exists."
           fi
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+      - name: Build Both APKs (Debug & Benchmark)
+        run: gradle :app:assembleDebug :app:assembleBenchmark --stacktrace --no-daemon
 
-      - name: Verify APK Output
+      - name: Verify APK Outputs
         run: |
-          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "Error: Expected APK file does not exist at $APK_PATH"
-            exit 1
-          fi
-          if [ ! -s "$APK_PATH" ]; then
-            echo "Error: APK file at $APK_PATH is empty (size 0 bytes)"
-            exit 1
-          fi
-          echo "APK verified at $APK_PATH ($(stat -c%s "$APK_PATH") bytes)"
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          BENCH_APK="app/build/outputs/apk/benchmark/app-benchmark.apk"
+
+          for APK_PATH in "$DEBUG_APK" "$BENCH_APK"; do
+            if [ ! -f "$APK_PATH" ]; then
+              echo "Error: Expected APK file does not exist at $APK_PATH"
+              exit 1
+            fi
+            if [ ! -s "$APK_PATH" ]; then
+              echo "Error: APK file at $APK_PATH is empty (size 0 bytes)"
+              exit 1
+            fi
+            echo "Verified $APK_PATH ($(stat -c%s "$APK_PATH") bytes)"
+          done
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -82,17 +86,33 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Prepare Release Asset
+      - name: Upload Benchmark APK Artifact (Non-debuggable, signed with debug key)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-benchmark-apk
+          path: app/build/outputs/apk/benchmark/app-benchmark.apk
+          if-no-files-found: error
+
+      - name: Prepare Release Assets
         id: prep_asset
         run: |
           REPO_NAME=$(basename "${{ github.repository }}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')
-          APK_NAME="${REPO_NAME}-debug-build-${{ github.run_number }}.apk"
-          TMP_APK="${RUNNER_TEMP}/${APK_NAME}"
-          cp app/build/outputs/apk/debug/app-debug.apk "$TMP_APK"
-          echo "asset_path=${TMP_APK}" >> "$GITHUB_OUTPUT"
-          echo "asset_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
-          echo "release_tag=debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-          echo "release_title=Debug APK Build #${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          DEBUG_APK_NAME="${REPO_NAME}-debug-build-${{ github.run_number }}.apk"
+          BENCH_APK_NAME="${REPO_NAME}-benchmark-build-${{ github.run_number }}.apk"
+
+          TMP_DEBUG="${RUNNER_TEMP}/${DEBUG_APK_NAME}"
+          TMP_BENCH="${RUNNER_TEMP}/${BENCH_APK_NAME}"
+
+          cp app/build/outputs/apk/debug/app-debug.apk "$TMP_DEBUG"
+          cp app/build/outputs/apk/benchmark/app-benchmark.apk "$TMP_BENCH"
+
+          echo "debug_asset_path=${TMP_DEBUG}" >> "$GITHUB_OUTPUT"
+          echo "debug_asset_name=${DEBUG_APK_NAME}" >> "$GITHUB_OUTPUT"
+          echo "bench_asset_path=${TMP_BENCH}" >> "$GITHUB_OUTPUT"
+          echo "bench_asset_name=${BENCH_APK_NAME}" >> "$GITHUB_OUTPUT"
+
+          echo "release_tag=build-${{ github.run_number }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "release_title=Build #${{ github.run_number }} (Debug & Benchmark)" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         id: create_release
@@ -102,10 +122,11 @@ jobs:
         run: |
           TAG="${{ steps.prep_asset.outputs.release_tag }}"
           TITLE="${{ steps.prep_asset.outputs.release_title }}"
-          ASSET="${{ steps.prep_asset.outputs.asset_path }}"
-          NOTES="Automated Debug APK build for commit \`${{ github.sha }}\` from branch \`${{ github.ref_name }}\`."
+          DEBUG_ASSET="${{ steps.prep_asset.outputs.debug_asset_path }}"
+          BENCH_ASSET="${{ steps.prep_asset.outputs.bench_asset_path }}"
+          NOTES="Automated APK build for commit \`${{ github.sha }}\` from branch \`${{ github.ref_name }}\`. Includes both Debug and Benchmark (non-debuggable, AOT-profiled) APKs signed with debug key."
 
-          gh release create "$TAG" "$ASSET" \
+          gh release create "$TAG" "$BENCH_ASSET" "$DEBUG_ASSET" \
             --target "${{ github.sha }}" \
             --latest \
             --title "$TITLE" \
@@ -114,16 +135,16 @@ jobs:
       - name: Generate Summary Report
         if: always()
         run: |
-          echo "## 📱 Debug APK Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 📱 APK Build Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Run Number:** \`${{ github.run_number }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Artifact Name:** \`app-debug-apk\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Release Asset:** \`${{ steps.prep_asset.outputs.asset_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Debug APK:** \`${{ steps.prep_asset.outputs.debug_asset_name }}\` (Artifact: \`app-debug-apk\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Benchmark APK:** \`${{ steps.prep_asset.outputs.bench_asset_name }}\` (Artifact: \`app-benchmark-apk\`)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${{ steps.create_release.outcome }}" = "success" ]; then
             echo "✅ **GitHub Release Published:** [\`${{ steps.prep_asset.outputs.release_tag }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.prep_asset.outputs.release_tag }})" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "⚠️ **Release Publishing:** Not published via Release API. Please download the APK directly from the **Artifacts** section of this Actions run (\`app-debug-apk\`)." >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ **Release Publishing:** Not published via Release API. Download APKs directly from the **Artifacts** section of this Actions run." >> "$GITHUB_STEP_SUMMARY"
           fi
