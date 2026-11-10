@@ -94,10 +94,11 @@ fun ContactsScreen(
     }
 
     val filteredContacts = remember(contacts, searchQuery) {
-        if (searchQuery.isBlank()) contacts
+        val uniqueContacts = contacts.distinctBy { it.id.takeIf { id -> id != 0L } ?: it.primaryNumber }
+        if (searchQuery.isBlank()) uniqueContacts
         else {
             val q = searchQuery.trim().lowercase()
-            contacts.filter {
+            uniqueContacts.filter {
                 it.displayName.lowercase().contains(q) ||
                         it.primaryNumber.contains(q) ||
                         it.allNumbers.any { num -> num.contains(q) }
@@ -190,7 +191,7 @@ fun ContactsScreen(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    itemsIndexed(filteredContacts, key = { index, contact -> "contact_${contact.id}_${contact.primaryNumber}_$index" }) { _, contact ->
+                    itemsIndexed(filteredContacts, key = { _, contact -> "contact_${contact.id}_${contact.primaryNumber}" }) { _, contact ->
                         ContactItemRow(
                             contact = contact,
                             onClick = { selectedContact = contact },

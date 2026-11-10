@@ -125,10 +125,11 @@ fun MessagesScreen(
     val isSelectionMode = selectedThreadIds.isNotEmpty()
 
     val filteredThreads = remember(threads, searchQuery) {
-        if (searchQuery.isBlank()) threads
+        val uniqueThreads = threads.distinctBy { it.threadId.takeIf { id -> id != 0L } ?: it.address }
+        if (searchQuery.isBlank()) uniqueThreads
         else {
             val q = searchQuery.trim().lowercase()
-            threads.filter {
+            uniqueThreads.filter {
                 it.displayName.lowercase().contains(q) ||
                     it.address.contains(q) ||
                     it.snippet.lowercase().contains(q)
@@ -243,7 +244,7 @@ fun MessagesScreen(
                 ) {
                     itemsIndexed(
                         items = filteredThreads,
-                        key = { index, thread -> "sms_thread_${thread.threadId}_${thread.address}_$index" },
+                        key = { _, thread -> "sms_thread_${thread.threadId}_${thread.address}" },
                         contentType = { _, _ -> "sms_thread_row" }
                     ) { _, thread ->
                         val isSelected = thread.threadId in selectedThreadIds

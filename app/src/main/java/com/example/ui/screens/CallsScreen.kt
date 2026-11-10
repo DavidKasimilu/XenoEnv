@@ -205,11 +205,12 @@ fun CallsScreen(
 
     // Filter call logs
     val filteredLogs = remember(callLogs, filter, searchQuery) {
+        val uniqueLogs = callLogs.distinctBy { it.id.takeIf { id -> id != 0L } ?: "${it.number}_${it.date}" }
         val base = when (filter) {
-            CallFilter.ALL -> callLogs
-            CallFilter.MISSED -> callLogs.filter { it.type == CallType.MISSED || it.type == CallType.REJECTED }
-            CallFilter.INCOMING -> callLogs.filter { it.type == CallType.INCOMING }
-            CallFilter.OUTGOING -> callLogs.filter { it.type == CallType.OUTGOING }
+            CallFilter.ALL -> uniqueLogs
+            CallFilter.MISSED -> uniqueLogs.filter { it.type == CallType.MISSED || it.type == CallType.REJECTED }
+            CallFilter.INCOMING -> uniqueLogs.filter { it.type == CallType.INCOMING }
+            CallFilter.OUTGOING -> uniqueLogs.filter { it.type == CallType.OUTGOING }
         }
         if (searchQuery.isBlank()) base
         else {
@@ -510,7 +511,7 @@ fun CallsScreen(
 
                         itemsIndexed(
                             items = groups,
-                            key = { idx, group -> "call_grp_${group.latestEntry.id}_${group.latestEntry.number}_${group.count}_$idx" }
+                            key = { _, group -> "call_grp_${group.latestEntry.id}_${group.latestEntry.number}" }
                         ) { _, group ->
                             val entry = group.latestEntry
                             val isExpanded = remember(expandedLogId, entry.id) { expandedLogId == entry.id }
