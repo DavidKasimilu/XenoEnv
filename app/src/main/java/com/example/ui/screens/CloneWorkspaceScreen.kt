@@ -4999,9 +4999,11 @@ fun CloneWorkspaceScreen(
 
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                        loadProgress = newProgress
                                         if (newProgress >= 100) {
+                                            loadProgress = 100
                                             isLoading = false
+                                        } else if (kotlin.math.abs(newProgress - loadProgress) >= 5 || newProgress <= 10) {
+                                            loadProgress = newProgress
                                         }
                                     }
 

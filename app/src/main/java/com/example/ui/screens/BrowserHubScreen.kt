@@ -68,6 +68,7 @@ fun BrowserHubScreen(
     onToggleBrowserHeader: () -> Unit,
     isBrowserFullscreenVideo: Boolean = false,
     onSetBrowserFullscreenVideo: (Boolean) -> Unit = {},
+    loadingProgressFlow: kotlinx.coroutines.flow.StateFlow<Int>? = null,
 
     // Space Sandbox parameters
     spaceClones: List<ClonedAppInstance>,
@@ -164,7 +165,8 @@ fun BrowserHubScreen(
                         onDeletePassword = onDeletePassword,
                         onOpenSpace = { onDualTabChanged(BrowserDualTab.SPACE) },
                         onOpenDownloads = { onDualTabChanged(BrowserDualTab.DOWNLOADS) },
-                        onSetShowMediaManager = onSetShowMediaManager
+                        onSetShowMediaManager = onSetShowMediaManager,
+                        loadingProgressFlow = loadingProgressFlow
                     )
                 }
                 BrowserDualTab.SPACE -> {

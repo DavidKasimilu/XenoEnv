@@ -112,6 +112,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -364,10 +366,14 @@ fun BrowserScreen(
     onOpenSpace: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
     onSetShowMediaManager: (Boolean) -> Unit = {},
+    loadingProgressFlow: StateFlow<Int>? = null,
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
     val currentTab = tabs.find { it.id == activeTabId } ?: tabs.firstOrNull()
+
+    val liveProgress by (loadingProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableIntStateOf(currentTab?.progress ?: 100) })
+    val effectiveProgress = if (loadingProgressFlow != null) liveProgress else (currentTab?.progress ?: 100)
 
     var urlInputText by remember { mutableStateOf(currentTab?.url ?: "https://www.google.com") }
     var activeWebView by remember { mutableStateOf<WebView?>(null) }
@@ -940,9 +946,9 @@ fun BrowserScreen(
                     }
                 }
 
-                if (currentTab?.isLoading == true && (currentTab.progress in 1..99)) {
+                if (currentTab?.isLoading == true && (effectiveProgress in 1..99)) {
                     LinearProgressIndicator(
-                        progress = { currentTab.progress / 100f },
+                        progress = { effectiveProgress / 100f },
                         modifier = Modifier.fillMaxWidth().height(2.dp),
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1158,9 +1164,21 @@ fun BrowserScreen(
                                     }
 
                                     webChromeClient = object : WebChromeClient() {
+                                        private var lastReportedPct = -1
+                                        private var lastReportedLoading = false
+
                                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                             super.onProgressChanged(view, newProgress)
-                                            onUpdateTabLoading(newProgress < 100, newProgress)
+                                            val isLoading = newProgress < 100
+                                            if (lastReportedPct == -1 ||
+                                                kotlin.math.abs(newProgress - lastReportedPct) >= 5 ||
+                                                newProgress == 100 ||
+                                                newProgress == 0 ||
+                                                isLoading != lastReportedLoading) {
+                                                lastReportedPct = newProgress
+                                                lastReportedLoading = isLoading
+                                                onUpdateTabLoading(isLoading, newProgress)
+                                            }
                                         }
 
                                         override fun onReceivedTitle(view: WebView?, title: String?) {

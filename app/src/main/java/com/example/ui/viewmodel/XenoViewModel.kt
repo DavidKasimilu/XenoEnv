@@ -243,6 +243,16 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(XenoUiState())
     val uiState: StateFlow<XenoUiState> = _uiState.asStateFlow()
 
+    // Isolated fast-changing flows to avoid rebuilding the root screen on every tick
+    private val _browserLoadingProgress = MutableStateFlow(100)
+    val browserLoadingProgress: StateFlow<Int> = _browserLoadingProgress.asStateFlow()
+
+    private val _browserIsLoading = MutableStateFlow(false)
+    val browserIsLoading: StateFlow<Boolean> = _browserIsLoading.asStateFlow()
+
+    private val _whatsAppCallDuration = MutableStateFlow(0L)
+    val whatsAppCallDuration: StateFlow<Long> = _whatsAppCallDuration.asStateFlow()
+
     init {
         if (!callPrefs.contains("last_seen_calls_ts")) {
             callPrefs.edit().putLong("last_seen_calls_ts", System.currentTimeMillis()).apply()
@@ -271,7 +281,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             XenoNotificationListenerService.notificationsFlow.collect { notifs ->
                 val dedup = notifs.distinctBy { "${it.packageName}::${it.title.trim()}::${it.text.trim()}" }
-                _uiState.update { it.copy(deviceNotifications = dedup) }
+                if (_uiState.value.deviceNotifications != dedup) {
+                    _uiState.update { it.copy(deviceNotifications = dedup) }
+                }
             }
         }
 
@@ -1016,11 +1028,28 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateActiveTabLoading(isLoading: Boolean, progress: Int) {
-        val activeId = _uiState.value.activeBrowserTabId
-        val updatedTabs = _uiState.value.browserTabs.map {
-            if (it.id == activeId) it.copy(isLoading = isLoading, progress = progress) else it
+        if (_browserIsLoading.value != isLoading) {
+            _browserIsLoading.value = isLoading
         }
-        _uiState.update { it.copy(browserTabs = updatedTabs) }
+        val currentProg = _browserLoadingProgress.value
+        if (kotlin.math.abs(currentProg - progress) >= 5 || progress == 0 || progress == 100) {
+            _browserLoadingProgress.value = progress
+        }
+
+        val activeId = _uiState.value.activeBrowserTabId
+        val currentTab = _uiState.value.browserTabs.find { it.id == activeId }
+        val loadingChanged = currentTab?.isLoading != isLoading
+        val tabProg = currentTab?.progress ?: 0
+        val isSignificantProgress = progress == 100 || (isLoading && kotlin.math.abs(tabProg - progress) >= 20)
+
+        // Only update the heavy browserTabs list in uiState when loading state flips or completes,
+        // avoiding rebuilding the entire tab list and root screen on every tick.
+        if (loadingChanged || isSignificantProgress) {
+            val updatedTabs = _uiState.value.browserTabs.map {
+                if (it.id == activeId) it.copy(isLoading = isLoading, progress = progress) else it
+            }
+            _uiState.update { it.copy(browserTabs = updatedTabs) }
+        }
     }
 
     fun updateActiveTabNavState(canGoBack: Boolean, canGoForward: Boolean) {
@@ -2272,6 +2301,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startInAppWhatsAppCall(phoneNumber: String, contactName: String? = null, isVideo: Boolean = false) {
         whatsAppCallTimerJob?.cancel()
+        _whatsAppCallDuration.value = 0L
         val displayName = contactName?.takeIf { it.isNotBlank() } ?: contactsRepo.resolveContactNameFast(phoneNumber) ?: phoneNumber
         val newSession = InAppWhatsAppCallSession(
             phoneNumber = phoneNumber,
@@ -2298,7 +2328,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             triggerPostCallHistorySync()
         }
 
-        // Simulate fast 1.5s call connection and start timer
+        // Fast 1.5s call connection and start timer via small dedicated flow
         whatsAppCallTimerJob = viewModelScope.launch {
             delay(1500L)
             _uiState.update { state ->
@@ -2308,12 +2338,9 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             }
             while (true) {
                 delay(1000L)
-                _uiState.update { state ->
-                    state.activeInAppWhatsAppCall?.let { session ->
-                        if (session.isConnected) {
-                            state.copy(activeInAppWhatsAppCall = session.copy(durationSeconds = session.durationSeconds + 1))
-                        } else state
-                    } ?: state
+                val session = _uiState.value.activeInAppWhatsAppCall
+                if (session != null && session.isConnected) {
+                    _whatsAppCallDuration.value = _whatsAppCallDuration.value + 1L
                 }
             }
         }
@@ -2359,6 +2386,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
             // Nothing left to end (call never started or already over)
             whatsAppCallTimerJob?.cancel()
             whatsAppCallTimerJob = null
+            _whatsAppCallDuration.value = 0L
             _uiState.update { it.copy(activeInAppWhatsAppCall = null) }
             return
         }
@@ -2449,6 +2477,7 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun watchWhatsAppCall(phoneNumber: String, displayName: String, isVideo: Boolean) {
         whatsAppCallTimerJob?.cancel()
+        _whatsAppCallDuration.value = 0L
         whatsAppCallTimerJob = viewModelScope.launch {
             val app = getApplication<Application>()
             val waitStart = android.os.SystemClock.elapsedRealtime()
@@ -2465,19 +2494,24 @@ class XenoViewModel(application: Application) : AndroidViewModel(application) {
                     val seconds = info.connectedSinceMs?.let {
                         ((System.currentTimeMillis() - it) / 1000L).coerceAtLeast(0L)
                     } ?: 0L
-                    _uiState.update {
-                        it.copy(
-                            activeInAppWhatsAppCall = InAppWhatsAppCallSession(
-                                phoneNumber = phoneNumber,
-                                contactName = displayName,
-                                isVideo = isVideo,
-                                isConnected = info.isConnected,
-                                durationSeconds = seconds
+                    _whatsAppCallDuration.value = seconds
+                    val cur = _uiState.value.activeInAppWhatsAppCall
+                    if (cur == null || cur.isConnected != info.isConnected) {
+                        _uiState.update {
+                            it.copy(
+                                activeInAppWhatsAppCall = InAppWhatsAppCallSession(
+                                    phoneNumber = phoneNumber,
+                                    contactName = displayName,
+                                    isVideo = isVideo,
+                                    isConnected = info.isConnected,
+                                    durationSeconds = seconds
+                                )
                             )
-                        )
+                        }
                     }
                 } else if (seen) {
-                    val duration = _uiState.value.activeInAppWhatsAppCall?.durationSeconds ?: 0L
+                    val duration = _whatsAppCallDuration.value.takeIf { it > 0 } ?: (_uiState.value.activeInAppWhatsAppCall?.durationSeconds ?: 0L)
+                    _whatsAppCallDuration.value = 0L
                     _uiState.update {
                         it.copy(
                             activeInAppWhatsAppCall = null,

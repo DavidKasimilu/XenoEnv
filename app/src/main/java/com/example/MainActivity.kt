@@ -767,6 +767,7 @@ fun XenoApp(
                                         onToggleBrowserHeader = { viewModel.toggleBrowserHeader() },
                                         isBrowserFullscreenVideo = uiState.isBrowserFullscreenVideo,
                                         onSetBrowserFullscreenVideo = { viewModel.setBrowserFullscreenVideo(it) },
+                                        loadingProgressFlow = viewModel.browserLoadingProgress,
                                         spaceClones = uiState.spaceClones,
                                         activeSpaceDock = uiState.activeSpaceDock,
                                         minimizedCloneIds = uiState.minimizedSpaceCloneIds,
@@ -907,6 +908,7 @@ fun XenoApp(
         // In-App Floating PiP WhatsApp Call Overlay
         WhatsAppCallFloatingOverlay(
             session = uiState.activeInAppWhatsAppCall,
+            durationSecondsFlow = viewModel.whatsAppCallDuration,
             onEndCall = { viewModel.endInAppWhatsAppCall() },
             modifier = Modifier.zIndex(35f)
         )

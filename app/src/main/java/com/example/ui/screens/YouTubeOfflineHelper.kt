@@ -137,6 +137,13 @@ object YouTubeOfflineRepository {
     private val _activeDownloadsFlow = MutableStateFlow<Map<String, Int>>(emptyMap())
     val activeDownloadsFlow: StateFlow<Map<String, Int>> = _activeDownloadsFlow.asStateFlow()
 
+    fun updateActiveDownloadProgress(cleanId: String, newPct: Int) {
+        val current = _activeDownloadsFlow.value[cleanId]
+        if (current == null || kotlin.math.abs(newPct - current) >= 5 || newPct >= 95 || newPct <= 5) {
+            _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to newPct)
+        }
+    }
+
     // Tracks videoIds that are currently paused
     private val _pausedDownloadsFlow = MutableStateFlow<Set<String>>(emptySet())
     val pausedDownloadsFlow: StateFlow<Set<String>> = _pausedDownloadsFlow.asStateFlow()
@@ -322,7 +329,7 @@ object YouTubeOfflineRepository {
                     cookies = cookies
                 ) { progressPct ->
                     val mapped = (15 + (progressPct * 0.80f).toInt()).coerceIn(15, 95)
-                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                    updateActiveDownloadProgress(cleanId, mapped)
                 }
             ) {
                 if (hasAudioTrack(tempFile) || (isProgressiveMuxedStreamUrl(candUrl) && isValidMp4Container(tempFile, 16384L))) {
@@ -360,7 +367,7 @@ object YouTubeOfflineRepository {
                     cookies = cookies
                 ) { progressPct ->
                     val mapped = (15 + (progressPct * 0.58f).toInt()).coerceIn(15, 73)
-                    _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                    updateActiveDownloadProgress(cleanId, mapped)
                 }
             }
 
@@ -382,10 +389,10 @@ object YouTubeOfflineRepository {
                         cookies = cookies
                     ) { progressPct ->
                         val mapped = (73 + (progressPct * 0.19f).toInt()).coerceIn(73, 92)
-                        _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to mapped)
+                        updateActiveDownloadProgress(cleanId, mapped)
                     }
                     if (audioOk && tempAudioOnlyFile.exists() && tempAudioOnlyFile.length() > 512L) {
-                        _activeDownloadsFlow.value = _activeDownloadsFlow.value + (cleanId to 95)
+                        updateActiveDownloadProgress(cleanId, 95)
                         if (muxVideoAndAudioMp4(tempVideoOnlyFile, tempAudioOnlyFile, tempFile)) {
                             if (tempFile.exists() && tempFile.length() > 4096L) {
                                 return true

@@ -52,6 +52,10 @@ import androidx.compose.ui.unit.sp
 import com.example.telecom.OngoingCallHelper
 import kotlin.math.roundToInt
 
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
+
 data class InAppWhatsAppCallSession(
     val phoneNumber: String,
     val contactName: String?,
@@ -72,6 +76,7 @@ data class InAppWhatsAppCallSession(
 @Composable
 fun WhatsAppCallFloatingOverlay(
     session: InAppWhatsAppCallSession?,
+    durationSecondsFlow: StateFlow<Long>? = null,
     onEndCall: () -> Unit,
     // Mute / speaker / camera can't be controlled in WhatsApp from another app; kept only so
     // older call sites still compile. They are not shown.
@@ -81,6 +86,10 @@ fun WhatsAppCallFloatingOverlay(
     modifier: Modifier = Modifier
 ) {
     if (session == null) return
+
+    val liveDuration by (durationSecondsFlow?.collectAsStateWithLifecycle() ?: remember { mutableLongStateOf(session.durationSeconds) })
+    val currentDuration = if (durationSecondsFlow != null) liveDuration else session.durationSeconds
+    val formattedDuration = OngoingCallHelper.formatCallDuration(currentDuration)
 
     var offsetX by remember { mutableFloatStateOf(20f) }
     var offsetY by remember { mutableFloatStateOf(100f) }
@@ -144,7 +153,7 @@ fun WhatsAppCallFloatingOverlay(
                         }
 
                         Text(
-                            text = if (session.isConnected) session.formattedDuration else "Ringing...",
+                            text = if (session.isConnected) formattedDuration else "Ringing...",
                             color = if (session.isConnected) Color.White else Color(0xFF25D366),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
