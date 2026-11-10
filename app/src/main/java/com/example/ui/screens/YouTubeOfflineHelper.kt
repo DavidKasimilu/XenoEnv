@@ -1818,22 +1818,23 @@ fun YouTubeOfflineDesktopView(
 
     val activePlayingVideo = selectedVideo ?: videos.firstOrNull()
 
+    var wasFullscreenPlayer by remember { mutableStateOf(false) }
+
     androidx.activity.compose.BackHandler(enabled = isFullscreenPlayer) {
         isFullscreenPlayer = false
         onFullscreenChanged(false)
-        (context as? android.app.Activity)?.requestedOrientation =
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     LaunchedEffect(isFullscreenPlayer) {
         onFullscreenChanged(isFullscreenPlayer)
         val activity = context as? android.app.Activity
         if (isFullscreenPlayer) {
+            wasFullscreenPlayer = true
             activity?.requestedOrientation =
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-            activity?.requestedOrientation =
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else if (wasFullscreenPlayer) {
+            wasFullscreenPlayer = false
+            if (activity != null) com.example.ui.components.restoreAppOrientationAfterFullscreen(activity)
         }
     }
 
@@ -1857,8 +1858,11 @@ fun YouTubeOfflineDesktopView(
     DisposableEffect(Unit) {
         onDispose {
             onFullscreenChanged(false)
-            (context as? android.app.Activity)?.requestedOrientation =
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (wasFullscreenPlayer) {
+                (context as? android.app.Activity)?.let {
+                    com.example.ui.components.restoreAppOrientationAfterFullscreen(it)
+                }
+            }
             try {
                 videoViewRef?.stopPlayback()
             } catch (_: Exception) {}
@@ -2153,10 +2157,31 @@ fun YouTubeOfflineDesktopView(
                                 }
                             )
                         }
+
+                        if (isFullscreenPlayer) {
+                            IconButton(
+                                onClick = { isFullscreenPlayer = false },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                                    .size(36.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
+                                    .testTag("yt_offline_exit_fullscreen")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.FullscreenExit,
+                                    contentDescription = "Exit full screen",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                     }
 
                     // Custom YouTube Desktop-Style Transport & Metadata Bar below Player
-                    Surface(
+                    // Hidden while the video is full screen (use the back button or the small icon on the video to exit)
+                    if (!isFullscreenPlayer) {
+Surface(
                         color = Color(0xFF141414),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -2295,6 +2320,7 @@ fun YouTubeOfflineDesktopView(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

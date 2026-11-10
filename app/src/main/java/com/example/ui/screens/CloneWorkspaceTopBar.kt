@@ -105,23 +105,7 @@ fun CloneWorkspaceTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                val cleanTitle = remember(instance.displayName, instance.originalName) {
-                    val raw = instance.displayName.ifBlank { instance.originalName }
-                    raw.replace(" Clone", "", ignoreCase = true)
-                        .replace("Clone", "", ignoreCase = true)
-                        .replace("(Clone)", "", ignoreCase = true)
-                        .trim()
-                        .ifBlank { instance.originalName }
-                }
-
-                Text(
-                    text = cleanTitle,
-                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5.sp),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+                // App name intentionally not shown: the top bar keeps just the app icon
 
                 if (isWhatsapp && isWhatsAppPhoneUi && isWhatsAppChatOpen) {
                     Surface(

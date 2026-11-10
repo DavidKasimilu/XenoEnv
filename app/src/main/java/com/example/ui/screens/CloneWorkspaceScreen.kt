@@ -139,18 +139,32 @@ object CloneWebViewPool {
 
 private const val IG_REELS_PERF_TWEAKS_ENABLED = true
 
-private const val MOBILE_USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+// Chrome major version of this phone's WebView. WhatsApp Web only enables calling for current
+// browser versions, so the desktop identity must use the real, current version (not a fixed old one).
+@Volatile
+private var detectedChromeMajor: String = "131"
 
-private const val DESKTOP_USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+private fun initChromeMajor(context: Context) {
+    try {
+        val ua = android.webkit.WebSettings.getDefaultUserAgent(context)
+        Regex("Chrome/(\\d+)\\.").find(ua)?.groupValues?.get(1)?.let { detectedChromeMajor = it }
+    } catch (_: Exception) {
+    }
+}
 
-private val WHATSAPP_WEB_HEADERS = mapOf(
-    "Sec-CH-UA" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
-    "Sec-CH-UA-Mobile" to "?0",
-    "Sec-CH-UA-Platform" to "\"Windows\"",
-    "Upgrade-Insecure-Requests" to "1"
-)
+private val MOBILE_USER_AGENT: String
+    get() = "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$detectedChromeMajor.0.0.0 Mobile Safari/537.36"
+
+private val DESKTOP_USER_AGENT: String
+    get() = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$detectedChromeMajor.0.0.0 Safari/537.36"
+
+private val WHATSAPP_WEB_HEADERS: Map<String, String>
+    get() = mapOf(
+        "Sec-CH-UA" to "\"Google Chrome\";v=\"$detectedChromeMajor\", \"Chromium\";v=\"$detectedChromeMajor\", \"Not_A Brand\";v=\"24\"",
+        "Sec-CH-UA-Mobile" to "?0",
+        "Sec-CH-UA-Platform" to "\"Windows\"",
+        "Upgrade-Insecure-Requests" to "1"
+    )
 
 /**
  * Configures Android's hardware AudioManager for real-time WebRTC Voice & Video Calls in WhatsApp Web.
@@ -281,6 +295,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
         (function() {
             try {
                 window.__xenoWaPhoneMode = $phoneModeLiteral;
+                window.__xenoWaNativeCalls = true; // WhatsApp Web has real calling now: do not fake or hide it
 
                 if (!window.__xenoWaPolyfilled) {
                     window.__xenoWaPolyfilled = true;
@@ -306,13 +321,13 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     // 2. Desktop Windows 64-bit UserAgentData & Navigator Prototype Properties (Critical for WhatsApp Web Calling Check)
                     var uaBrands = [
-                        { brand: 'Google Chrome', version: '131' },
-                        { brand: 'Chromium', version: '131' },
+                        { brand: 'Google Chrome', version: '${detectedChromeMajor}' },
+                        { brand: 'Chromium', version: '${detectedChromeMajor}' },
                         { brand: 'Not_A Brand', version: '24' }
                     ];
                     var fullVersionBrands = [
-                        { brand: 'Google Chrome', version: '131.0.6778.86' },
-                        { brand: 'Chromium', version: '131.0.6778.86' },
+                        { brand: 'Google Chrome', version: '${detectedChromeMajor}.0.6778.86' },
+                        { brand: 'Chromium', version: '${detectedChromeMajor}.0.6778.86' },
                         { brand: 'Not_A Brand', version: '24.0.0.0' }
                     ];
                     var desktopUaData = {
@@ -330,7 +345,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                                 model: '',
                                 platform: 'Windows',
                                 platformVersion: '15.0.0',
-                                uaFullVersion: '131.0.6778.86',
+                                uaFullVersion: '${detectedChromeMajor}.0.6778.86',
                                 wow64: false
                             });
                         },
@@ -1387,6 +1402,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     // Actively unlock disabled call buttons in #main header & menus so they never show "Browser does not support calls"
                     window.__xenoUnlockWhatsAppCallButtons = function() {
+                        if (window.__xenoWaNativeCalls) return;
                         try {
                             var mainEl = document.getElementById('main');
                             if (!mainEl) return;
@@ -1455,6 +1471,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     // Unified handler to check if a tapped target is a WhatsApp Call button
                     window.__xenoTryInterceptCallButtonTap = function(target, ev) {
+                        if (window.__xenoWaNativeCalls) return false;
                         if (!target || !target.closest) return false;
                         var markedBtn = target.closest('[data-xeno-wa-call-btn]');
                         var btn = markedBtn || target.closest('button, [role="button"], li, [data-icon], [title], [aria-label]');
@@ -1611,7 +1628,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
                         window.open = function(url, target, features) {
                             var urlStr = String(url || '').trim();
                             var targetStr = String(target || '').toLowerCase();
-                            var isCallPopup = (!urlStr || urlStr === 'about:blank' || targetStr.indexOf('call') !== -1 || targetStr.indexOf('voip') !== -1) &&
+                            var isCallPopup = !window.__xenoWaNativeCalls && (!urlStr || urlStr === 'about:blank' || targetStr.indexOf('call') !== -1 || targetStr.indexOf('voip') !== -1) &&
                                 (window.__xenoLastCallTapTime && (Date.now() - window.__xenoLastCallTapTime < 5000));
                             if (isCallPopup) {
                                 var contact = window.__xenoExtractActiveChatContact();
@@ -1624,6 +1641,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
 
                     // Intercept & suppress any "Browser does not support calls" / "Calling isn't supported on this browser" modal, tooltip, dropdown, or toast
                     window.__xenoInterceptUnsupportedCallDialog = function() {
+                        if (window.__xenoWaNativeCalls) return false;
                         try {
                             if (!document.getElementById('main') && !document.getElementById('pane-side')) return false;
                             window.__xenoUnlockWhatsAppCallButtons();
@@ -2053,6 +2071,7 @@ private fun injectWhatsAppWebSupportEngine(view: WebView?, phoneUiMode: Boolean 
     """.trimIndent()
     view?.evaluateJavascript(js, null)
     injectWhatsAppMobileStabilityAndNavHelper(view, phoneUiMode)
+    injectWhatsAppLayoutPolish(view, phoneUiMode)
     injectWhatsAppFastAndSmoothHelper(view)
 }
 
@@ -2297,6 +2316,70 @@ private fun injectWhatsAppMobileStabilityAndNavHelper(view: WebView?, isPhoneUiM
                 };
 
                 window.__xenoStabilizeWaMobileLayout();
+            } catch(e) {}
+        })();
+    """.trimIndent()
+    view?.evaluateJavascript(js, null)
+}
+
+/**
+ * Layout polish for the phone-style WhatsApp: consistent header icon sizes / touch targets and
+ * no "Get WhatsApp for Windows" banner. Only touches icon sizing and that banner.
+ */
+private fun injectWhatsAppLayoutPolish(view: WebView?, isPhoneUiMode: Boolean) {
+    val js = """
+        (function() {
+            try {
+                var styleId = 'xeno-wa-polish-style';
+                var st = document.getElementById(styleId);
+                if (!$isPhoneUiMode) {
+                    if (st && st.parentNode) st.parentNode.removeChild(st);
+                    return;
+                }
+                if (!st && document.head) {
+                    st = document.createElement('style');
+                    st.id = styleId;
+                    var ic = '[data-icon=\"search\"], [data-icon=\"search-refreshed\"], [data-icon*=\"menu\"], [data-icon*=\"video\"], ' +
+                             '[data-icon*=\"call\"], [data-icon*=\"new-chat\"], [data-icon*=\"filter\"], [data-icon=\"plus-refreshed\"], [data-icon=\"plus\"]';
+                    var hdr = 'html.xeno-wa-phone-ui #main header, html.xeno-wa-phone-ui #side header, html.xeno-wa-phone-ui #pane-side-header';
+                    function scoped(sel) {
+                        return hdr.split(', ').map(function(h) { return h + ' ' + sel; }).join(', ');
+                    }
+                    st.textContent =
+                        scoped('button, [role=\"button\"]') + ' { min-width: 40px !important; min-height: 40px !important; ' +
+                        'display: inline-flex !important; align-items: center !important; justify-content: center !important; } ' +
+                        scoped(ic.split(', ').map(function(i) { return i + ' svg'; }).join(', ')) +
+                        ' { width: 24px !important; height: 24px !important; min-width: 24px !important; min-height: 24px !important; } ' +
+                        scoped(ic) + ' { display: inline-flex !important; align-items: center !important; justify-content: center !important; } ';
+                    document.head.appendChild(st);
+                }
+
+                // Hide the "Get WhatsApp for Windows / Mac" banner
+                if (!window.__xenoWaBannerTimer) {
+                    var phrases = ['get whatsapp for windows', 'download whatsapp for windows', 'get whatsapp for mac', 'download whatsapp for mac'];
+                    var hideBanner = function() {
+                        try {
+                            var leaves = document.querySelectorAll('#app span, #app a, #app div');
+                            for (var i = 0; i < leaves.length; i++) {
+                                var el = leaves[i];
+                                if (el.children.length !== 0) continue;
+                                var t = (el.textContent || '').trim().toLowerCase();
+                                if (phrases.indexOf(t) === -1) continue;
+                                var c = el;
+                                while (c.parentElement && c.parentElement.id !== 'app') {
+                                    var r = c.parentElement.getBoundingClientRect();
+                                    if (r.height > 110) break;
+                                    c = c.parentElement;
+                                }
+                                if (c && c.id !== 'app' && c.id !== 'side' && c.id !== 'main') {
+                                    c.style.setProperty('display', 'none', 'important');
+                                }
+                            }
+                        } catch(e) {}
+                    };
+                    window.__xenoWaBannerTimer = setInterval(hideBanner, 3000);
+                    hideBanner();
+                }
             } catch(e) {}
         })();
     """.trimIndent()
@@ -2733,6 +2816,22 @@ private fun injectFacebookVideoAndScrollHelper(view: WebView?) {
                         window.__xenoFbAudioUnlocked = true;
                     }, { passive: true });
                 }
+
+                // Keep the page at phone width (a missing / fixed-width viewport makes items look small or squished)
+                try {
+                    var fbVp = document.querySelector('meta[name="viewport"]');
+                    if (!fbVp && document.head) {
+                        fbVp = document.createElement('meta');
+                        fbVp.setAttribute('name', 'viewport');
+                        document.head.appendChild(fbVp);
+                    }
+                    if (fbVp) {
+                        var fbVpContent = fbVp.getAttribute('content') || '';
+                        if (fbVpContent.indexOf('width=device-width') === -1) {
+                            fbVp.setAttribute('content', 'width=device-width, initial-scale=1, minimum-scale=1');
+                        }
+                    }
+                } catch(e) {}
 
                 // 2. Clean Smooth Scroll & Non-Destructive App-Banner Suppression CSS
                 var styleId = 'xeno-fb-video-smooth-style';
@@ -3927,6 +4026,7 @@ fun CloneWorkspaceScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    remember(context) { initChromeMajor(context); true }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val cachedWebView = remember(instance.instanceId) { CloneWebViewPool.get(instance.instanceId) }
     var webViewInstance by remember(instance.instanceId) { mutableStateOf<WebView?>(cachedWebView) }
@@ -4027,10 +4127,10 @@ fun CloneWorkspaceScreen(
         { fullscreen ->
             val activity = context as? Activity
             if (activity != null) {
-                activity.requestedOrientation = if (fullscreen) {
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                if (fullscreen) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 } else {
-                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    com.example.ui.components.restoreAppOrientationAfterFullscreen(activity)
                 }
                 try {
                     val window = activity.window
@@ -4441,7 +4541,7 @@ fun CloneWorkspaceScreen(
                     isWhatsapp = isWhatsapp,
                     onReload = {
                         CloneWebViewPool.destroy(instance.instanceId)
-                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
+                        if (!isYoutube && !isFacebook && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                             useSoftwareLayer = true
                         }
                         hasRenderCrash = false
@@ -4455,7 +4555,7 @@ fun CloneWorkspaceScreen(
                             cookieManager.flush()
                             WebStorage.getInstance().deleteAllData()
                         } catch (_: Exception) {}
-                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
+                        if (!isYoutube && !isFacebook && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                             useSoftwareLayer = true
                         }
                         hasRenderCrash = false
@@ -4499,7 +4599,7 @@ fun CloneWorkspaceScreen(
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
                                     // YouTube needs the hardware layer: software layers make video slow, black or unplayable
-                                    if (useSoftwareLayer && !isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
+                                    if (useSoftwareLayer && !isYoutube && !isFacebook && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                                         setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                                     } else {
                                         setLayerType(View.LAYER_TYPE_NONE, null)
@@ -4531,7 +4631,7 @@ fun CloneWorkspaceScreen(
                                     javaScriptEnabled = true
                                     domStorageEnabled = true
                                     databaseEnabled = true
-                                    loadWithOverviewMode = !(isWhatsapp && isWhatsAppPhoneUi)
+                                    loadWithOverviewMode = !(isWhatsapp && isWhatsAppPhoneUi) && !isFacebook
                                     useWideViewPort = true
                                     // Disable pinch-zoom on Instagram, Facebook, TikTok & YouTube so double-tap-to-like and fast vertical video swipes stay crisp
                                     builtInZoomControls = !isShortVideoSocialApp
@@ -4889,7 +4989,7 @@ fun CloneWorkspaceScreen(
                                             }
                                         } catch (_: Exception) {}
                                         webViewInstance = null
-                                        if (!isYoutube && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
+                                        if (!isYoutube && !isFacebook && (!IG_REELS_PERF_TWEAKS_ENABLED || !isInstagram)) {
                                             useSoftwareLayer = true
                                         }
                                         reloadKey++
