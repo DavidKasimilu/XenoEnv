@@ -304,6 +304,15 @@ object XenoNotificationHelper {
         callerNumber: String,
         carrierNameOverride: String? = null
     ) {
+        // If the user swiped the call notification away, do not bring it back with a name update
+        val stillShown = try {
+            val nmgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nmgr.activeNotifications.any { it.id == 8888 }
+        } catch (_: Exception) {
+            true
+        }
+        if (!stillShown) return
+
         // Keep the same kind of notification that is already showing (do not downgrade it)
         val locked = OngoingCallHelper.isScreenOffOrLocked(context)
         val isInApp = MainActivity.isAppInForeground && !locked
@@ -683,7 +692,7 @@ object XenoNotificationHelper {
             .setAutoCancel(false)
             .setOnlyAlertOnce(false)
             .setContentIntent(fullScreenPendingIntent)
-            .setOngoing(true)
+            .setOngoing(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
             .addAction(android.R.drawable.sym_action_call, "Answer", answerPendingIntent)
